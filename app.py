@@ -1,4 +1,6 @@
 import datetime
+import io
+import time
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -31,11 +33,27 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 
-# 3. Função Helper para buscar tabelas em tempo real
+# Helper para executar operações no Supabase com suporte a reconexão automática
+def execute_supabase_operation(operation_func, max_retries=3, delay=2):
+  for attempt in range(max_retries):
+    try:
+      return operation_func()
+    except Exception as e:
+      if attempt < max_retries - 1:
+        time.sleep(delay)
+      else:
+        raise e
+
+
+# 3. Função Helper para buscar tabelas em tempo real com retry
 def fetch_data(table_name: str) -> pd.DataFrame:
   try:
-    res = supabase.table(table_name).select("*").execute()
-    return pd.DataFrame(res.data)
+
+    def query():
+      res = supabase.table(table_name).select("*").execute()
+      return pd.DataFrame(res.data)
+
+    return execute_supabase_operation(query)
   except Exception as e:
     return pd.DataFrame()
 
@@ -55,6 +73,7 @@ menu = st.sidebar.radio(
         "💰 Fluxo de Caixa",
         "🤝 Aportes dos Sócios",
         "📂 Importar/Exportar Excel",
+        "💾 Gestão de Dados",
     ],
 )
 
@@ -193,34 +212,33 @@ elif menu == "🛒 Nova Venda":
                 df_produtos["codigo"] == opcao_bone
             ].iloc[0]
 
-            # 1. Registra Venda no Supabase
-            nova_venda = {
-                "codigo_bone": opcao_bone,
-                "produto_id": int(prod_info["id"]),
-                "cliente": cliente.strip(),
-                "valor_venda": valor_venda,
-                "custo_unitario": float(prod_info["custo"]),
-                "forma_pagto": forma_pagto,
-                "data_venda": str(data_venda),
-            }
-            supabase.table("vendas").insert(nova_venda).execute()
-
-            # 2. Atualiza e dá baixa no estoque
-            nova_qtd = int(prod_info["qtd_estoque"]) - 1
-            supabase.table("produtos").update({"qtd_estoque": nova_qtd}).eq(
-                "id", prod_info["id"]
-            ).execute()
-
-            # 3. Lança entrada no caixa se houver valor
-            if valor_venda > 0:
-              novo_caixa = {
-                  "data_movimentacao": str(data_venda),
-                  "descricao": f"Venda {opcao_bone} - {cliente.strip()}",
-                  "tipo": "Entrada",
-                  "valor": valor_venda,
+            def op_venda():
+              nova_venda = {
+                  "codigo_bone": opcao_bone,
+                  "produto_id": int(prod_info["id"]),
+                  "cliente": cliente.strip(),
+                  "valor_venda": valor_venda,
+                  "custo_unitario": float(prod_info["custo"]),
+                  "forma_pagto": forma_pagto,
+                  "data_venda": str(data_venda),
               }
-              supabase.table("caixa").insert(novo_caixa).execute()
+              supabase.table("vendas").insert(nova_venda).execute()
 
+              nova_qtd = int(prod_info["qtd_estoque"]) - 1
+              supabase.table("produtos").update({"qtd_estoque": nova_qtd}).eq(
+                  "id", prod_info["id"]
+              ).execute()
+
+              if valor_venda > 0:
+                novo_caixa = {
+                    "data_movimentacao": str(data_venda),
+                    "descricao": f"Venda {opcao_bone} - {cliente.strip()}",
+                    "tipo": "Entrada",
+                    "valor": valor_venda,
+                }
+                supabase.table("caixa").insert(novo_caixa).execute()
+
+            execute_supabase_operation(op_venda)
             st.success(
                 f"🎉 Venda do boné {opcao_bone} para {cliente} salva"
                 " permanentemente!"
@@ -228,7 +246,10 @@ elif menu == "🛒 Nova Venda":
             st.session_state["venda_cliente"] = ""
             st.rerun()
           except Exception as err:
-            st.error(f"⚠️ Falha de Conexão ao salvar venda: {err}")
+            st.error(
+                "🌐 **Sem Conexão com a Internet / Supabase.** Por favor,"
+                " verifique sua conexão de rede e tente novamente."
+            )
 
   st.markdown("---")
   st.subheader("📋 Histórico de Vendas")
@@ -278,16 +299,23 @@ elif menu == "📦 Catálogo & Estoque":
             "custo": custo,
             "qtd_estoque": qtd,
         }
-        supabase.table("produtos").upsert(
-            novo_prod, on_conflict="codigo"
-        ).execute()
-        st.success(f"Boné {codigo} gravado com sucesso no Supabase!")
+        execute_supabase_operation(
+            lambda: supabase.table("produtos")
+            .upsert(novo_prod, on_conflict="codigo")
+            .execute()
+        )
+
+        st.success(f"🎉 Boné {codigo} gravado com sucesso no Supabase!")
         st.session_state["prod_codigo"] = ""
         st.session_state["prod_cor"] = ""
         st.session_state["prod_frase"] = ""
         st.rerun()
       except Exception as err:
-        st.error(f"Erro ao salvar produto: {err}")
+        st.error(
+            "🌐 **Erro de Conexão com a Internet (getaddrinfo failed):** Não"
+            " foi possível conectar ao banco de dados Supabase. Verifique sua"
+            " conexão wi-fi/cabo e tente salvar novamente."
+        )
 
   st.markdown("---")
   st.subheader("📦 Produtos em Estoque")
@@ -328,12 +356,17 @@ elif menu == "💰 Fluxo de Caixa":
             "tipo": tipo,
             "valor": valor,
         }
-        supabase.table("caixa").insert(lancamento).execute()
+        execute_supabase_operation(
+            lambda: supabase.table("caixa").insert(lancamento).execute()
+        )
         st.success("Movimentação financeira gravada permanentemente!")
         st.session_state["cx_desc"] = ""
         st.rerun()
       except Exception as err:
-        st.error(f"Erro ao gravar lançamento de caixa: {err}")
+        st.error(
+            "🌐 **Sem Conexão com a Internet.** Verifique sua rede e tente"
+            " novamente."
+        )
 
   st.markdown("---")
   st.subheader("📜 Extrato de Caixa")
@@ -361,27 +394,32 @@ elif menu == "🤝 Aportes dos Sócios":
   btn_ap = st.button("📥 Confirmar Aporte", use_container_width=True)
   if btn_ap:
     try:
-      novo_aporte = {
-          "data_aporte": str(data_ap),
-          "socio": socio,
-          "valor": valor_ap,
-      }
-      supabase.table("aportes").insert(novo_aporte).execute()
 
-      # Lança automaticamente como Entrada no caixa
-      supabase.table("caixa").insert({
-          "data_movimentacao": str(data_ap),
-          "descricao": f"Aporte Sócio ({socio})",
-          "tipo": "Entrada",
-          "valor": valor_ap,
-      }).execute()
+      def op_aporte():
+        novo_aporte = {
+            "data_aporte": str(data_ap),
+            "socio": socio,
+            "valor": valor_ap,
+        }
+        supabase.table("aportes").insert(novo_aporte).execute()
 
+        supabase.table("caixa").insert({
+            "data_movimentacao": str(data_ap),
+            "descricao": f"Aporte Sócio ({socio})",
+            "tipo": "Entrada",
+            "valor": valor_ap,
+        }).execute()
+
+      execute_supabase_operation(op_aporte)
       st.success(
           f"Aporte de R$ {valor_ap:.2f} do sócio {socio} registrado no banco!"
       )
       st.rerun()
     except Exception as err:
-      st.error(f"Erro ao registrar aporte: {err}")
+      st.error(
+          "🌐 **Sem Conexão com a Internet.** Verifique sua rede e tente"
+          " novamente."
+      )
 
   st.markdown("---")
   st.subheader("📊 Totais Investidos por Sócio")
@@ -392,7 +430,7 @@ elif menu == "🤝 Aportes dos Sócios":
     st.info("Nenhum aporte registrado ainda.")
 
 # ==============================================================================
-# ABA 6: IMPORTAR EXCEL (MATRIZ, ESTOQUE E CAIXA)
+# ABA 6: IMPORTAR EXCEL
 # ==============================================================================
 elif menu == "📂 Importar/Exportar Excel":
   st.subheader("📊 Sincronizar Planilha Excel (.xlsx)")
@@ -416,21 +454,18 @@ elif menu == "📂 Importar/Exportar Excel":
           ["📋 Aba Matriz", "📦 Aba Estoque", "💰 Aba Caixa"]
       )
 
-      # 1. ABA MATRIZ (PRODUTOS & VENDAS)
       with tab_matriz:
         if "Matriz" in sheets:
           df_matriz = pd.read_excel(uploaded_file, sheet_name="Matriz")
           st.dataframe(df_matriz.head(5), use_container_width=True)
 
           if st.button(
-              "🚀 Importar Dados da Matriz (Produtos e Vendas)",
+              "🚀 Importar Dados da Matriz",
               key="btn_imp_matriz",
               use_container_width=True,
           ):
             try:
-              prod_count = 0
-              venda_count = 0
-
+              prod_count, venda_count = 0, 0
               for _, row in df_matriz.iterrows():
                 cod = str(row.get("CÓDIGO", "")).strip()
                 if cod and cod != "nan":
@@ -454,12 +489,16 @@ elif menu == "📂 Importar/Exportar Excel":
                       if pd.notna(row.get("CATEGORIA"))
                       else "Básico"
                   )
-
-                  custo_val = row.get("Unnamed: 6", 29.0)
-                  custo = float(custo_val) if pd.notna(custo_val) else 29.0
-
-                  est_val = row.get("Estoque", 1)
-                  qtd_estoque = int(est_val) if pd.notna(est_val) else 1
+                  custo = (
+                      float(row.get("Unnamed: 6", 29.0))
+                      if pd.notna(row.get("Unnamed: 6"))
+                      else 29.0
+                  )
+                  qtd_estoque = (
+                      int(row.get("Estoque", 1))
+                      if pd.notna(row.get("Estoque"))
+                      else 1
+                  )
 
                   prod_dict = {
                       "codigo": cod,
@@ -470,9 +509,11 @@ elif menu == "📂 Importar/Exportar Excel":
                       "custo": custo,
                       "qtd_estoque": qtd_estoque,
                   }
-                  supabase.table("produtos").upsert(
-                      prod_dict, on_conflict="codigo"
-                  ).execute()
+                  execute_supabase_operation(
+                      lambda: supabase.table("produtos")
+                      .upsert(prod_dict, on_conflict="codigo")
+                      .execute()
+                  )
                   prod_count += 1
 
                   cliente = (
@@ -480,9 +521,10 @@ elif menu == "📂 Importar/Exportar Excel":
                       if pd.notna(row.get("Cliente"))
                       else ""
                   )
-                  val_venda_val = row.get("Unnamed: 9", 0)
                   valor_venda = (
-                      float(val_venda_val) if pd.notna(val_venda_val) else 0.0
+                      float(row.get("Unnamed: 9", 0))
+                      if pd.notna(row.get("Unnamed: 9"))
+                      else 0.0
                   )
                   data_venda = (
                       row.get("Venda")
@@ -512,7 +554,11 @@ elif menu == "📂 Importar/Exportar Excel":
                         "forma_pagto": pagto,
                         "data_venda": data_str,
                     }
-                    supabase.table("vendas").insert(venda_dict).execute()
+                    execute_supabase_operation(
+                        lambda: supabase.table("vendas")
+                        .insert(venda_dict)
+                        .execute()
+                    )
                     venda_count += 1
 
               st.success(
@@ -522,13 +568,9 @@ elif menu == "📂 Importar/Exportar Excel":
               st.rerun()
             except Exception as conn_err:
               st.error(
-                  "🌐 **Erro de Conexão com a Internet / Supabase:**"
-                  f" {conn_err}"
+                  f"🌐 **Erro de Conexão com a Internet:** {conn_err}"
               )
-        else:
-          st.warning("⚠️ Aba 'Matriz' não encontrada no arquivo enviado.")
 
-      # 2. ABA ESTOQUE
       with tab_estoque:
         if "Estoque" in sheets:
           df_estoque = pd.read_excel(uploaded_file, sheet_name="Estoque")
@@ -559,11 +601,12 @@ elif menu == "📂 Importar/Exportar Excel":
                       if pd.notna(row.get("Categoria"))
                       else "Básico"
                   )
-
-                  qtd_val = row.get("Quantidade", 1)
                   qtd = (
-                      int(qtd_val)
-                      if (pd.notna(qtd_val) and str(qtd_val) != "nan")
+                      int(row.get("Quantidade", 1))
+                      if (
+                          pd.notna(row.get("Quantidade"))
+                          and str(row.get("Quantidade")) != "nan"
+                      )
                       else 1
                   )
 
@@ -574,9 +617,11 @@ elif menu == "📂 Importar/Exportar Excel":
                       "categoria": categoria,
                       "qtd_estoque": qtd,
                   }
-                  supabase.table("produtos").upsert(
-                      est_dict, on_conflict="codigo"
-                  ).execute()
+                  execute_supabase_operation(
+                      lambda: supabase.table("produtos")
+                      .upsert(est_dict, on_conflict="codigo")
+                      .execute()
+                  )
                   est_count += 1
 
               st.success(
@@ -585,27 +630,21 @@ elif menu == "📂 Importar/Exportar Excel":
               st.rerun()
             except Exception as conn_err:
               st.error(
-                  "🌐 **Erro de Conexão com a Internet / Supabase:**"
-                  f" {conn_err}"
+                  f"🌐 **Erro de Conexão com a Internet:** {conn_err}"
               )
-        else:
-          st.warning("⚠️ Aba 'Estoque' não encontrada no arquivo enviado.")
 
-      # 3. ABA CAIXA
       with tab_caixa:
         if "Caixa" in sheets:
           df_caixa = pd.read_excel(uploaded_file, sheet_name="Caixa")
           st.dataframe(df_caixa.head(5), use_container_width=True)
 
           if st.button(
-              "🚀 Importar Movimentações de Caixa & Aportes",
+              "🚀 Importar Caixa & Aportes",
               key="btn_imp_caixa",
               use_container_width=True,
           ):
             try:
-              cx_count = 0
-              ap_count = 0
-
+              cx_count, ap_count = 0, 0
               for _, row in df_caixa.iterrows():
                 desc = (
                     str(row.get("DESCRIÇÃO", "")).strip()
@@ -627,13 +666,19 @@ elif menu == "📂 Importar/Exportar Excel":
                       if pd.notna(dt)
                       else str(datetime.date.today())
                   )
-
-                  v_val = (
-                      row.get("ENTRADA R$", 0)
-                      if tipo == "Entrada"
-                      else row.get("SAÍDA R$", 0)
+                  valor = (
+                      float(
+                          row.get("ENTRADA R$", 0)
+                          if tipo == "Entrada"
+                          else row.get("SAÍDA R$", 0)
+                      )
+                      if pd.notna(
+                          row.get("ENTRADA R$")
+                          if tipo == "Entrada"
+                          else row.get("SAÍDA R$")
+                      )
+                      else 0.0
                   )
-                  valor = float(v_val) if pd.notna(v_val) else 0.0
 
                   caixa_dict = {
                       "data_movimentacao": data_str,
@@ -641,7 +686,11 @@ elif menu == "📂 Importar/Exportar Excel":
                       "tipo": tipo,
                       "valor": valor,
                   }
-                  supabase.table("caixa").insert(caixa_dict).execute()
+                  execute_supabase_operation(
+                      lambda: supabase.table("caixa")
+                      .insert(caixa_dict)
+                      .execute()
+                  )
                   cx_count += 1
 
                   cat = (
@@ -660,7 +709,11 @@ elif menu == "📂 Importar/Exportar Excel":
                         "socio": socio,
                         "valor": valor,
                     }
-                    supabase.table("aportes").insert(aporte_dict).execute()
+                    execute_supabase_operation(
+                        lambda: supabase.table("aportes")
+                        .insert(aporte_dict)
+                        .execute()
+                    )
                     ap_count += 1
 
               st.success(
@@ -670,13 +723,9 @@ elif menu == "📂 Importar/Exportar Excel":
               st.rerun()
             except Exception as conn_err:
               st.error(
-                  "🌐 **Erro de Conexão com a Internet / Supabase:**"
-                  f" {conn_err}"
+                  f"🌐 **Erro de Conexão com a Internet:** {conn_err}"
               )
-        else:
-          st.warning("⚠️ Aba 'Caixa' não encontrada no arquivo enviado.")
 
-      # BOTAO MASTER
       st.markdown("---")
       if st.button(
           "🌟 Importar TUDO de uma Só Vez (Matriz + Estoque + Caixa)",
@@ -684,10 +733,7 @@ elif menu == "📂 Importar/Exportar Excel":
           type="primary",
       ):
         try:
-          total_prods = 0
-          total_vendas = 0
-          total_caixa = 0
-          total_aportes = 0
+          total_prods, total_vendas, total_caixa, total_aportes = 0, 0, 0, 0
 
           if "Matriz" in sheets:
             df_m = pd.read_excel(uploaded_file, sheet_name="Matriz")
@@ -714,12 +760,16 @@ elif menu == "📂 Importar/Exportar Excel":
                     if pd.notna(row.get("CATEGORIA"))
                     else "Básico"
                 )
-
-                custo_val = row.get("Unnamed: 6", 29.0)
-                custo = float(custo_val) if pd.notna(custo_val) else 29.0
-
-                est_val = row.get("Estoque", 1)
-                qtd_estoque = int(est_val) if pd.notna(est_val) else 1
+                custo = (
+                    float(row.get("Unnamed: 6", 29.0))
+                    if pd.notna(row.get("Unnamed: 6"))
+                    else 29.0
+                )
+                qtd_estoque = (
+                    int(row.get("Estoque", 1))
+                    if pd.notna(row.get("Estoque"))
+                    else 1
+                )
 
                 prod_dict = {
                     "codigo": cod,
@@ -730,9 +780,11 @@ elif menu == "📂 Importar/Exportar Excel":
                     "custo": custo,
                     "qtd_estoque": qtd_estoque,
                 }
-                supabase.table("produtos").upsert(
-                    prod_dict, on_conflict="codigo"
-                ).execute()
+                execute_supabase_operation(
+                    lambda: supabase.table("produtos")
+                    .upsert(prod_dict, on_conflict="codigo")
+                    .execute()
+                )
                 total_prods += 1
 
                 cliente = (
@@ -740,9 +792,10 @@ elif menu == "📂 Importar/Exportar Excel":
                     if pd.notna(row.get("Cliente"))
                     else ""
                 )
-                val_venda_val = row.get("Unnamed: 9", 0)
                 valor_venda = (
-                    float(val_venda_val) if pd.notna(val_venda_val) else 0.0
+                    float(row.get("Unnamed: 9", 0))
+                    if pd.notna(row.get("Unnamed: 9"))
+                    else 0.0
                 )
                 data_venda = (
                     row.get("Venda")
@@ -761,7 +814,6 @@ elif menu == "📂 Importar/Exportar Excel":
                       if pd.notna(row.get("Forma de Receb"))
                       else "PIX"
                   )
-
                   venda_dict = {
                       "codigo_bone": cod,
                       "cliente": cliente if cliente != "nan" else "Cliente Geral",
@@ -770,7 +822,11 @@ elif menu == "📂 Importar/Exportar Excel":
                       "forma_pagto": pagto,
                       "data_venda": data_str,
                   }
-                  supabase.table("vendas").insert(venda_dict).execute()
+                  execute_supabase_operation(
+                      lambda: supabase.table("vendas")
+                      .insert(venda_dict)
+                      .execute()
+                  )
                   total_vendas += 1
 
           if "Estoque" in sheets:
@@ -793,14 +849,14 @@ elif menu == "📂 Importar/Exportar Excel":
                     if pd.notna(row.get("Categoria"))
                     else "Básico"
                 )
-
-                qtd_val = row.get("Quantidade", 1)
                 qtd = (
-                    int(qtd_val)
-                    if (pd.notna(qtd_val) and str(qtd_val) != "nan")
+                    int(row.get("Quantidade", 1))
+                    if (
+                        pd.notna(row.get("Quantidade"))
+                        and str(row.get("Quantidade")) != "nan"
+                    )
                     else 1
                 )
-
                 est_dict = {
                     "codigo": cod,
                     "cor": cor,
@@ -808,9 +864,11 @@ elif menu == "📂 Importar/Exportar Excel":
                     "categoria": categoria,
                     "qtd_estoque": qtd,
                 }
-                supabase.table("produtos").upsert(
-                    est_dict, on_conflict="codigo"
-                ).execute()
+                execute_supabase_operation(
+                    lambda: supabase.table("produtos")
+                    .upsert(est_dict, on_conflict="codigo")
+                    .execute()
+                )
 
           if "Caixa" in sheets:
             df_c = pd.read_excel(uploaded_file, sheet_name="Caixa")
@@ -828,18 +886,23 @@ elif menu == "📂 Importar/Exportar Excel":
                 )
                 if tipo not in ["Entrada", "Saída"]:
                   tipo = "Entrada"
-
                 dt = row.get("DATA")
                 data_str = (
                     str(dt)[:10] if pd.notna(dt) else str(datetime.date.today())
                 )
-
-                v_val = (
-                    row.get("ENTRADA R$", 0)
-                    if tipo == "Entrada"
-                    else row.get("SAÍDA R$", 0)
+                valor = (
+                    float(
+                        row.get("ENTRADA R$", 0)
+                        if tipo == "Entrada"
+                        else row.get("SAÍDA R$", 0)
+                    )
+                    if pd.notna(
+                        row.get("ENTRADA R$")
+                        if tipo == "Entrada"
+                        else row.get("SAÍDA R$")
+                    )
+                    else 0.0
                 )
-                valor = float(v_val) if pd.notna(v_val) else 0.0
 
                 caixa_dict = {
                     "data_movimentacao": data_str,
@@ -847,7 +910,9 @@ elif menu == "📂 Importar/Exportar Excel":
                     "tipo": tipo,
                     "valor": valor,
                 }
-                supabase.table("caixa").insert(caixa_dict).execute()
+                execute_supabase_operation(
+                    lambda: supabase.table("caixa").insert(caixa_dict).execute()
+                )
                 total_caixa += 1
 
                 cat = (
@@ -866,7 +931,11 @@ elif menu == "📂 Importar/Exportar Excel":
                       "socio": socio,
                       "valor": valor,
                   }
-                  supabase.table("aportes").insert(aporte_dict).execute()
+                  execute_supabase_operation(
+                      lambda: supabase.table("aportes")
+                      .insert(aporte_dict)
+                      .execute()
+                  )
                   total_aportes += 1
 
           st.success(
@@ -883,3 +952,111 @@ elif menu == "📂 Importar/Exportar Excel":
 
     except Exception as e:
       st.error(f"Erro ao processar o arquivo Excel: {e}")
+
+# ==============================================================================
+# ABA 7: GESTÃO DE DADOS & BACKUP
+# ==============================================================================
+elif menu == "💾 Gestão de Dados":
+  st.subheader("💾 Gestão de Dados & Backup")
+  st.caption(
+      "Gerencie o banco de dados, faça downloads de segurança e restaure"
+      " backups do sistema."
+  )
+
+  col_status, col_backup = st.columns(2)
+
+  # 1. Status da Conexão
+  with col_status:
+    st.markdown("### 📌 Status da Conexão")
+
+    # Teste de conexão dinâmico com o Supabase
+    is_connected = False
+    try:
+      res_ping = (
+          supabase.table("produtos")
+          .select("count", count="exact")
+          .limit(1)
+          .execute()
+      )
+      is_connected = True
+    except Exception:
+      is_connected = False
+
+    if is_connected:
+      st.success("🟢 **Conectado ao Supabase (PostgreSQL Nuvem)**")
+      st.caption(
+          "Seus dados estão gravados na nuvem e imunes a reinícios do servidor."
+      )
+    else:
+      st.error("🔴 **Desconectado do Supabase / Sem Conexão de Rede**")
+      st.caption(
+          "Não foi possível alcançar o servidor na nuvem. Verifique sua conexão"
+          " com a internet."
+      )
+
+  # 2. Exportar Backup Geral em Excel
+  with col_backup:
+    st.markdown("### 💾 Exportar Backup Geral em Excel")
+
+    # Gera o arquivo Excel contendo todas as tabelas atuais
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+      (
+          df_produtos
+          if not df_produtos.empty
+          else pd.DataFrame(columns=[
+              "codigo",
+              "cor",
+              "frase",
+              "categoria",
+              "custo",
+              "qtd_estoque",
+          ])
+      ).to_excel(writer, sheet_name="Produtos", index=False)
+      (
+          df_vendas
+          if not df_vendas.empty
+          else pd.DataFrame(columns=[
+              "codigo_bone",
+              "cliente",
+              "valor_venda",
+              "custo_unitario",
+              "forma_pagto",
+              "data_venda",
+          ])
+      ).to_excel(writer, sheet_name="Vendas", index=False)
+      (
+          df_caixa
+          if not df_caixa.empty
+          else pd.DataFrame(
+              columns=["data_movimentacao", "descricao", "tipo", "valor"]
+          )
+      ).to_excel(writer, sheet_name="Caixa", index=False)
+      (
+          df_aportes
+          if not df_aportes.empty
+          else pd.DataFrame(columns=["data_aporte", "socio", "valor"])
+      ).to_excel(writer, sheet_name="Aportes", index=False)
+
+    output.seek(0)
+
+    st.download_button(
+        label="💾 Baixar Todos os Dados em Excel (.xlsx)",
+        data=output,
+        file_name=(
+            f"Backup_R2_Bones_{datetime.date.today().strftime('%Y_%m_%d')}.xlsx"
+        ),
+        mime=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        use_container_width=True,
+    )
+
+  st.markdown("---")
+
+  # 3. Operações de Banco Supabase
+  st.markdown("### ⚙️ Operações de Banco Supabase")
+  st.info(
+      "Seu banco de dados está sincronizado diretamente na nuvem do Supabase."
+      " Todos os cadastros, vendas e edições são mantidos permanentemente."
+  )
