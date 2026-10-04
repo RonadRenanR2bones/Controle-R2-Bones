@@ -54,16 +54,6 @@ st.markdown("""
         font-size: 1.05em;
     }
 
-    /* Estilização para forçar a imagem customizada a ocupar o topo */
-    div[data-testid="stImage"] > img {
-        border-radius: 16px;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.12);
-        margin-bottom: 10px;
-        width: 100% !important;
-        max-height: 250px;
-        object-fit: cover;
-    }
-
     /* Cards de KPIs */
     .kpi-card-advanced {
         background: #ffffff;
@@ -132,58 +122,51 @@ def fetch_data(table_name: str) -> pd.DataFrame:
     except Exception:
         return pd.DataFrame()
 
-# Buscar logo gravada no banco de dados
-@st.cache_data(ttl=600)
-def get_saved_logo():
+# Funções para Persistência Direta da Logo em Base64 no Banco de Dados
+def get_logo_bytes():
     if not supabase:
         return None
     try:
-        res = supabase.table("configuracoes").select("valor_b64").eq("chave", "logo_header").execute()
+        res = supabase.table("configuracoes").select("*").eq("chave", "logo_b64").execute()
         if res.data and len(res.data) > 0:
-            val = res.data[0].get("valor_b64")
-            if val and val.startswith("data:image"):
-                return val
+            b64_str = res.data[0].get("valor_b64")
+            if b64_str:
+                return base64.b64decode(b64_str)
     except Exception:
         pass
     return None
 
-# Salvar logo no banco
-def save_logo_to_db(b64_data_url):
+def save_logo_bytes(file_bytes):
     if not supabase:
         return False
     try:
-        supabase.table("configuracoes").upsert(
-            {"chave": "logo_header", "valor_b64": b64_data_url}, 
-            on_conflict="chave"
-        ).execute()
-        get_saved_logo.clear()
+        b64_str = base64.b64encode(file_bytes).decode("utf-8")
+        supabase.table("configuracoes").upsert({"chave": "logo_b64", "valor_b64": b64_str}, on_conflict="chave").execute()
         return True
     except Exception as e:
-        st.error(f"Erro ao salvar no Supabase: {e}")
+        st.error(f"Erro ao salvar logo no banco: {e}")
         return False
 
-# Deletar logo do banco
-def delete_logo_from_db():
+def delete_logo_db():
     if not supabase:
         return
     try:
-        supabase.table("configuracoes").delete().eq("chave", "logo_header").execute()
-        get_saved_logo.clear()
+        supabase.table("configuracoes").delete().eq("chave", "logo_b64").execute()
     except Exception as e:
-        st.error(f"Erro ao remover no Supabase: {e}")
+        st.error(f"Erro ao excluir logo: {e}")
 
-# Carregar tabelas de dados
+# Carregar dados das tabelas
 df_produtos = fetch_data("produtos")
 df_vendas = fetch_data("vendas")
 df_caixa = fetch_data("caixa")
 df_aportes = fetch_data("aportes")
 df_custos = fetch_data("custos_avulsos")
 
-# Carregar logo persistente do Supabase
-if "current_logo" not in st.session_state:
-    st.session_state["current_logo"] = get_saved_logo()
+# Tentar buscar a logo gravada no banco de dados
+if "active_logo_bytes" not in st.session_state or st.session_state["active_logo_bytes"] is None:
+    st.session_state["active_logo_bytes"] = get_logo_bytes()
 
-# 3. Sidebar (Barra Lateral)
+# 3. Sidebar (Barra Lateral Esquerda) Ocultável
 with st.sidebar:
     st.markdown("### 📌 Módulos do Sistema")
     menu = st.radio(
@@ -198,32 +181,27 @@ with st.sidebar:
     with st.expander("🎨 Personalização", expanded=False):
         uploaded_logo = st.file_uploader(
             "Carregar Nova Logo da Marca", 
-            type=["png", "jpg", "jpeg", "webp", "svg"],
+            type=["png", "jpg", "jpeg", "svg"],
             help="Envie a logomarca para fixar permanentemente no topo do site."
         )
         if uploaded_logo is not None:
-            with st.spinner("Processando e salvando imagem..."):
-                bytes_data = uploaded_logo.getvalue()
-                b64_str = base64.b64encode(bytes_data).decode("utf-8")
-                mime_type = uploaded_logo.type or "image/png"
-                data_url = f"data:{mime_type};base64,{b64_str}"
-                
-                if save_logo_to_db(data_url):
-                    st.session_state["current_logo"] = data_url
-                    st.success("Logo fixa salva e aplicada!")
-                    st.rerun()
-
-        if st.session_state.get("current_logo") is not None:
-            if st.button("🗑️ Excluir Logo Atual", use_container_width=True, type="secondary"):
-                delete_logo_from_db()
-                st.session_state["current_logo"] = None
-                st.success("Logo removida permanentemente!")
+            raw_bytes = uploaded_logo.getvalue()
+            if save_logo_bytes(raw_bytes):
+                st.session_state["active_logo_bytes"] = raw_bytes
+                st.success("Logo fixa guardada com sucesso!")
                 st.rerun()
 
-# 4. Exibição do Cabeçalho Principal
-active_logo = st.session_state.get("current_logo")
-if active_logo:
-    st.image(active_logo, use_container_width=True)
+        if st.session_state.get("active_logo_bytes") is not None:
+            if st.button("🗑️ Excluir Logo Atual", use_container_width=True, type="secondary"):
+                delete_logo_db()
+                st.session_state["active_logo_bytes"] = None
+                st.success("Logo removida com sucesso!")
+                st.rerun()
+
+# 4. Cabeçalho Principal: Substitui o bloco escuro pela logo expandida usando st.image
+current_logo_bytes = st.session_state.get("active_logo_bytes")
+if current_logo_bytes:
+    st.image(current_logo_bytes, use_container_width=True)
 else:
     st.markdown("""
     <div class="custom-header-container">
