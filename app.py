@@ -349,7 +349,6 @@ elif menu == "🛒 Vendas":
     if not df_produtos.empty and "codigo" in df_produtos.columns:
         c_qtd_p = "qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else ("qtd_estoque" if "qtd_estoque" in df_produtos.columns else "qtd_estoque"))
         
-        # Filtra produtos com estoque maior que 0 para venda
         df_prod_disp = df_produtos[pd.to_numeric(df_produtos.get(c_qtd_p, 0), errors="coerce").fillna(0) > 0]
         
         if not df_prod_disp.empty:
@@ -511,7 +510,7 @@ elif menu == "🛒 Vendas":
 
             with c_rec3:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🗑️ Excluir Venda Incorreta", use_container_width=True, type="secondary"):
+                if st.button("🗑️️ Excluir Venda Incorreta", use_container_width=True, type="secondary"):
                     venda_id = int(venda_sel.split("|")[0].replace("ID", "").strip())
                     row_v = df_pendentes[df_pendentes["id"] == venda_id].iloc[0]
                     
@@ -536,28 +535,102 @@ elif menu == "🛒 Vendas":
     st.markdown("---")
     st.subheader("📋 Histórico Detalhado de Vendas")
     if not df_vendas.empty:
-        col1_hist, col2_hist = st.columns([3, 1])
-        with col2_hist:
-            c_val_h = "valor_venda" if "valor_venda" in df_vendas.columns else ("valor" if "valor" in df_vendas.columns else "valor_total")
-            venda_excluir_hist = st.selectbox("Selecione Venda do Histórico para Excluir:", [f"ID {r['id']} | {r.get('cliente','')} - R$ {round(float(r.get(c_val_h, 0.0)), 2):,.2f}" for _, r in df_vendas.iterrows()])
-            if st.button("🗑️ Excluir Venda Selecionada", use_container_width=True):
-                v_id_excluir = int(venda_excluir_hist.split("|")[0].replace("ID", "").strip())
-                row_h = df_vendas[df_vendas["id"] == v_id_excluir].iloc[0]
-
-                cod_prod_excluir_h = row_h.get("codigo_bone") or row_h.get("codigo") or row_h.get("codigo_produto")
-                qtd_venda_excluir_h = int(row_h.get("qtd") or row_h.get("quantidade") or 1)
-                estornar_estoque(cod_prod_excluir_h, qtd_venda_excluir_h)
-
-                supabase.table("vendas").delete().eq("id", v_id_excluir).execute()
-                st.session_state["flash_success"] = "🗑️️ Venda removida do histórico e produtos devolvidos ao estoque!"
-                st.rerun()
-
         df_v_exib = df_vendas.copy()
-        for c_dt in ["data", "data_venda", "data_recebimento", "data_receb"]:
-            if c_dt in df_v_exib.columns:
-                df_v_exib[c_dt] = df_v_exib[c_dt].apply(format_data_br)
+        
+        # Mapeamento e seleção das colunas para o Histórico de Vendas
+        col_d_v = "data_venda" if "data_venda" in df_v_exib.columns else "data"
+        col_c_b = "codigo_bone" if "codigo_bone" in df_v_exib.columns else "codigo"
+        col_cli = "cliente" if "cliente" in df_v_exib.columns else "nome_cliente"
+        col_val = "valor_venda" if "valor_venda" in df_v_exib.columns else "valor"
+        col_pag = "forma_pagto" if "forma_pagto" in df_v_exib.columns else "pagto"
+        
+        # Formatar a data
+        if col_d_v in df_v_exib.columns:
+            df_v_exib["Data Formatada"] = df_v_exib[col_d_v].apply(format_data_br)
+        else:
+            df_v_exib["Data Formatada"] = ""
 
-        st.dataframe(df_v_exib, use_container_width=True, hide_index=True)
+        # Tabela amigável com colunas renomeadas
+        df_tabela_v = pd.DataFrame({
+            "Data da Venda": df_v_exib["Data Formatada"],
+            "Código": df_v_exib.get(col_c_b, ""),
+            "Cliente": df_v_exib.get(col_cli, ""),
+            "Valor": df_v_exib.get(col_val, 0.0).apply(lambda v: f"R$ {float(v):,.2f}"),
+            "Forma de Pagamento": df_v_exib.get(col_pag, "")
+        })
+        
+        st.dataframe(df_tabela_v, use_container_width=True, hide_index=True)
+        
+        st.markdown("##### ⚙️ Gerenciar Vendas do Histórico")
+        
+        # Estado de edição de venda
+        if "editing_venda_id" not in st.session_state:
+            st.session_state["editing_venda_id"] = None
+
+        # Exibição individual dos itens do histórico com botões de Ação
+        for idx, row in df_v_exib.iterrows():
+            v_id = row["id"]
+            c_data_exib = format_data_br(row.get(col_d_v, ""))
+            c_cod_exib = row.get(col_c_b, "")
+            c_cli_exib = row.get(col_cli, "")
+            c_val_exib = float(row.get(col_val, 0.0))
+            c_pag_exib = row.get(col_pag, "PIX")
+
+            col_info, col_b_edit, col_b_del = st.columns([5, 1, 1])
+            with col_info:
+                st.markdown(f"**ID {v_id}** | {c_data_exib} - **{c_cli_exib}** | Boné: `{c_cod_exib}` - R$ {c_val_exib:,.2f} ({c_pag_exib})")
+            with col_b_edit:
+                if st.button("✏ Alterar", key=f"btn_edit_v_{v_id}", use_container_width=True):
+                    st.session_state["editing_venda_id"] = v_id
+                    st.rerun()
+            with col_b_del:
+                if st.button("🗑️ Excluir", key=f"btn_del_v_{v_id}", use_container_width=True):
+                    cod_prod_e = row.get("codigo_bone") or row.get("codigo") or row.get("codigo_produto")
+                    qtd_venda_e = int(row.get("qtd") or row.get("quantidade") or 1)
+                    estornar_estoque(cod_prod_e, qtd_venda_e)
+
+                    supabase.table("vendas").delete().eq("id", v_id).execute()
+                    st.session_state["flash_success"] = f"🗑️ Venda ID {v_id} excluída e produto estornado ao estoque!"
+                    st.rerun()
+
+            # Formulário expandido de edição para a venda selecionada
+            if st.session_state.get("editing_venda_id") == v_id:
+                with st.form(key=f"form_edit_v_{v_id}"):
+                    st.markdown(f"##### ✏ Editar Venda ID {v_id}")
+                    e_col1, e_col2, e_col3 = st.columns(3)
+                    with e_col1:
+                        e_cliente = st.text_input("Cliente *", value=str(c_cli_exib))
+                    with e_col2:
+                        e_valor = st.number_input("Valor (R$) *", min_value=0.0, value=float(c_val_exib), format="%.2f")
+                    with e_col3:
+                        opts_pag = ["PIX", "Cartão", "Dinheiro", "Brinde"]
+                        idx_pag = opts_pag.index(c_pag_exib) if c_pag_exib in opts_pag else 0
+                        e_forma_pagto = st.selectbox("Forma Pagto *", opts_pag, index=idx_pag)
+
+                    btn_salvar_e, btn_cancel_e = st.columns(2)
+                    with btn_salvar_e:
+                        if st.form_submit_button("💾 Salvar Alterações", use_container_width=True, type="primary"):
+                            update_payload = {
+                                "cliente": e_cliente.strip(),
+                                "nome_cliente": e_cliente.strip(),
+                                "valor_venda": round(float(e_valor), 2),
+                                "valor": round(float(e_valor), 2),
+                                "forma_pagto": e_forma_pagto,
+                                "pagto": e_forma_pagto
+                            }
+                            # Filtra conforme as colunas reais da tabela
+                            cols_v = df_v_exib.columns.tolist()
+                            update_clean = {k: v for k, v in update_payload.items() if k in cols_v}
+
+                            supabase.table("vendas").update(update_clean).eq("id", v_id).execute()
+                            st.session_state["editing_venda_id"] = None
+                            st.session_state["flash_success"] = f"🎉 Venda ID {v_id} atualizada com sucesso!"
+                            st.rerun()
+                    with btn_cancel_e:
+                        if st.form_submit_button("❌ Cancelar", use_container_width=True):
+                            st.session_state["editing_venda_id"] = None
+                            st.rerun()
+                st.markdown("---")
 
 elif menu == "🛍️ Compras":
     st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
@@ -702,19 +775,17 @@ elif menu == "🛍️ Compras":
         st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
 
 elif menu == "📦 Estoque":
-    st.subheader("📦 Estoque Atual em Tempo Real (Saldo Disponível)")
+    st.subheader("📦 Estoque Atual")
     
     if not df_produtos.empty:
         df_est = df_produtos.copy()
         
         col_qtd_est = "qtd_estoque" if "qtd_estoque" in df_est.columns else ("qtd" if "qtd" in df_est.columns else ("estoque" if "estoque" in df_est.columns else "qtd_estoque"))
         
-        # 1. Ajuste do Status baseado no valor do estoque (0 -> 'Indisponível', >0 -> 'Disponível')
         df_est["Status"] = df_est[col_qtd_est].apply(
             lambda val: "Disponível" if pd.to_numeric(val, errors="coerce") > 0 else "Indisponível"
         )
         
-        # 2. Oculta do menu de estoque itens com status 'Indisponível'
         df_est_disponivel = df_est[df_est["Status"] == "Disponível"].copy()
         
         if not df_est_disponivel.empty:
@@ -900,7 +971,7 @@ elif menu == "📥 Importação":
     st.subheader("📥 Importação de Dados em Lote")
     st.markdown("Selecione o tipo de dado que deseja importar e envie o arquivo Excel (.xlsx) ou CSV (.csv).")
 
-    tipo_import = st.selectbox("Escolha o destino dos dados *", ["🛍️ Compras (Produtos)", "🛒 Vendas"])
+    tipo_import = st.selectbox("Escolha o destino dos dados *", ["🛍️️ Compras (Produtos)", "🛒 Vendas"])
 
     file_imp = st.file_uploader("Carregar planilha (.xlsx ou .csv)", type=["xlsx", "csv"])
 
