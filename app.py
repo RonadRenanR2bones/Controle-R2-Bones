@@ -112,6 +112,16 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Função auxiliar para formatar datas no padrão brasileiro DD/MM/AAAA
+def format_data_br(val):
+    if not val or pd.isna(val) or str(val).strip().lower() in ["none", "nat", "nan", ""]:
+        return ""
+    try:
+        dt = pd.to_datetime(val)
+        return dt.strftime("%d/%m/%Y")
+    except Exception:
+        return str(val)
+
 # 2. Inicialização do Cliente Supabase
 @st.cache_resource
 def init_supabase() -> Client:
@@ -211,7 +221,7 @@ with st.sidebar:
                 
                 if save_logo_to_db(data_url):
                     st.session_state["current_logo"] = data_url
-                    st.success("Logo fixa salva e applied!")
+                    st.success("Logo fixa salva e aplicada!")
                     st.rerun()
 
         if st.session_state.get("current_logo") is not None:
@@ -295,8 +305,9 @@ if menu == "📈 Dashboard":
 
     with g2:
         st.markdown("#### 🎨 Cores Mais Vendidas")
-        if not df_vendas_fil.empty and "codigo" in df_vendas_fil.columns and not df_produtos.empty:
-            df_m = df_vendas_fil.merge(df_produtos, on="codigo", how="left")
+        if not df_vendas_fil.empty and ("codigo" in df_vendas_fil.columns or "codigo_produto" in df_vendas_fil.columns) and not df_produtos.empty:
+            c_v_col = "codigo" if "codigo" in df_vendas_fil.columns else "codigo_produto"
+            df_m = df_vendas_fil.merge(df_produtos, left_on=c_v_col, right_on="codigo", how="left")
             cor_col = "cor" if "cor" in df_m.columns else "cor_x"
             if cor_col in df_m.columns:
                 qtd_col = "qtd_x" if "qtd_x" in df_m.columns else ("qtd" if "qtd" in df_m.columns else "qtd_y")
@@ -330,8 +341,9 @@ elif menu == "🛒 Vendas":
             valor_venda = st.number_input("Valor Total (R$) *", min_value=0.0, value=60.0, step=5.0)
             forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
         with c3:
-            data_venda = st.date_input("Data da Venda *", datetime.date.today())
-            data_receb = st.date_input("Data de Recebimento (Opcional)", value=None)
+            # Padrão brasileiro de exibição nas datas: DD/MM/YYYY
+            data_venda = st.date_input("Data da Venda *", datetime.date.today(), format="DD/MM/YYYY")
+            data_receb = st.date_input("Data de Recebimento (Opcional)", value=None, format="DD/MM/YYYY")
 
         if st.button("🚀 Finalizar Venda", type="primary", use_container_width=True):
             if not cliente.strip():
@@ -340,26 +352,42 @@ elif menu == "🛒 Vendas":
                 p_info = df_produtos[df_produtos["codigo"] == codigo_sel].iloc[0]
                 custo_unit = float(p_info.get("custo", 0.0))
                 
-                # CORREÇÃO: Tratar data opcional garantindo formato correto de data para o PostgreSQL
                 dt_receb_str = str(data_receb) if data_receb is not None else None
 
                 nova_venda = {
-                    "codigo": codigo_sel,
                     "qtd": int(qtd_venda),
                     "cliente": cliente.strip(),
                     "valor": float(valor_venda),
-                    "pagto": forma_pagto,
                     "data": str(data_venda),
-                    "data_recebimento": dt_receb_str,
                     "custo": float(custo_unit * qtd_venda)
                 }
 
-                # Ajustar chaves se necessário conforme o esquema do banco de dados
-                if not df_vendas.empty:
-                    if "forma_pagto" in df_vendas.columns and "pagto" not in df_vendas.columns:
-                        nova_venda["forma_pagto"] = nova_venda.pop("pagto")
-                    if "data_receb" in df_vendas.columns and "data_recebimento" not in df_vendas.columns:
-                        nova_venda["data_receb"] = nova_venda.pop("data_recebimento")
+                # Mapeamento dinâmico do nome da coluna de código do produto na tabela "vendas"
+                colunas_vendas = df_vendas.columns.tolist() if not df_vendas.empty else ["codigo", "pagto", "data_recebimento"]
+                
+                # Tratar chave do código
+                if "codigo" in colunas_vendas:
+                    nova_venda["codigo"] = codigo_sel
+                elif "codigo_produto" in colunas_vendas:
+                    nova_venda["codigo_produto"] = codigo_sel
+                elif "cod_produto" in colunas_vendas:
+                    nova_venda["cod_produto"] = codigo_sel
+                elif "codigo_bone" in colunas_vendas:
+                    nova_venda["codigo_bone"] = codigo_sel
+                else:
+                    nova_venda["codigo"] = codigo_sel
+
+                # Tratar chave do pagamento
+                if "forma_pagto" in colunas_vendas:
+                    nova_venda["forma_pagto"] = forma_pagto
+                else:
+                    nova_venda["pagto"] = forma_pagto
+
+                # Tratar chave da data de recebimento
+                if "data_receb" in colunas_vendas:
+                    nova_venda["data_receb"] = dt_receb_str
+                else:
+                    nova_venda["data_recebimento"] = dt_receb_str
 
                 try:
                     supabase.table("vendas").insert(nova_venda).execute()
@@ -382,17 +410,17 @@ elif menu == "🛒 Vendas":
     if not df_vendas.empty:
         col_dt_rec = "data_recebimento" if "data_recebimento" in df_vendas.columns else ("data_receb" if "data_receb" in df_vendas.columns else None)
         if col_dt_rec:
-            df_pendentes = df_vendas[df_vendas[col_dt_rec].isna() | (df_vendas[col_dt_rec] == "") | (df_vendas[col_dt_rec] == "None")]
+            df_pendentes = df_vendas[df_vendas[col_dt_rec].isna() | (df_vendas[col_dt_rec] == "") | (df_vendas[col_dt_rec] == "None")].copy()
         else:
             df_pendentes = pd.DataFrame()
 
         if not df_pendentes.empty:
-            opts_pend = [f"ID {r['id']} | {r.get('cliente','')} - R$ {r.get('valor',0.0):,.2f} (Venda: {r.get('data','')})" for _, r in df_pendentes.iterrows()]
+            opts_pend = [f"ID {r['id']} | {r.get('cliente','')} - R$ {r.get('valor',0.0):,.2f} (Venda: {format_data_br(r.get('data',''))})" for _, r in df_pendentes.iterrows()]
             venda_sel = st.selectbox("📌 Selecione uma Venda para Gerenciar / Confirmar Recebimento:", opts_pend)
             
             c_rec1, c_rec2, c_rec3 = st.columns([2, 2, 1])
             with c_rec1:
-                dt_confirmada = st.date_input("Data Efetiva de Recebimento *", datetime.date.today(), key="dt_conf_rec")
+                dt_confirmada = st.date_input("Data Efetiva de Recebimento *", datetime.date.today(), key="dt_conf_rec", format="DD/MM/YYYY")
             with c_rec2:
                 st.markdown("<br>", unsafe_allow_html=True)
                 if st.button("✅ Confirmar Recebimento", use_container_width=True, type="primary"):
@@ -401,10 +429,12 @@ elif menu == "🛒 Vendas":
                     
                     supabase.table("vendas").update({col_dt_rec: str(dt_confirmada)}).eq("id", venda_id).execute()
                     
+                    c_cod = "codigo" if "codigo" in row_v else ("codigo_produto" if "codigo_produto" in row_v else "cod_produto")
+                    
                     if float(row_v.get("valor", 0)) > 0:
                         supabase.table("caixa").insert({
                             "data": str(dt_confirmada),
-                            "desc": f"Venda {row_v.get('codigo','')} ({row_v.get('qtd',1)}un) - {row_v.get('cliente','')}",
+                            "desc": f"Venda {row_v.get(c_cod,'')} ({row_v.get('qtd',1)}un) - {row_v.get('cliente','')}",
                             "tipo": "Venda",
                             "valor": float(row_v.get("valor", 0))
                         }).execute()
@@ -414,14 +444,17 @@ elif menu == "🛒 Vendas":
 
             with c_rec3:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🗑️️ Excluir Venda Incorreta", use_container_width=True, type="secondary"):
+                if st.button("🗑️ Excluir Venda Incorreta", use_container_width=True, type="secondary"):
                     venda_id = int(venda_sel.split("|")[0].replace("ID", "").strip())
                     supabase.table("vendas").delete().eq("id", venda_id).execute()
                     st.success("🗑️ Venda excluída com sucesso!")
                     st.rerun()
 
-            cols_pend_exibir = [col for col in df_pendentes.columns if col not in ["created_at"]]
-            st.dataframe(df_pendentes[cols_pend_exibir], use_container_width=True, hide_index=True)
+            df_pend_exib = df_pendentes.copy()
+            if "data" in df_pend_exib.columns:
+                df_pend_exib["data"] = df_pend_exib["data"].apply(format_data_br)
+            cols_pend_exibir = [col for col in df_pend_exib.columns if col not in ["created_at"]]
+            st.dataframe(df_pend_exib[cols_pend_exibir], use_container_width=True, hide_index=True)
         else:
             st.info("Nenhuma venda pendente de recebimento no momento.")
     else:
@@ -439,7 +472,12 @@ elif menu == "🛒 Vendas":
                 st.success("🗑️ Venda removida com sucesso!")
                 st.rerun()
 
-        st.dataframe(df_vendas, use_container_width=True, hide_index=True)
+        df_v_exib = df_vendas.copy()
+        for c_dt in ["data", "data_recebimento", "data_receb"]:
+            if c_dt in df_v_exib.columns:
+                df_v_exib[c_dt] = df_v_exib[c_dt].apply(format_data_br)
+
+        st.dataframe(df_v_exib, use_container_width=True, hide_index=True)
 
 elif menu == "🛍️ Compras":
     st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
@@ -488,7 +526,7 @@ elif menu == "🛍️ Compras":
 
         c4 = st.container()
         with c4:
-            dt_aquisicao = st.date_input("Data da Aquisição *", datetime.date.today())
+            dt_aquisicao = st.date_input("Data da Aquisição *", datetime.date.today(), format="DD/MM/YYYY")
 
         b_col1, b_col2 = st.columns(2)
         with b_col1:
@@ -627,7 +665,7 @@ elif menu == "💵 Custos":
         with st.form("form_cv"):
             c1, c2, c3 = st.columns(3)
             with c1:
-                dt_cv = st.date_input("Data *", datetime.date.today())
+                dt_cv = st.date_input("Data *", datetime.date.today(), format="DD/MM/YYYY")
                 desc_cv = st.text_input("Descrição *")
             with c2:
                 tipo_cv = st.selectbox("Tipo de Despesa *", ["Brindes", "Embalagem", "Unboxing"])
@@ -645,7 +683,7 @@ elif menu == "💵 Custos":
         with st.form("form_cf"):
             c1, c2, c3 = st.columns(3)
             with c1:
-                dt_cf = st.date_input("Data *", datetime.date.today())
+                dt_cf = st.date_input("Data *", datetime.date.today(), format="DD/MM/YYYY")
                 feira_cf = st.text_input("Nome da Feira *")
             with c2:
                 desc_cf = st.text_input("Descrição *")
@@ -664,7 +702,7 @@ elif menu == "🤝 Aportes dos Sócios":
     st.subheader("🤝 Registro de Aportes e Devoluções")
     c1, c2, c3 = st.columns(3)
     with c1:
-        dt_ap = st.date_input("Data *", datetime.date.today())
+        dt_ap = st.date_input("Data *", datetime.date.today(), format="DD/MM/YYYY")
     with c2:
         socio_ap = st.selectbox("Sócio *", ["Renan", "Ronald"])
     with c3:
@@ -688,8 +726,11 @@ elif menu == "🤝 Aportes dos Sócios":
 elif menu == "💰 Fluxo de Caixa":
     st.subheader("💰 Extrato Consolidado de Caixa")
     if not df_caixa.empty:
-        cols_caixa = [col for col in df_caixa.columns if col not in ["id", "created_at"]]
-        st.dataframe(df_caixa[cols_caixa], use_container_width=True, hide_index=True)
+        df_caixa_exib = df_caixa.copy()
+        if "data" in df_caixa_exib.columns:
+            df_caixa_exib["data"] = df_caixa_exib["data"].apply(format_data_br)
+        cols_caixa = [col for col in df_caixa_exib.columns if col not in ["id", "created_at"]]
+        st.dataframe(df_caixa_exib[cols_caixa], use_container_width=True, hide_index=True)
     else:
         st.info("Nenhuma movimentação no caixa.")
 
@@ -758,7 +799,7 @@ elif menu == "💾 Gestão de Dados":
         st.download_button(
             label="📥 Baixar Backup Geral (.xlsx)",
             data=excel_data,
-            file_name=f"Backup_Geral_R2_Bones_{datetime.date.today().strftime('%Y_%m_%d')}.xlsx",
+            file_name=f"Backup_Geral_R2_Bones_{datetime.date.today().strftime('%d_%m_%Y')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
