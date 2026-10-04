@@ -261,7 +261,7 @@ if menu == "📈 Dashboard":
     with k1:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ️</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
     with k2:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV Total <span class="tooltip-icon" title="Custo das mercadorias vendidas nos bonés faturados">ℹ️️</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV Total <span class="tooltip-icon" title="Custo das mercadorias vendidas nos bonés faturados">ℹ️</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
     with k3:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ️</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
     with k4:
@@ -362,7 +362,7 @@ elif menu == "🛒 Vendas":
         st.dataframe(df_vendas, use_container_width=True, hide_index=True)
 
 elif menu == "🛍️ Compras":
-    st.subheader("🛍️️ Cadastrar Nova Compra de Mercadoria")
+    st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
     
     opcoes_prod = ["➕ [NOVO] Cadastrar Novo Produto"]
     if not df_produtos.empty and "codigo" in df_produtos.columns:
@@ -370,8 +370,9 @@ elif menu == "🛍️ Compras":
             cod = r.get('codigo', '')
             frase = r.get('frase', '')
             cor = r.get('cor', '')
+            cor_e = r.get('cor_estampa', '')
             cat = r.get('categoria', '')
-            opcoes_prod.append(f"✏️️ [{cod}] | {frase} - {cor} - {cat}")
+            opcoes_prod.append(f"✏️ [{cod}] | {frase} - {cor} - {cor_e} - {cat}")
     
     item_selecionado = st.selectbox(
         "📌 Selecione um Item para Editar/Excluir ou Cadastre um Novo (Pesquise por código, frase, cor ou categoria):", 
@@ -391,19 +392,25 @@ elif menu == "🛍️ Compras":
     col_qtd_nome = "qtd_estoque" if "qtd_estoque" in dados_item else ("qtd" if "qtd" in dados_item else "estoque")
 
     with st.form("form_compra"):
+        # Reorganizado na ordem solicitada: 1. Código, 2. Cor do Boné, 3. Arte Estampada, 4. Cor Estampada, 5. Produto
         c1, c2, c3 = st.columns(3)
         with c1:
             cod_c = st.text_input("Código (ex: BL-0001) *", value=str(dados_item.get("codigo", "")), disabled=is_edicao)
-            cor_c = st.text_input("Cor *", value=str(dados_item.get("cor", "")))
+            cor_c = st.text_input("Cor do Boné *", value=str(dados_item.get("cor", "")))
         with c2:
-            frase_c = st.text_input("Frase Estampada *", value=str(dados_item.get("frase", "")))
+            frase_c = st.text_input("Arte Estampada *", value=str(dados_item.get("frase", "")))
+            cor_estampa_c = st.text_input("Cor Estampada *", value=str(dados_item.get("cor_estampa", "")))
+        with c3:
             cat_opts = ["Liso", "Premium", "Básico"]
             cat_val = str(dados_item.get("categoria", "Liso"))
             idx_cat = cat_opts.index(cat_val) if cat_val in cat_opts else 0
-            cat_c = st.selectbox("Categoria", cat_opts, index=idx_cat)
-        with c3:
+            cat_c = st.selectbox("Produto", cat_opts, index=idx_cat)
             custo_c = st.number_input("Custo Unitário (R$) *", min_value=0.0, value=float(dados_item.get("custo", 29.0)))
+
+        c4, c5 = st.columns(2)
+        with c4:
             qtd_c = st.number_input("Qtd Comprada *", min_value=1, value=int(dados_item.get(col_qtd_nome, 1)))
+        with c5:
             dt_aquisicao = st.date_input("Data da Aquisição *", datetime.date.today())
 
         b_col1, b_col2 = st.columns(2)
@@ -420,6 +427,7 @@ elif menu == "🛍️ Compras":
                     "codigo": cod_c.strip(),
                     "cor": cor_c.strip(),
                     "frase": frase_c.strip(),
+                    "cor_estampa": cor_estampa_c.strip(),
                     "categoria": cat_c,
                     "custo": float(custo_c),
                     col_qtd_nome: int(qtd_c)
