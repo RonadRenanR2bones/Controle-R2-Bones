@@ -359,7 +359,6 @@ elif menu == "🛒 Vendas":
         df_prod_disp = df_produtos[pd.to_numeric(df_produtos.get(c_qtd_p, 0), errors="coerce").fillna(0) > 0].copy()
         
         if not df_prod_disp.empty:
-            # Imagem 4: Filtro de pesquisa rápida para bonés do estoque
             busca_bone = st.text_input("🔍 Pesquisar Boné no Estoque (por código, frase ou cor):", "")
             if busca_bone.strip():
                 df_prod_disp = df_prod_disp[
@@ -555,7 +554,6 @@ elif menu == "🛒 Vendas":
                     st.session_state["flash_success"] = f"🗑️ Venda ID {v_id} excluída com sucesso!"
                     st.rerun()
 
-            # Imagem 5: A tela de Edição de Venda só aparece quando o botão de alteração é acionado
             if st.session_state.get("editing_venda_id") == v_id:
                 with st.form(key=f"form_edit_row_{v_id}"):
                     st.markdown(f"##### ✏ Editar Venda ID {v_id}")
@@ -646,9 +644,8 @@ elif menu == "🛍️ Compras":
         with b_col1:
             btn_salvar = st.form_submit_button("💾 Salvar / Atualizar Item", use_container_width=True, type="primary")
         with b_col2:
-            btn_excluir = st.form_submit_button("🗑️️ Excluir Item Cadastrado", use_container_width=True)
+            btn_excluir = st.form_submit_button("🗑 Excluir Item Cadastrado", use_container_width=True)
 
-        # Imagem 1: Uso de upsert para evitar erro de violação de chave primária duplicada
         if btn_salvar:
             if not cod_c.strip():
                 st.error("Informe o código do produto!")
@@ -658,6 +655,9 @@ elif menu == "🛍️ Compras":
                 
                 estoque_atual = int(dados_item.get(col_qtd_nome, 0)) if is_edicao else 0
                 novo_estoque_calculado = estoque_atual + int(qtd_comprada) if is_edicao else int(qtd_comprada)
+                
+                # Salva também o registro do lote original comprado
+                qtd_historico_compra = int(dados_item.get("qtd_comprada", 0)) + int(qtd_comprada) if is_edicao else int(qtd_comprada)
 
                 novo_prod = {
                     "codigo": cod_c.strip(),
@@ -669,6 +669,7 @@ elif menu == "🛍️ Compras":
                     "estampa_extra": round(float(estampa_extra), 2),
                     "matriz_bordado": round(float(matriz_bordado), 2),
                     col_qtd_nome: novo_estoque_calculado,
+                    "qtd_comprada": qtd_historico_compra,
                     "data_aquisicao": str(dt_aquisicao)
                 }
 
@@ -701,11 +702,9 @@ elif menu == "🛍️ Compras":
     st.markdown("---")
     st.subheader("📋 Histórico Permanente de Aquisições")
     
-    # Imagem 2: Exclusão do campo Estoque na visualização de Compras
     if not df_produtos.empty:
         df_exib_compras = df_produtos.copy()
         
-        # Formatar coluna Custo com duas casas decimais
         if "custo" in df_exib_compras.columns:
             df_exib_compras["custo"] = df_exib_compras["custo"].apply(lambda v: f"R$ {float(v):,.2f}")
 
@@ -756,7 +755,6 @@ elif menu == "📦 Estoque":
                 if filtro_cor != "Todas" and "cor" in df_est_disponivel.columns:
                     df_est_disponivel = df_est_disponivel[df_est_disponivel["cor"] == filtro_cor]
 
-            # Imagem 3: Formatação com duas casas decimais na coluna Custo
             if "custo" in df_est_disponivel.columns:
                 df_est_disponivel["custo"] = df_est_disponivel["custo"].apply(lambda v: f"R$ {float(v):,.2f}")
 
@@ -800,11 +798,13 @@ elif menu == "💵 Custos":
         if not df_produtos.empty:
             df_m = df_produtos.copy()
             col_custo = "custo" if "custo" in df_m.columns else "custo_unitario"
-            col_qtd = "qtd_estoque" if "qtd_estoque" in df_m.columns else ("qtd" if "qtd" in df_m.columns else "estoque")
             col_data_aq = "data_aquisicao" if "data_aquisicao" in df_m.columns else "created_at"
 
-            df_m["custo_num"] = pd.to_numeric(df_m[col_custo], errors="coerce").fillna(0)
-            df_m["qtd_num"] = pd.to_numeric(df_m[col_qtd], errors="coerce").fillna(0)
+            df_m["custo_num"] = pd.to_numeric(df_m[col_custo], errors="coerce").fillna(0.0)
+            
+            # Custo calculado pela quantidade originalmente comprada (não sofre alteração por vendas efetuadas)
+            col_qtd_compra = "qtd_comprada" if "qtd_comprada" in df_m.columns else ("qtd_estoque" if "qtd_estoque" in df_m.columns else "qtd")
+            df_m["qtd_num"] = pd.to_numeric(df_m[col_qtd_compra], errors="coerce").fillna(1)
             df_m["Custo Total Calc"] = df_m["custo_num"] * df_m["qtd_num"]
             df_m["Data_Formatada"] = df_m[col_data_aq].apply(format_data_br)
 
@@ -814,11 +814,9 @@ elif menu == "💵 Custos":
                 "Custo Total Calc": "sum"
             }).reset_index().rename(columns={"Data_Formatada": "Data da Aquisição", "qtd_num": "Quantidade Comprada"})
 
-            # Imagem 6: Formatação de Custo Total com 2 casas decimais
             agrup_data["Custo Total"] = agrup_data["Custo Total Calc"].apply(lambda v: f"R$ {float(v):,.2f}")
             st.dataframe(agrup_data[["Data da Aquisição", "Quantidade Comprada", "Custo Total"]], use_container_width=True, hide_index=True)
 
-            # Imagem 6: Exclusão da coluna Estoque e formatação em 2 casas decimais
             with st.expander("🔍 Visualizar Registros Individuais de Compras", expanded=False):
                 df_m["Custo Unitário"] = df_m["custo_num"].apply(lambda v: f"R$ {float(v):,.2f}")
                 df_m["Custo Total"] = df_m["Custo Total Calc"].apply(lambda v: f"R$ {float(v):,.2f}")
@@ -898,7 +896,6 @@ elif menu == "💵 Custos":
                 st.session_state["flash_success"] = "Custo de Feira registrado com sucesso!"
                 st.rerun()
 
-# Imagem 8: Registro de Aportes/Devoluções e Relatórios/Resumo por Sócio
 elif menu == "🤝 Aportes dos Sócios":
     st.subheader("🤝 Registro de Aportes e Devoluções")
     c1, c2, c3 = st.columns(3)
@@ -955,12 +952,11 @@ elif menu == "🤝 Aportes dos Sócios":
         df_ap_calc = df_aportes.copy()
         df_ap_calc["valor_num"] = pd.to_numeric(df_ap_calc["valor"], errors="coerce").fillna(0.0)
         
-        # Agrupamento e cálculo de saldo a devolver por sócio
         resumo_socios = []
         for s in ["Renan", "Ronald"]:
             df_s = df_ap_calc[df_ap_calc["socio"] == s]
-            ent = df_s[df_s["tipo"] == "Aporte"]["valor_num"].sum()
-            sai = df_s[df_s["tipo"] == "Devolução"]["valor_num"].sum()
+            ent = df_s[df_s["tipo"].isin(["Aporte", "Aporte de Sócio"])]["valor_num"].sum()
+            sai = df_s[df_s["tipo"].isin(["Devolução", "Devolução de Aporte"])]["valor_num"].sum()
             saldo_dev = ent - sai
             resumo_socios.append({
                 "Sócio": s,
@@ -987,94 +983,28 @@ elif menu == "🤝 Aportes dos Sócios":
     else:
         st.info("Nenhum aporte ou devolução registrado no momento.")
 
-# Imagem 7: Ordenação cronológica e soma do saldo acumulado da movimentação
 elif menu == "💰 Fluxo de Caixa":
     st.subheader("💰 Extrato Consolidado de Caixa")
     
     lista_movimentos = []
 
-    # 1. Movimentos diretos da tabela caixa
     if not df_caixa.empty:
         for _, r in df_caixa.iterrows():
             d_val = r.get("data") or r.get("created_at")
-            t_val = r.get("tipo", "Geral")
+            t_val = str(r.get("tipo", "Geral"))
             v_val = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce"))
             desc_val = r.get("desc") or r.get("descricao") or "Movimentação Caixa"
-            is_entrada = t_val in ["Venda", "Aporte de Sócio", "Entrada"]
+            
+            # Identificação de Entradas vs Saídas no Livro Caixa
+            is_entrada = t_val in ["Venda", "Aporte de Sócio", "Aporte", "Entrada"]
+            
             lista_movimentos.append({
                 "Data_Raw": pd.to_datetime(d_val, errors="coerce"),
                 "Data": format_data_br(d_val),
-                "Origem": "Caixa / Operações",
+                "Origem": f"Caixa ({t_val})",
                 "Descrição": desc_val,
                 "Tipo": "Entrada 🟢" if is_entrada else "Saída 🔴",
                 "Valor_Num": v_val if is_entrada else -v_val
-            })
-
-    # 2. Vendas confirmadas
-    if not df_vendas.empty:
-        col_dt_rec = "data_recebimento" if "data_recebimento" in df_vendas.columns else "data_receb"
-        if col_dt_rec in df_vendas.columns:
-            v_recebidas = df_vendas[df_vendas[col_dt_rec].notna() & (df_vendas[col_dt_rec] != "") & (df_vendas[col_dt_rec] != "None")]
-            for _, r in v_recebidas.iterrows():
-                val_v = float(pd.to_numeric(r.get("valor_venda") or r.get("valor") or 0.0, errors="coerce"))
-                cli = r.get("cliente") or r.get("nome_cliente") or ""
-                cod = r.get("codigo_bone") or r.get("codigo") or ""
-                lista_movimentos.append({
-                    "Data_Raw": pd.to_datetime(r.get(col_dt_rec), errors="coerce"),
-                    "Data": format_data_br(r.get(col_dt_rec)),
-                    "Origem": "🛒 Vendas (Recebido)",
-                    "Descrição": f"Recebimento Venda {cod} - {cli}",
-                    "Tipo": "Entrada 🟢",
-                    "Valor_Num": val_v
-                })
-
-    # 3. Compras de Produtos
-    if not df_produtos.empty:
-        for _, r in df_produtos.iterrows():
-            dt_compra = r.get("data_aquisicao") or r.get("created_at")
-            custo_unit = float(pd.to_numeric(r.get("custo", 0.0), errors="coerce"))
-            col_q = "qtd_estoque" if "qtd_estoque" in r else ("qtd" if "qtd" in r else "estoque")
-            qtd_c = int(pd.to_numeric(r.get(col_q, 1), errors="coerce"))
-            tot_c = custo_unit * qtd_c
-            if tot_c > 0:
-                lista_movimentos.append({
-                    "Data_Raw": pd.to_datetime(dt_compra, errors="coerce"),
-                    "Data": format_data_br(dt_compra),
-                    "Origem": "🛍️ Compras",
-                    "Descrição": f"Compra de Mercadoria - {r.get('codigo','')} ({qtd_c}un)",
-                    "Tipo": "Saída 🔴",
-                    "Valor_Num": -tot_c
-                })
-
-    # 4. Custos Avulsos
-    if not df_custos.empty:
-        for _, r in df_custos.iterrows():
-            val_c = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce"))
-            sub_c = r.get("subcategoria", "Custos")
-            desc_c = r.get("desc") or r.get("descricao") or "Despesa"
-            lista_movimentos.append({
-                "Data_Raw": pd.to_datetime(r.get("data"), errors="coerce"),
-                "Data": format_data_br(r.get("data")),
-                "Origem": f"💵 Custos ({sub_c})",
-                "Descrição": desc_c,
-                "Tipo": "Saída 🔴",
-                "Valor_Num": -val_c
-            })
-
-    # 5. Aportes dos Sócios
-    if not df_aportes.empty:
-        for _, r in df_aportes.iterrows():
-            val_ap = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce"))
-            tipo_ap = r.get("tipo", "Aporte")
-            socio = r.get("socio", "")
-            is_ent = tipo_ap == "Aporte"
-            lista_movimentos.append({
-                "Data_Raw": pd.to_datetime(r.get("data"), errors="coerce"),
-                "Data": format_data_br(r.get("data")),
-                "Origem": "🤝 Aportes dos Sócios",
-                "Descrição": f"{tipo_ap} - {socio}",
-                "Tipo": "Entrada 🟢" if is_ent else "Saída 🔴",
-                "Valor_Num": val_ap if is_ent else -val_ap
             })
 
     if lista_movimentos:
@@ -1083,7 +1013,7 @@ elif menu == "💰 Fluxo de Caixa":
         # Ordenação rigorosamente cronológica
         df_extrato = df_extrato.sort_values(by="Data_Raw", ascending=True).reset_index(drop=True)
         
-        # Imagem 7: Coluna de soma acumulada do saldo
+        # Cálculo sequencial do saldo acumulado
         df_extrato["Saldo_Acumulado"] = df_extrato["Valor_Num"].cumsum()
         
         df_extrato["Valor (R$)"] = df_extrato["Valor_Num"].apply(lambda v: f"R$ {abs(v):,.2f}")
