@@ -1,61 +1,93 @@
 import datetime
-import io
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as _go
+import plotly.graph_objects as go
 import streamlit as st
 from supabase import Client, create_client
 
 # 1. Configuração da Página do Streamlit
 st.set_page_config(
-    page_title="R² Bonés - Controle Gerencial",
+    page_title="R² Bonés - Controle Gerencial Pro",
     page_icon="🧢",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Estilização CSS inspirada no layout HTML
+# 2. Estilização CSS Avançada (Cores, Gradientes, Cards e Balões Interativos)
 st.markdown("""
 <style>
-    :root {
-        --bg-color: #f4f6f8;
-        --primary: #2c3e50;
-        --accent: #27ae60;
-        --danger: #e74c3c;
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
     }
+    
     .main {
-        background-color: #f4f6f8;
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
     }
-    .kpi-card {
-        background-color: #ffffff;
-        padding: 15px;
-        border-radius: 6px;
-        border-left: 5px solid #2c3e50;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        margin-bottom: 10px;
+
+    /* Banner de Cabeçalho Customizado */
+    .custom-header {
+        background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
+        padding: 22px 30px;
+        border-radius: 16px;
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        margin-bottom: 25px;
     }
+
+    /* Cards de KPIs de Alto Impacto */
+    .kpi-card-advanced {
+        background: #ffffff;
+        border-radius: 14px;
+        padding: 20px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+        border-top: 4px solid #3b82f6;
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+        position: relative;
+    }
+
+    .kpi-card-advanced:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 12px 30px rgba(0,0,0,0.12);
+    }
+
     .kpi-title {
         font-size: 0.85em;
-        color: #666;
-        margin-bottom: 5px;
-        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #64748b;
+        font-weight: 700;
+        margin-bottom: 8px;
     }
+
     .kpi-value {
-        font-size: 1.4em;
-        font-weight: bold;
-        color: #2c3e50;
+        font-size: 1.8em;
+        font-weight: 800;
+        color: #0f172a;
     }
-    .header-box {
-        background: #ffffff;
-        padding: 15px 20px;
-        border-radius: 8px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-        margin-bottom: 20px;
+
+    /* Tooltip / Balão Interativo Customizado */
+    .tooltip-icon {
+        display: inline-block;
+        background: #e2e8f0;
+        color: #475569;
+        border-radius: 50%;
+        width: 18px;
+        height: 18px;
+        text-align: center;
+        font-size: 11px;
+        line-height: 18px;
+        cursor: pointer;
+        margin-left: 6px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# 2. Inicialização do Cliente Supabase
+# 3. Inicialização do Cliente Supabase
 @st.cache_resource
 def init_supabase() -> Client:
     try:
@@ -63,7 +95,7 @@ def init_supabase() -> Client:
         key = st.secrets["SUPABASE_KEY"]
         return create_client(url, key)
     except Exception:
-        st.error("⚠️ Configuração do Supabase ausente! Verifique SUPABASE_URL e SUPABASE_KEY em Secrets.")
+        st.error("⚠️ Configuração do Supabase ausente em Secrets.")
         st.stop()
 
 supabase = init_supabase()
@@ -82,18 +114,36 @@ df_caixa = fetch_data("caixa")
 df_aportes = fetch_data("aportes")
 df_custos = fetch_data("custos_avulsos")
 
-# Header principal
-st.markdown("""
-<div class="header-box">
-    <h2 style="margin: 0; color: #2c3e50;">🧢 R² Bonés - Controle Gerencial</h2>
-</div>
-""", unsafe_allow_html=True)
+# 4. Sidebar - Suporte para Carregar Logomarca
+with st.sidebar:
+    st.markdown("### 🎨 Personalização")
+    logo_file = st.file_uploader(
+        "📷 Carregar Logo da Marca", 
+        type=["png", "jpg", "jpeg", "svg"],
+        help="Balão: Escolha uma imagem PNG ou JPG da logomarca do R² Bonés para personalizar o topo."
+    )
+    st.markdown("---")
+    st.markdown("### 💡 Balões Interativos")
+    st.info("Passe o cursor sobre o ícone ℹ️ nos indicadores para ler as explicações completas!")
 
-# Flash Messages
-if "flash_success" in st.session_state:
-    st.success(st.session_state.pop("flash_success"))
+# 5. Cabeçalho Principal com Logo
+head_col1, head_col2 = st.columns([1, 4])
+with head_col1:
+    if logo_file is not None:
+        st.image(logo_file, width=120)
+    else:
+        st.markdown("<h1 style='font-size: 80px; margin:0;'>🧢</h1>", unsafe_allow_html=True)
+with head_col2:
+    st.markdown("""
+    <div class="custom-header">
+        <div>
+            <h1 style="margin:0; font-size: 1.8em; font-weight:700;">R² Bonés — Sistema Gerencial Pro</h1>
+            <p style="margin:4px 0 0 0; opacity: 0.8; font-size: 0.95em;">Vista o que você pensa • Painel de Controle Operacional</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-# Cálculo de KPIs Rápidos Globais
+# 6. Cálculo e Exibição de KPIs com Balões Interativos (Tooltips)
 total_faturado = float(df_vendas["valor"].sum()) if not df_vendas.empty and "valor" in df_vendas.columns else 0.0
 total_cmv = float(df_vendas["custo"].sum()) if not df_vendas.empty and "custo" in df_vendas.columns else 0.0
 
@@ -109,121 +159,103 @@ if not df_produtos.empty:
     if col_qtd_p:
         total_estoque_qtd = int(pd.to_numeric(df_produtos[col_qtd_p], errors="coerce").fillna(0).sum())
 
-# Cards de KPIs do Topo
 k1, k2, k3, k4 = st.columns(4)
 with k1:
-    st.markdown(f'<div class="kpi-card" style="border-left-color: #27ae60;"><div class="kpi-title">Faturamento Total</div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'''
+    <div class="kpi-card-advanced" style="border-top-color: #10b981;">
+        <div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total em Reais de todas as vendas registradas">ℹ️</span></div>
+        <div class="kpi-value">R$ {total_faturado:,.2f}</div>
+    </div>
+    ''', unsafe_allow_html=True)
 with k2:
-    st.markdown(f'<div class="kpi-card" style="border-left-color: #e74c3c;"><div class="kpi-title">CMV (Custo Bonés Vendidos)</div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'''
+    <div class="kpi-card-advanced" style="border-top-color: #ef4444;">
+        <div class="kpi-title">CMV Total <span class="tooltip-icon" title="Custo das mercadorias vendidas nos bonés faturados">ℹ️</span></div>
+        <div class="kpi-value">R$ {total_cmv:,.2f}</div>
+    </div>
+    ''', unsafe_allow_html=True)
 with k3:
-    st.markdown(f'<div class="kpi-card" style="border-left-color: #f39c12;"><div class="kpi-title">Saldo em Caixa</div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'''
+    <div class="kpi-card-advanced" style="border-top-color: #f59e0b;">
+        <div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido disponível acumulado">ℹ️</span></div>
+        <div class="kpi-value">R$ {saldo_caixa:,.2f}</div>
+    </div>
+    ''', unsafe_allow_html=True)
 with k4:
-    st.markdown(f'<div class="kpi-card" style="border-left-color: #2980b9;"><div class="kpi-title">Itens no Estoque</div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
+    st.markdown(f'''
+    <div class="kpi-card-advanced" style="border-top-color: #3b82f6;">
+        <div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total física de unidades de bonés disponíveis">ℹ️</span></div>
+        <div class="kpi-value">{total_estoque_qtd} un</div>
+    </div>
+    ''', unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# Navegação idêntica às Abas do HTML
+# 7. Menu Navegação Principal
 menu = st.radio(
-    "Navegação:",
-    [
-        "📈 Dashboard",
-        "🛒 Vendas",
-        "🛍️ Compras",
-        "📦 Estoque",
-        "💵 Custos",
-        "🤝 Aportes dos Sócios",
-        "💰 Fluxo de Caixa"
-    ],
-    horizontal=True
+    "📌 Selecione o Módulo:",
+    ["📈 Dashboard", "🛒 Vendas", "🛍️ Compras", "📦 Estoque", "💵 Custos", "🤝 Aportes dos Sócios", "💰 Fluxo de Caixa"],
+    horizontal=True,
+    help="Balão: Clique em uma das abas para navegar entre as telas do sistema."
 )
 
 st.markdown("---")
 
 # ==============================================================================
-# 1. DASHBOARD
+# 1. DASHBOARD COM GRÁFICOS INTERATIVOS
 # ==============================================================================
 if menu == "📈 Dashboard":
-    st.subheader("📈 Painel Executivo")
+    st.subheader("📊 Painel Interativo de Performance")
     
-    # Filtro de mês
     meses_disponiveis = ["TODOS"]
     if not df_vendas.empty and "data" in df_vendas.columns:
         df_vendas["mes_ano"] = df_vendas["data"].astype(str).str.slice(0, 7)
         meses_disponiveis.extend(sorted(df_vendas["mes_ano"].unique().tolist()))
     
-    mes_sel = st.selectbox("📅 Mês do Dashboard:", list(set(meses_disponiveis)))
+    mes_sel = st.selectbox(
+        "📅 Selecionar Período / Mês:", 
+        list(set(meses_disponiveis)),
+        help="Balão: Selecione o mês para filtrar automaticamente todos os dados e gráficos do painel."
+    )
     
     df_vendas_fil = df_vendas.copy()
     if mes_sel != "TODOS" and not df_vendas_fil.empty:
         df_vendas_fil = df_vendas_fil[df_vendas_fil["data"].astype(str).str.startswith(mes_sel)]
         
-    fat_fil = float(df_vendas_fil["valor"].sum()) if not df_vendas_fil.empty and "valor" in df_vendas_fil.columns else 0.0
-    cmv_fil = float(df_vendas_fil["custo"].sum()) if not df_vendas_fil.empty and "custo" in df_vendas_fil.columns else 0.0
-    margem = (((fat_fil - cmv_fil) / fat_fil) * 100) if fat_fil > 0 else 0.0
-    ticket = (fat_fil / len(df_vendas_fil)) if not df_vendas_fil.empty and len(df_vendas_fil) > 0 else 0.0
-    
-    capital_estoque = 0.0
-    if not df_produtos.empty:
-        c_custo = "custo" if "custo" in df_produtos.columns else None
-        c_qtd = "qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else None)
-        if c_custo and c_qtd:
-            custo_serie = pd.to_numeric(df_produtos[c_custo], errors="coerce").fillna(0)
-            qtd_serie = pd.to_numeric(df_produtos[c_qtd], errors="coerce").fillna(0)
-            capital_estoque = float((custo_serie * qtd_serie).sum())
-
-    dk1, dk2, dk3 = st.columns(3)
-    with dk1:
-        st.markdown(f'<div class="kpi-card" style="border-left-color: #8e44ad;"><div class="kpi-title">Margem Bruta</div><div class="kpi-value">{margem:.1f}%</div></div>', unsafe_allow_html=True)
-    with dk2:
-        st.markdown(f'<div class="kpi-card" style="border-left-color: #16a085;"><div class="kpi-title">Ticket Médio</div><div class="kpi-value">R$ {ticket:,.2f}</div></div>', unsafe_allow_html=True)
-    with dk3:
-        st.markdown(f'<div class="kpi-card" style="border-left-color: #d35400;"><div class="kpi-title">Capital Parado em Estoque</div><div class="kpi-value">R$ {capital_estoque:,.2f}</div></div>', unsafe_allow_html=True)
-
     g1, g2 = st.columns(2)
     with g1:
-        st.markdown("#### 📊 Faturamento vs. CMV (Mês a Mês)")
+        st.markdown("#### 🟢 Faturamento vs. 🔴 CMV")
         if not df_vendas_fil.empty and "data" in df_vendas_fil.columns:
             df_vendas_fil["mes"] = df_vendas_fil["data"].astype(str).str.slice(0, 7)
             agrup = df_vendas_fil.groupby("mes")[["valor", "custo"]].sum().reset_index()
-            fig1 = px.bar(agrup, x="mes", y=["valor", "custo"], barmode="group", labels={"value": "R$", "variable": "Tipo", "mes": "Mês"}, color_discrete_map={"valor": "#27ae60", "custo": "#e74c3c"})
+            fig1 = px.bar(
+                agrup, x="mes", y=["valor", "custo"], barmode="group",
+                color_discrete_sequence=["#10b981", "#ef4444"],
+                labels={"value": "Valor (R$)", "variable": "Indicador", "mes": "Mês"},
+                template="plotly_white"
+            )
+            fig1.update_layout(hovermode="x unified")
             st.plotly_chart(fig1, use_container_width=True)
         else:
-            st.info("Sem dados suficientes para exibir o gráfico.")
+            st.info("Sem dados suficientes para gerar o gráfico.")
 
     with g2:
-        st.markdown("#### 🎨 Cores Mais Vendidas (Qtd Total)")
+        st.markdown("#### 🎨 Cores Mais Vendidas")
         if not df_vendas_fil.empty and "codigo" in df_vendas_fil.columns and not df_produtos.empty:
             df_m = df_vendas_fil.merge(df_produtos, on="codigo", how="left")
             cor_col = "cor" if "cor" in df_m.columns else "cor_x"
             if cor_col in df_m.columns:
                 qtd_col = "qtd_x" if "qtd_x" in df_m.columns else ("qtd" if "qtd" in df_m.columns else "qtd_y")
                 agrup_cor = df_m.groupby(cor_col)[qtd_col].sum().reset_index()
-                fig2 = px.pie(agrup_cor, names=cor_col, values=qtd_col, hole=0.4)
+                fig2 = px.pie(
+                    agrup_cor, names=cor_col, values=qtd_col, hole=0.45,
+                    color_discrete_sequence=px.colors.qualitative.Pastel
+                )
                 st.plotly_chart(fig2, use_container_width=True)
             else:
-                st.info("Sem informações de cor nos produtos.")
+                st.info("Sem informação de cor cadastrada.")
         else:
-            st.info("Sem vendas para exibir o gráfico de cores.")
-
-    g3, g4 = st.columns(2)
-    with g3:
-        st.markdown("#### 💰 Evolução do Fluxo de Caixa")
-        if not df_caixa.empty and "data" in df_caixa.columns:
-            df_caixa["mes"] = df_caixa["data"].astype(str).str.slice(0, 7)
-            agrup_cx = df_caixa.groupby(["mes", "tipo"])["valor"].sum().reset_index()
-            fig3 = px.line(agrup_cx, x="mes", y="valor", color="tipo", markers=True)
-            st.plotly_chart(fig3, use_container_width=True)
-        else:
-            st.info("Sem movimentações financeiras no caixa.")
-
-    with g4:
-        st.markdown("#### 🤝 Participação de Investimento dos Sócios")
-        if not df_aportes.empty and "socio" in df_aportes.columns:
-            agrup_soc = df_aportes.groupby("socio")["valor"].sum().reset_index()
-            fig4 = px.pie(agrup_soc, names="socio", values="valor", color_discrete_map={"Renan": "#2c3e50", "Ronald": "#8e44ad"})
-            st.plotly_chart(fig4, use_container_width=True)
-        else:
-            st.info("Nenhum aporte registrado.")
+            st.info("Nenhuma venda registrada para os produtos.")
 
 # ==============================================================================
 # 2. VENDAS
@@ -234,21 +266,21 @@ elif menu == "🛒 Vendas":
     if not df_produtos.empty and "codigo" in df_produtos.columns:
         c_qtd_p = "qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else None)
         opts = [f"[{r['codigo']}] \"{r.get('frase','')}\" (Disponível: {r.get(c_qtd_p, 0) if c_qtd_p else 0} un)" for _, r in df_produtos.iterrows()]
-        prod_sel = st.selectbox("🔍 Selecionar Produto do Estoque *", opts)
+        prod_sel = st.selectbox("🔍 Selecionar Boné do Estoque *", opts, help="Balão: Pesquise e escolha o modelo do boné disponível.")
         
         c1, c2, c3 = st.columns(3)
         with c1:
             codigo_sel = prod_sel.split("]")[0].replace("[", "").strip() if prod_sel else ""
-            qtd_venda = st.number_input("Quantidade *", min_value=1, value=1, step=1)
+            qtd_venda = st.number_input("Quantidade *", min_value=1, value=1, step=1, help="Balão: Unidades vendidas ao cliente.")
             cliente = st.text_input("Nome do Cliente *")
         with c2:
             valor_venda = st.number_input("Valor Total (R$) *", min_value=0.0, value=60.0, step=5.0)
             forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
         with c3:
             data_venda = st.date_input("Data da Venda *", datetime.date.today())
-            data_receb = st.date_input("Data de Recebimento (Opcional)", value=None)
+            data_receb = st.date_input("Data de Recebimento (Opcional)", value=None, help="Balão: Se preenchida, lança automaticamente o valor no Fluxo de Caixa.")
 
-        if st.button("Finalizar Venda", type="primary", use_container_width=True):
+        if st.button("🚀 Finalizar Venda", type="primary", use_container_width=True):
             if not cliente.strip():
                 st.error("Informe o nome do cliente!")
             else:
@@ -267,7 +299,6 @@ elif menu == "🛒 Vendas":
                 }
                 supabase.table("vendas").insert(nova_venda).execute()
                 
-                # Lança no Caixa apenas se houver Data de Recebimento preenchida
                 if data_receb and valor_venda > 0:
                     supabase.table("caixa").insert({
                         "data": str(data_receb),
@@ -283,8 +314,6 @@ elif menu == "🛒 Vendas":
     st.subheader("📋 Histórico Detalhado de Vendas")
     if not df_vendas.empty:
         st.dataframe(df_vendas, use_container_width=True, hide_index=True)
-    else:
-        st.info("Nenhuma venda registrada.")
 
 # ==============================================================================
 # 3. COMPRAS
@@ -305,7 +334,7 @@ elif menu == "🛍️ Compras":
             qtd_c = st.number_input("Qtd Comprada *", min_value=1, value=1)
             dt_aquisicao = st.date_input("Data da Aquisição *", datetime.date.today())
 
-        btn_compra = st.form_submit_button("Adicionar / Atualizar Compra", use_container_width=True)
+        btn_compra = st.form_submit_button("➕ Adicionar / Atualizar Compra", use_container_width=True)
         if btn_compra:
             if not cod_c.strip():
                 st.error("Informe o código do produto!")
@@ -321,7 +350,6 @@ elif menu == "🛍️ Compras":
                 }
                 supabase.table("produtos").upsert(novo_prod, on_conflict="codigo").execute()
                 
-                # Lançamento automático no caixa para compra de estoque
                 custo_total = float(custo_c * qtd_c)
                 if custo_total > 0:
                     supabase.table("caixa").insert({
@@ -331,23 +359,19 @@ elif menu == "🛍️ Compras":
                         "valor": custo_total
                     }).execute()
 
-                st.session_state["flash_success"] = f"🎉 Compra do produto {cod_c} registrada com sucesso!"
+                st.session_state["flash_success"] = f"🎉 Compra do produto {cod_c} registrada!"
                 st.rerun()
 
     st.markdown("---")
     st.subheader("📋 Histórico Permanente de Aquisições")
     if not df_produtos.empty:
         st.dataframe(df_produtos, use_container_width=True, hide_index=True)
-    else:
-        st.info("Nenhuma aquisição registrada.")
 
 # ==============================================================================
 # 4. ESTOQUE
 # ==============================================================================
 elif menu == "📦 Estoque":
     st.subheader("📦 Estoque Atual em Tempo Real (Saldo Disponível)")
-    st.caption("Esta aba reflete os saldos disponíveis em estoque.")
-
     if not df_produtos.empty:
         df_est = df_produtos.copy()
         df_est["Status"] = "Disponível"
@@ -364,10 +388,9 @@ elif menu == "💵 Custos":
     sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷️ Custos de Venda", "🎪 Feiras"], horizontal=True)
 
     if sub_tab == "📦 Mercadorias":
-        st.markdown("#### Histórico Agrupado de Aquisições de Mercadorias")
+        st.markdown("#### Histórico Agrupado de Aquisições")
         if not df_produtos.empty:
             df_m = df_produtos.copy()
-            # Tratamento seguro para colunas inexistentes ou com nomes alternativos
             col_custo = "custo" if "custo" in df_m.columns else None
             col_qtd = "qtd" if "qtd" in df_m.columns else ("estoque" if "estoque" in df_m.columns else None)
 
@@ -376,19 +399,12 @@ elif menu == "💵 Custos":
                 df_m["qtd_num"] = pd.to_numeric(df_m[col_qtd], errors="coerce").fillna(0)
                 df_m["Custo Total"] = df_m["custo_num"] * df_m["qtd_num"]
                 
-                cols_para_exibir = []
-                for col in ["dataAquisicao", "categoria", col_qtd, col_custo, "Custo Total"]:
-                    if col in df_m.columns:
-                        cols_para_exibir.append(col)
-                
+                cols_para_exibir = [c for c in ["dataAquisicao", "categoria", col_qtd, col_custo, "Custo Total"] if c in df_m.columns]
                 st.dataframe(df_m[cols_para_exibir], use_container_width=True, hide_index=True)
             else:
                 st.dataframe(df_m, use_container_width=True, hide_index=True)
-        else:
-            st.info("Nenhuma mercadoria cadastrada.")
 
     elif sub_tab == "🏷️ Custos de Venda":
-        st.markdown("#### Lançar / Registrar Custo de Venda")
         with st.form("form_cv"):
             c1, c2, c3 = st.columns(3)
             with c1:
@@ -400,53 +416,29 @@ elif menu == "💵 Custos":
                 val_cv = st.number_input("Valor (R$) *", min_value=0.01, value=10.0)
 
             if st.form_submit_button("Adicionar Custo de Venda", use_container_width=True):
-                c_dict = {
-                    "subcategoria": "Custos de Venda",
-                    "data": str(dt_cv),
-                    "desc": desc_cv.strip(),
-                    "tipo": tipo_cv,
-                    "valor": float(val_cv)
-                }
+                c_dict = {"subcategoria": "Custos de Venda", "data": str(dt_cv), "desc": desc_cv.strip(), "tipo": tipo_cv, "valor": float(val_cv)}
                 supabase.table("custos_avulsos").insert(c_dict).execute()
-                supabase.table("caixa").insert({
-                    "data": str(dt_cv),
-                    "desc": f"[Custos de Venda] {desc_cv.strip()}",
-                    "tipo": tipo_cv,
-                    "valor": float(val_cv)
-                }).execute()
-                st.session_state["flash_success"] = "Custo de venda registrado com sucesso!"
+                supabase.table("caixa").insert({"data": str(dt_cv), "desc": f"[Custos de Venda] {desc_cv.strip()}", "tipo": tipo_cv, "valor": float(val_cv)}).execute()
+                st.session_state["flash_success"] = "Custo registrado!"
                 st.rerun()
 
     elif sub_tab == "🎪 Feiras":
-        st.markdown("#### Lançar / Registrar Custo de Feiras")
         with st.form("form_cf"):
             c1, c2, c3 = st.columns(3)
             with c1:
                 dt_cf = st.date_input("Data *", datetime.date.today())
-                feira_cf = st.text_input("Nome da Feira (ex: Feirarte) *")
+                feira_cf = st.text_input("Nome da Feira *")
             with c2:
-                desc_cf = st.text_input("Descrição da despesa *")
+                desc_cf = st.text_input("Descrição *")
                 tipo_cf = st.selectbox("Tipo de Despesa *", ["Alimentação", "Decoração", "Instalação", "Taxa de Inscrição", "Transporte"])
             with c3:
                 val_cf = st.number_input("Valor (R$) *", min_value=0.01, value=50.0)
 
             if st.form_submit_button("Adicionar Custo de Feira", use_container_width=True):
-                c_dict = {
-                    "subcategoria": "Feiras",
-                    "data": str(dt_cf),
-                    "nomeFeira": feira_cf.strip(),
-                    "desc": desc_cf.strip(),
-                    "tipo": tipo_cf,
-                    "valor": float(val_cf)
-                }
+                c_dict = {"subcategoria": "Feiras", "data": str(dt_cf), "nomeFeira": feira_cf.strip(), "desc": desc_cf.strip(), "tipo": tipo_cf, "valor": float(val_cf)}
                 supabase.table("custos_avulsos").insert(c_dict).execute()
-                supabase.table("caixa").insert({
-                    "data": str(dt_cf),
-                    "desc": f"[Feira: {feira_cf.strip()}] {desc_cf.strip()}",
-                    "tipo": tipo_cf,
-                    "valor": float(val_cf)
-                }).execute()
-                st.session_state["flash_success"] = "Custo de feira registrado com sucesso!"
+                supabase.table("caixa").insert({"data": str(dt_cf), "desc": f"[Feira: {feira_cf.strip()}] {desc_cf.strip()}", "tipo": tipo_cf, "valor": float(val_cf)}).execute()
+                st.session_state["flash_success"] = "Custo de feira registrado!"
                 st.rerun()
 
 # ==============================================================================
@@ -454,7 +446,6 @@ elif menu == "💵 Custos":
 # ==============================================================================
 elif menu == "🤝 Aportes dos Sócios":
     st.subheader("🤝 Registro de Aportes e Devoluções")
-    
     c1, c2, c3 = st.columns(3)
     with c1:
         dt_ap = st.date_input("Data *", datetime.date.today())
@@ -468,29 +459,21 @@ elif menu == "🤝 Aportes dos Sócios":
         if st.button("🤝 Registrar Aporte", use_container_width=True, type="primary"):
             supabase.table("aportes").insert({"data": str(dt_ap), "socio": socio_ap, "valor": float(val_ap), "tipo": "Aporte"}).execute()
             supabase.table("caixa").insert({"data": str(dt_ap), "desc": f"Aporte ({socio_ap})", "tipo": "Aporte de Sócio", "valor": float(val_ap)}).execute()
-            st.session_state["flash_success"] = f"Aporte de R$ {val_ap:.2f} registrado para {socio_ap}!"
+            st.session_state["flash_success"] = f"Aporte registrado para {socio_ap}!"
             st.rerun()
 
     with col_btn2:
         if st.button("🔄 Devolução de Aporte", use_container_width=True):
             supabase.table("aportes").insert({"data": str(dt_ap), "socio": socio_ap, "valor": float(val_ap), "tipo": "Devolução"}).execute()
             supabase.table("caixa").insert({"data": str(dt_ap), "desc": f"Devolução ({socio_ap})", "tipo": "Devolução de Aporte", "valor": float(val_ap)}).execute()
-            st.session_state["flash_success"] = f"Devolução de R$ {val_ap:.2f} registrada para {socio_ap}!"
+            st.session_state["flash_success"] = f"Devolução registrada para {socio_ap}!"
             st.rerun()
-
-    st.markdown("---")
-    st.subheader("Resumo dos Sócios")
-    if not df_aportes.empty:
-        totais = df_aportes.groupby("socio")["valor"].sum().reset_index()
-        st.dataframe(totais, use_container_width=True, hide_index=True)
 
 # ==============================================================================
 # 7. FLUXO DE CAIXA
 # ==============================================================================
 elif menu == "💰 Fluxo de Caixa":
-    st.subheader("💰 Extrato Consolidado de Caixa (Repositório)")
-    st.caption("Exibe o extrato consolidado com o saldo acumulado após cada movimentação.")
-
+    st.subheader("💰 Extrato Consolidado de Caixa")
     if not df_caixa.empty:
         st.dataframe(df_caixa, use_container_width=True, hide_index=True)
     else:
