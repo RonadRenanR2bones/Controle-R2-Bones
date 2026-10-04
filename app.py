@@ -356,6 +356,51 @@ elif menu == "🛒 Vendas":
                 st.session_state["flash_success"] = f"🎉 Venda salva com sucesso!"
                 st.rerun()
 
+    # MELHORIA 2: Segunda Etapa - Vendas Pendentes de Recebimento
+    st.markdown("---")
+    st.subheader("⏳ Vendas Pendentes de Recebimento")
+    if not df_vendas.empty:
+        col_dt_rec = "data_recebimento" if "data_recebimento" in df_vendas.columns else ("data_receb" if "data_receb" in df_vendas.columns else None)
+        if col_dt_rec:
+            df_pendentes = df_vendas[df_vendas[col_dt_rec].isna() | (df_vendas[col_dt_rec] == "") | (df_vendas[col_dt_rec] == "None")]
+        else:
+            df_pendentes = pd.DataFrame()
+
+        if not df_pendentes.empty:
+            opts_pend = [f"ID {r['id']} | {r.get('cliente','')} - R$ {r.get('valor',0.0):,.2f} (Venda: {r.get('data','')})" for _, r in df_pendentes.iterrows()]
+            venda_sel = st.selectbox("📌 Selecione uma Venda para Confirmar o Recebimento:", opts_pend)
+            
+            c_rec1, c_rec2 = st.columns(2)
+            with c_rec1:
+                dt_confirmada = st.date_input("Data Efetiva de Recebimento *", datetime.date.today(), key="dt_conf_rec")
+            with c_rec2:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("✅ Confirmar Recebimento", use_container_width=True, type="primary"):
+                    venda_id = int(venda_sel.split("|")[0].replace("ID", "").strip())
+                    row_v = df_pendentes[df_pendentes["id"] == venda_id].iloc[0]
+                    
+                    # Atualiza a data de recebimento da venda
+                    supabase.table("vendas").update({col_dt_rec: str(dt_confirmada)}).eq("id", venda_id).execute()
+                    
+                    # Insere o lançamento de entrada no Fluxo de Caixa
+                    if float(row_v.get("valor", 0)) > 0:
+                        supabase.table("caixa").insert({
+                            "data": str(dt_confirmada),
+                            "desc": f"Venda {row_v.get('codigo','')} ({row_v.get('qtd',1)}un) - {row_v.get('cliente','')}",
+                            "tipo": "Venda",
+                            "valor": float(row_v.get("valor", 0))
+                        }).execute()
+                    
+                    st.success("🎉 Recebimento confirmado e lançado no caixa!")
+                    st.rerun()
+
+            cols_pend_exibir = [col for col in df_pendentes.columns if col not in ["created_at"]]
+            st.dataframe(df_pendentes[cols_pend_exibir], use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhuma venda pendente de recebimento no momento.")
+    else:
+        st.info("Nenhuma venda registrada.")
+
     st.markdown("---")
     st.subheader("📋 Histórico Detalhado de Vendas")
     if not df_vendas.empty:
@@ -392,7 +437,6 @@ elif menu == "🛍️ Compras":
     col_qtd_nome = "qtd_estoque" if "qtd_estoque" in dados_item else ("qtd" if "qtd" in dados_item else "estoque")
 
     with st.form("form_compra"):
-        # Reorganizado na ordem solicitada: 1. Código, 2. Cor do Boné, 3. Arte Estampada, 4. Cor Estampada, 5. Produto
         c1, c2, c3 = st.columns(3)
         with c1:
             cod_c = st.text_input("Código (ex: BL-0001) *", value=str(dados_item.get("codigo", "")), disabled=is_edicao)
@@ -401,8 +445,9 @@ elif menu == "🛍️ Compras":
             frase_c = st.text_input("Arte Estampada *", value=str(dados_item.get("frase", "")))
             cor_estampa_c = st.text_input("Cor Estampada *", value=str(dados_item.get("cor_estampa", "")))
         with c3:
-            cat_opts = ["Liso", "Premium", "Básico"]
-            cat_val = str(dados_item.get("categoria", "Liso"))
+            # MELHORIA 1: Excluído "Liso", adicionados "Kids" e "Outro", organizados em ordem alfabética
+            cat_opts = ["Básico", "Kids", "Outro", "Premium"]
+            cat_val = str(dados_item.get("categoria", "Básico"))
             idx_cat = cat_opts.index(cat_val) if cat_val in cat_opts else 0
             cat_c = st.selectbox("Produto", cat_opts, index=idx_cat)
             custo_c = st.number_input("Custo Unitário (R$) *", min_value=0.0, value=float(dados_item.get("custo", 29.0)))
