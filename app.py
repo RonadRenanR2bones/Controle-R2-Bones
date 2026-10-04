@@ -355,20 +355,19 @@ elif menu == "🛒 Vendas":
                 dt_receb_str = str(data_receb) if data_receb is not None else None
 
                 raw_venda = {
-                    "codigo": codigo_sel,
-                    "codigo_produto": codigo_sel,
                     "qtd": int(qtd_venda),
                     "cliente": cliente.strip(),
                     "valor": float(valor_venda),
-                    "pagto": forma_pagto,
                     "forma_pagto": forma_pagto,
+                    "pagto": forma_pagto,
                     "data": str(data_venda),
                     "data_recebimento": dt_receb_str,
                     "custo": float(custo_unit * qtd_venda)
                 }
 
-                # AJUSTE DE COMPATIBILIDADE: Filtrar apenas as colunas existentes na tabela "vendas"
+                # COMPATIBILIDADE DINÂMICA: Ajustar payload baseando-se estritamente nas colunas da tabela 'vendas'
                 cols_vendas = df_vendas.columns.tolist() if not df_vendas.empty else []
+                
                 if cols_vendas:
                     payload_venda = {k: v for k, v in raw_venda.items() if k in cols_vendas}
                     if dt_receb_str is None and "data_recebimento" in payload_venda:
@@ -379,8 +378,7 @@ elif menu == "🛒 Vendas":
                         "cliente": cliente.strip(),
                         "valor": float(valor_venda),
                         "forma_pagto": forma_pagto,
-                        "data": str(data_venda),
-                        "custo": float(custo_unit * qtd_venda)
+                        "data": str(data_venda)
                     }
                     if dt_receb_str:
                         payload_venda["data_recebimento"] = dt_receb_str
