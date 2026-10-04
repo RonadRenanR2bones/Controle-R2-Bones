@@ -26,9 +26,10 @@ st.markdown("""
         background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
     }
 
+    /* Container do Cabeçalho Padrão (Sem Logo Carregada) */
     .custom-header-container {
         background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
-        padding: 20px 30px;
+        padding: 22px 30px;
         border-radius: 16px;
         color: white;
         display: flex;
@@ -52,6 +53,7 @@ st.markdown("""
         font-size: 1.05em;
     }
 
+    /* Cards de KPIs */
     .kpi-card-advanced {
         background: #ffffff;
         border-radius: 14px;
@@ -82,6 +84,7 @@ st.markdown("""
         color: #0f172a;
     }
 
+    /* Tooltip / Balão Interativo Customizado */
     .tooltip-icon {
         display: inline-block;
         background: #e2e8f0;
@@ -126,7 +129,7 @@ df_caixa = fetch_data("caixa")
 df_aportes = fetch_data("aportes")
 df_custos = fetch_data("custos_avulsos")
 
-# 3. Sidebar (Barra Lateral Esquerda) Ocultável com Módulos e Personalização no Fim
+# 3. Sidebar (Barra Lateral Esquerda) Ocultável
 with st.sidebar:
     st.markdown("### 📌 Módulos do Sistema")
     menu = st.radio(
@@ -142,23 +145,12 @@ with st.sidebar:
         logo_file = st.file_uploader(
             "Carregar Logo da Marca", 
             type=["png", "jpg", "jpeg", "svg"],
-            help="Envie a logomarca para exibir no cabeçalho principal."
+            help="Envie a logomarca para substituir todo o cabeçalho principal."
         )
 
-# 4. Cabeçalho Integrado com a Logomarca em Destaque
+# 4. Cabeçalho Integrado: Se houver Logo enviada, exibe em toda a extensão
 if logo_file is not None:
-    head_col1, head_col2 = st.columns([1.5, 3.5])
-    with head_col1:
-        st.image(logo_file, use_container_width=True)
-    with head_col2:
-        st.markdown("""
-        <div class="custom-header-container" style="height: 100%;">
-            <div class="header-text">
-                <h1>R² Bonés — Sistema Gerencial Pro</h1>
-                <p>Vista o que você pensa • Painel de Controle Operacional</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    st.image(logo_file, use_container_width=True)
 else:
     st.markdown("""
     <div class="custom-header-container">
@@ -170,37 +162,41 @@ else:
     </div>
     """, unsafe_allow_html=True)
 
-# 5. Cálculo e Exibição dos KPIs
-total_faturado = float(df_vendas["valor"].sum()) if not df_vendas.empty and "valor" in df_vendas.columns else 0.0
-total_cmv = float(df_vendas["custo"].sum()) if not df_vendas.empty and "custo" in df_vendas.columns else 0.0
-
-saldo_caixa = 0.0
-if not df_caixa.empty and "valor" in df_caixa.columns and "tipo" in df_caixa.columns:
-    entradas = df_caixa[df_caixa["tipo"].isin(["Venda", "Aporte de Sócio", "Entrada"])]["valor"].sum()
-    saidas = df_caixa[~df_caixa["tipo"].isin(["Venda", "Aporte de Sócio", "Entrada"])]["valor"].sum()
-    saldo_caixa = float(entradas - saidas)
-
-total_estoque_qtd = 0
-if not df_produtos.empty:
-    col_qtd_p = "qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else None)
-    if col_qtd_p:
-        total_estoque_qtd = int(pd.to_numeric(df_produtos[col_qtd_p], errors="coerce").fillna(0).sum())
-
-k1, k2, k3, k4 = st.columns(4)
-with k1:
-    st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ️</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
-with k2:
-    st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV Total <span class="tooltip-icon" title="Custo das mercadorias vendidas nos bonés faturados">ℹ️</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
-with k3:
-    st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ️</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
-with k4:
-    st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
-
 st.markdown("<br>", unsafe_allow_html=True)
 
-# 6. Módulos
+# 5. Lógica dos Módulos
 if menu == "📈 Dashboard":
-    st.subheader("📊 Painel Interativo de Performance")
+    st.subheader("📈 Dashboard Executivo")
+    
+    # Cálculos Globais de KPIs
+    total_faturado = float(df_vendas["valor"].sum()) if not df_vendas.empty and "valor" in df_vendas.columns else 0.0
+    total_cmv = float(df_vendas["custo"].sum()) if not df_vendas.empty and "custo" in df_vendas.columns else 0.0
+
+    saldo_caixa = 0.0
+    if not df_caixa.empty and "valor" in df_caixa.columns and "tipo" in df_caixa.columns:
+        entradas = df_caixa[df_caixa["tipo"].isin(["Venda", "Aporte de Sócio", "Entrada"])]["valor"].sum()
+        saidas = df_caixa[~df_caixa["tipo"].isin(["Venda", "Aporte de Sócio", "Entrada"])]["valor"].sum()
+        saldo_caixa = float(entradas - saidas)
+
+    total_estoque_qtd = 0
+    if not df_produtos.empty:
+        col_qtd_p = "qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else None)
+        if col_qtd_p:
+            total_estoque_qtd = int(pd.to_numeric(df_produtos[col_qtd_p], errors="coerce").fillna(0).sum())
+
+    # Cards de KPIs (EXIBIDOS APENAS DENTRO DO DASHBOARD)
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ️</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
+    with k2:
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV Total <span class="tooltip-icon" title="Custo das mercadorias vendidas nos bonés faturados">ℹ️</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
+    with k3:
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ️</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
+    with k4:
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    
     meses_disponiveis = ["TODOS"]
     if not df_vendas.empty and "data" in df_vendas.columns:
         df_vendas["mes_ano"] = df_vendas["data"].astype(str).str.slice(0, 7)
@@ -293,7 +289,7 @@ elif menu == "🛒 Vendas":
     if not df_vendas.empty:
         st.dataframe(df_vendas, use_container_width=True, hide_index=True)
 
-elif menu == "🛍️ Compras":
+elif menu == "🛍️️ Compras":
     st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
     with st.form("form_compra"):
         c1, c2, c3 = st.columns(3)
