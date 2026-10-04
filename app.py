@@ -276,7 +276,7 @@ if menu == "📈 Dashboard":
     with k3:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ️</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
     with k4:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -354,43 +354,29 @@ elif menu == "🛒 Vendas":
                 
                 dt_receb_str = str(data_receb) if data_receb is not None else None
 
-                nova_venda = {
+                raw_venda = {
+                    "codigo": codigo_sel,
                     "qtd": int(qtd_venda),
                     "cliente": cliente.strip(),
                     "valor": float(valor_venda),
+                    "pagto": forma_pagto,
+                    "forma_pagto": forma_pagto,
                     "data": str(data_venda),
+                    "data_recebimento": dt_receb_str,
                     "custo": float(custo_unit * qtd_venda)
                 }
 
-                # Mapeamento dinâmico do nome da coluna de código do produto na tabela "vendas"
-                colunas_vendas = df_vendas.columns.tolist() if not df_vendas.empty else ["codigo", "pagto", "data_recebimento"]
-                
-                # Tratar chave do código
-                if "codigo" in colunas_vendas:
-                    nova_venda["codigo"] = codigo_sel
-                elif "codigo_produto" in colunas_vendas:
-                    nova_venda["codigo_produto"] = codigo_sel
-                elif "cod_produto" in colunas_vendas:
-                    nova_venda["cod_produto"] = codigo_sel
-                elif "codigo_bone" in colunas_vendas:
-                    nova_venda["codigo_bone"] = codigo_sel
+                # CORREÇÃO 1: Filtrar apenas as colunas existentes na tabela "vendas"
+                cols_vendas = df_vendas.columns.tolist() if not df_vendas.empty else []
+                if cols_vendas:
+                    payload_venda = {k: v for k, v in raw_venda.items() if k in cols_vendas}
+                    if dt_receb_str is None and "data_recebimento" in payload_venda:
+                        payload_venda["data_recebimento"] = None
                 else:
-                    nova_venda["codigo"] = codigo_sel
-
-                # Tratar chave do pagamento
-                if "forma_pagto" in colunas_vendas:
-                    nova_venda["forma_pagto"] = forma_pagto
-                else:
-                    nova_venda["pagto"] = forma_pagto
-
-                # Tratar chave da data de recebimento
-                if "data_receb" in colunas_vendas:
-                    nova_venda["data_receb"] = dt_receb_str
-                else:
-                    nova_venda["data_recebimento"] = dt_receb_str
+                    payload_venda = raw_venda
 
                 try:
-                    supabase.table("vendas").insert(nova_venda).execute()
+                    supabase.table("vendas").insert(payload_venda).execute()
                     
                     if dt_receb_str and valor_venda > 0:
                         supabase.table("caixa").insert({
@@ -673,11 +659,29 @@ elif menu == "💵 Custos":
                 val_cv = st.number_input("Valor (R$) *", min_value=0.01, value=10.0)
 
             if st.form_submit_button("Adicionar Custo de Venda", use_container_width=True):
-                c_dict = {"subcategoria": "Custos de Venda", "data": str(dt_cv), "desc": desc_cv.strip(), "tipo": tipo_cv, "valor": float(val_cv)}
-                supabase.table("custos_avulsos").insert(c_dict).execute()
-                supabase.table("caixa").insert({"data": str(dt_cv), "desc": f"[Custos de Venda] {desc_cv.strip()}", "tipo": tipo_cv, "valor": float(val_cv)}).execute()
-                st.session_state["flash_success"] = "Custo registrado!"
-                st.rerun()
+                # CORREÇÃO 2: Filtrar apenas as colunas existentes na tabela "custos_avulsos"
+                raw_c_dict = {
+                    "subcategoria": "Custos de Venda",
+                    "data": str(dt_cv),
+                    "desc": desc_cv.strip(),
+                    "descricao": desc_cv.strip(),
+                    "tipo": tipo_cv,
+                    "valor": float(val_cv)
+                }
+
+                cols_custos = df_custos.columns.tolist() if not df_custos.empty else []
+                if cols_custos:
+                    c_dict = {k: v for k, v in raw_c_dict.items() if k in cols_custos}
+                else:
+                    c_dict = {"subcategoria": "Custos de Venda", "data": str(dt_cv), "desc": desc_cv.strip(), "tipo": tipo_cv, "valor": float(val_cv)}
+
+                try:
+                    supabase.table("custos_avulsos").insert(c_dict).execute()
+                    supabase.table("caixa").insert({"data": str(dt_cv), "desc": f"[Custos de Venda] {desc_cv.strip()}", "tipo": tipo_cv, "valor": float(val_cv)}).execute()
+                    st.session_state["flash_success"] = "Custo registrado com sucesso!"
+                    st.rerun()
+                except Exception as err_c:
+                    st.error(f"Erro ao registrar custo no banco de dados: {err_c}")
 
     elif sub_tab == "🎪 Feiras":
         with st.form("form_cf"):
@@ -692,11 +696,29 @@ elif menu == "💵 Custos":
                 val_cf = st.number_input("Valor (R$) *", min_value=0.01, value=50.0)
 
             if st.form_submit_button("Adicionar Custo de Feira", use_container_width=True):
-                c_dict = {"subcategoria": "Feiras", "data": str(dt_cf), "nomeFeira": feira_cf.strip(), "desc": desc_cf.strip(), "tipo": tipo_cf, "valor": float(val_cf)}
-                supabase.table("custos_avulsos").insert(c_dict).execute()
-                supabase.table("caixa").insert({"data": str(dt_cf), "desc": f"[Feira: {feira_cf.strip()}] {desc_cf.strip()}", "tipo": tipo_cf, "valor": float(val_cf)}).execute()
-                st.session_state["flash_success"] = "Custo de feira registrado!"
-                st.rerun()
+                raw_cf_dict = {
+                    "subcategoria": "Feiras",
+                    "data": str(dt_cf),
+                    "nomeFeira": feira_cf.strip(),
+                    "desc": desc_cf.strip(),
+                    "descricao": desc_cf.strip(),
+                    "tipo": tipo_cf,
+                    "valor": float(val_cf)
+                }
+
+                cols_custos = df_custos.columns.tolist() if not df_custos.empty else []
+                if cols_custos:
+                    cf_dict = {k: v for k, v in raw_cf_dict.items() if k in cols_custos}
+                else:
+                    cf_dict = {"subcategoria": "Feiras", "data": str(dt_cf), "nomeFeira": feira_cf.strip(), "desc": desc_cf.strip(), "tipo": tipo_cf, "valor": float(val_cf)}
+
+                try:
+                    supabase.table("custos_avulsos").insert(cf_dict).execute()
+                    supabase.table("caixa").insert({"data": str(dt_cf), "desc": f"[Feira: {feira_cf.strip()}] {desc_cf.strip()}", "tipo": tipo_cf, "valor": float(val_cf)}).execute()
+                    st.session_state["flash_success"] = "Custo de feira registrado com sucesso!"
+                    st.rerun()
+                except Exception as err_cf:
+                    st.error(f"Erro ao registrar custo de feira: {err_cf}")
 
 elif menu == "🤝 Aportes dos Sócios":
     st.subheader("🤝 Registro de Aportes e Devoluções")
