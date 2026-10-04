@@ -328,7 +328,6 @@ elif menu == "🛒 Vendas":
         
         codigo_sel = prod_sel.split("]")[0].replace("[", "").strip() if prod_sel else ""
         
-        # Obter a quantidade em estoque para limitar o campo de venda
         p_match = df_produtos[df_produtos["codigo"] == codigo_sel]
         estoque_disp = int(pd.to_numeric(p_match.iloc[0].get(c_qtd_p, 1), errors="coerce")) if not p_match.empty and c_qtd_p else 1
         max_qtd = max(1, estoque_disp)
@@ -341,7 +340,6 @@ elif menu == "🛒 Vendas":
             valor_venda = st.number_input("Valor Total (R$) *", min_value=0.0, value=60.0, step=5.0)
             forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
         with c3:
-            # Padrão brasileiro de exibição nas datas: DD/MM/YYYY
             data_venda = st.date_input("Data da Venda *", datetime.date.today(), format="DD/MM/YYYY")
             data_receb = st.date_input("Data de Recebimento (Opcional)", value=None, format="DD/MM/YYYY")
 
@@ -351,41 +349,41 @@ elif menu == "🛒 Vendas":
             else:
                 p_info = df_produtos[df_produtos["codigo"] == codigo_sel].iloc[0]
                 custo_unit = float(p_info.get("custo", 0.0))
-                
                 dt_receb_str = str(data_receb) if data_receb is not None else None
 
-                raw_venda = {
+                payload_venda = {
                     "qtd": int(qtd_venda),
                     "cliente": cliente.strip(),
                     "valor": float(valor_venda),
                     "forma_pagto": forma_pagto,
-                    "pagto": forma_pagto,
                     "data": str(data_venda),
-                    "data_recebimento": dt_receb_str,
-                    "custo": float(custo_unit * qtd_venda)
+                    "custo": float(custo_unit * qtd_venda),
+                    "codigo": codigo_sel
                 }
+                if dt_receb_str:
+                    payload_venda["data_recebimento"] = dt_receb_str
 
-                # COMPATIBILIDADE DINÂMICA: Ajustar payload baseando-se estritamente nas colunas da tabela 'vendas'
-                cols_vendas = df_vendas.columns.tolist() if not df_vendas.empty else []
-                
-                if cols_vendas:
-                    payload_venda = {k: v for k, v in raw_venda.items() if k in cols_vendas}
-                    if dt_receb_str is None and "data_recebimento" in payload_venda:
-                        payload_venda["data_recebimento"] = None
-                else:
-                    payload_venda = {
-                        "qtd": int(qtd_venda),
-                        "cliente": cliente.strip(),
-                        "valor": float(valor_venda),
-                        "forma_pagto": forma_pagto,
-                        "data": str(data_venda)
-                    }
-                    if dt_receb_str:
-                        payload_venda["data_recebimento"] = dt_receb_str
+                # TENTATIVA RESILIENTE: Se o Supabase reclamar que 'custo' ou 'codigo' não existem, remove a chave e tenta novamente
+                sucesso = False
+                tentativas = 0
+                while not sucesso and tentativas < 4:
+                    try:
+                        supabase.table("vendas").insert(payload_venda).execute()
+                        sucesso = True
+                    except Exception as err:
+                        err_str = str(err)
+                        if "Could not find the 'custo' column" in err_str and "custo" in payload_venda:
+                            del payload_venda["custo"]
+                        elif "Could not find the 'codigo' column" in err_str and "codigo" in payload_venda:
+                            del payload_venda["codigo"]
+                        elif "Could not find the 'forma_pagto' column" in err_str and "forma_pagto" in payload_venda:
+                            del payload_venda["forma_pagto"]
+                        else:
+                            st.error(f"Erro ao registrar a venda no banco de dados: {err}")
+                            break
+                        tentativas += 1
 
-                try:
-                    supabase.table("vendas").insert(payload_venda).execute()
-                    
+                if sucesso:
                     if dt_receb_str and valor_venda > 0:
                         supabase.table("caixa").insert({
                             "data": dt_receb_str,
@@ -396,8 +394,6 @@ elif menu == "🛒 Vendas":
                         
                     st.session_state["flash_success"] = f"🎉 Venda salva com sucesso!"
                     st.rerun()
-                except Exception as err:
-                    st.error(f"Erro ao registrar a venda no banco de dados: {err}")
 
     st.markdown("---")
     st.subheader("⏳ Vendas Pendentes de Recebimento")
@@ -526,7 +522,7 @@ elif menu == "🛍️ Compras":
         with b_col1:
             btn_salvar = st.form_submit_button("💾 Salvar / Atualizar Item", use_container_width=True, type="primary")
         with b_col2:
-            btn_excluir = st.form_submit_button("🗑️ Excluir Item Cadastrado", use_container_width=True)
+            btn_excluir = st.form_submit_button("🗑️️ Excluir Item Cadastrado", use_container_width=True)
 
         if btn_salvar:
             if not cod_c.strip():
