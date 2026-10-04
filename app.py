@@ -1,5 +1,4 @@
 import datetime
-import base64
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -27,7 +26,7 @@ st.markdown("""
         background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
     }
 
-    /* Container do Cabeçalho Padrão (Sem Logo Carregada) */
+    /* Container do Cabeçalho Padrão (Sem Logo) */
     .custom-header-container {
         background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
         padding: 22px 30px;
@@ -135,54 +134,62 @@ def fetch_data(table_name: str) -> pd.DataFrame:
     except Exception:
         return pd.DataFrame()
 
-# Funções de Persistência Permanente da Logo no Supabase
-def get_logo_db():
+# Obter URL da Logomarca Gravada
+def get_logo_url():
     if not supabase:
-        return None, None
+        return None
     try:
-        res = supabase.table("configuracoes").select("*").eq("chave", "logo_header").execute()
+        res = supabase.table("configuracoes").select("*").eq("chave", "logo_url").execute()
         if res.data and len(res.data) > 0:
-            val = res.data[0]
-            return val.get("valor_b64"), val.get("mime_type")
+            return res.data[0].get("valor_b64")  # Guarda a URL do Supabase Storage
     except Exception:
         pass
-    return None, None
+    return None
 
-def save_logo_db(b64_str: str, mime_type: str):
+# Salvar e Fazer Upload no Supabase Storage
+def save_logo_storage(file_bytes, mime_type):
+    if not supabase:
+        return None
+    try:
+        file_path = "logo_header.png"
+        
+        # 1. Faz o upload da imagem para o bucket 'logos'
+        supabase.storage.from_("logos").upload(
+            path=file_path,
+            file=file_bytes,
+            file_options={"content-type": mime_type, "upsert": "true"}
+        )
+        
+        # 2. Pega a URL pública gerada
+        public_url = supabase.storage.from_("logos").get_public_url(file_path)
+        
+        # 3. Regista o link na tabela de configurações
+        supabase.table("configuracoes").upsert({"chave": "logo_url", "valor_b64": public_url}, on_conflict="chave").execute()
+        return public_url
+    except Exception as e:
+        st.error(f"Erro ao guardar imagem no Supabase Storage: {e}")
+        return None
+
+# Eliminar a Logomarca
+def delete_logo_storage():
     if not supabase:
         return
     try:
-        data = {
-            "chave": "logo_header",
-            "valor_b64": b64_str,
-            "mime_type": mime_type
-        }
-        supabase.table("configuracoes").upsert(data, on_conflict="chave").execute()
+        supabase.storage.from_("logos").remove(["logo_header.png"])
+        supabase.table("configuracoes").delete().eq("chave", "logo_url").execute()
     except Exception as e:
-        st.error(f"Erro ao salvar logo no banco: {e}")
+        st.error(f"Erro ao eliminar a logo: {e}")
 
-def delete_logo_db():
-    if not supabase:
-        return
-    try:
-        supabase.table("configuracoes").delete().eq("chave", "logo_header").execute()
-    except Exception as e:
-        st.error(f"Erro ao remover logo do banco: {e}")
-
-# Carregar dados do banco de dados
+# Carregar dados
 df_produtos = fetch_data("produtos")
 df_vendas = fetch_data("vendas")
 df_caixa = fetch_data("caixa")
 df_aportes = fetch_data("aportes")
 df_custos = fetch_data("custos_avulsos")
 
-# Tentar buscar a logo gravada permanentemente no banco
-db_logo_b64, db_logo_mime = get_logo_db()
-
-# Fallback no session_state para performance local
-if "logo_b64" not in st.session_state or st.session_state["logo_b64"] is None:
-    st.session_state["logo_b64"] = db_logo_b64
-    st.session_state["logo_mime"] = db_logo_mime
+# Tentar carregar a URL fixa
+if "logo_url_active" not in st.session_state:
+    st.session_state["logo_url_active"] = get_logo_url()
 
 # 3. Sidebar (Barra Lateral Esquerda) Ocultável
 with st.sidebar:
@@ -195,7 +202,7 @@ with st.sidebar:
 
     st.markdown("---")
     
-    # Personalização da Logomarca (Persistência Permanente no Banco)
+    # Personalização da Logomarca (Storage Permanente)
     with st.expander("🎨 Personalização", expanded=False):
         uploaded_logo = st.file_uploader(
             "Carregar Nova Logo da Marca", 
@@ -203,30 +210,23 @@ with st.sidebar:
             help="Envie a logomarca para fixar permanentemente no site."
         )
         if uploaded_logo is not None:
-            bytes_data = uploaded_logo.getvalue()
-            b64_str = base64.b64encode(bytes_data).decode("utf-8")
-            mime_type = uploaded_logo.type
-            
-            # Salva no Banco de Dados Supabase + Sessão
-            save_logo_db(b64_str, mime_type)
-            st.session_state["logo_b64"] = b64_str
-            st.session_state["logo_mime"] = mime_type
-            
-            st.success("Logo fixa salva com sucesso!")
-            st.rerun()
+            new_url = save_logo_storage(uploaded_logo.getvalue(), uploaded_logo.type)
+            if new_url:
+                st.session_state["logo_url_active"] = new_url
+                st.success("Logo fixa guardada com sucesso!")
+                st.rerun()
 
-        if st.session_state["logo_b64"] is not None:
+        if st.session_state.get("logo_url_active") is not None:
             if st.button("🗑️ Excluir Logo Atual", use_container_width=True, type="secondary"):
-                delete_logo_db()
-                st.session_state["logo_b64"] = None
-                st.session_state["logo_mime"] = None
+                delete_logo_storage()
+                st.session_state["logo_url_active"] = None
                 st.success("Logo removida permanentemente!")
                 st.rerun()
 
-# 4. Cabeçalho Principal: Substitui toda a área escura pela logo fixa se houver
-if st.session_state["logo_b64"] is not None:
-    logo_src = f"data:{st.session_state['logo_mime']};base64,{st.session_state['logo_b64']}"
-    st.markdown(f'<img src="{logo_src}" class="banner-logo-full">', unsafe_allow_html=True)
+# 4. Cabeçalho Principal
+current_logo_url = st.session_state.get("logo_url_active")
+if current_logo_url:
+    st.markdown(f'<img src="{current_logo_url}" class="banner-logo-full">', unsafe_allow_html=True)
 else:
     st.markdown("""
     <div class="custom-header-container">
@@ -268,7 +268,7 @@ if menu == "📈 Dashboard":
     with k3:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ️</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
     with k4:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     
