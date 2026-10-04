@@ -1,5 +1,6 @@
 import datetime
 import base64
+import io
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -186,10 +187,9 @@ if "current_logo" not in st.session_state:
 # 3. Sidebar (Barra Lateral)
 with st.sidebar:
     st.markdown("### 📌 Módulos do Sistema")
-    # MELHORIA 2: Reordenado conforme solicitado: Dashboard | Compras | Estoque | Vendas | Custos | Fluxo de Caixa | Aportes dos Sócios | Importação
     menu = st.radio(
         "Navegue entre os módulos:",
-        ["📈 Dashboard", "🛍️ Compras", "📦 Estoque", "🛒 Vendas", "💵 Custos", "💰 Fluxo de Caixa", "🤝 Aportes dos Sócios", "📥 Importação"],
+        ["📈 Dashboard", "🛍️ Compras", "📦 Estoque", "🛒 Vendas", "💵 Custos", "💰 Fluxo de Caixa", "🤝 Aportes dos Sócios", "📥 Importação", "💾 Gestão de Dados"],
         label_visibility="collapsed"
     )
 
@@ -315,10 +315,16 @@ elif menu == "🛒 Vendas":
         opts = [f"[{r['codigo']}] \"{r.get('frase','')}\" (Disponível: {r.get(c_qtd_p, 0) if c_qtd_p else 0} un)" for _, r in df_produtos.iterrows()]
         prod_sel = st.selectbox("🔍 Selecionar Boné do Estoque *", opts)
         
+        codigo_sel = prod_sel.split("]")[0].replace("[", "").strip() if prod_sel else ""
+        
+        # Obter a quantidade em estoque para limitar o campo de venda
+        p_match = df_produtos[df_produtos["codigo"] == codigo_sel]
+        estoque_disp = int(pd.to_numeric(p_match.iloc[0].get(c_qtd_p, 1), errors="coerce")) if not p_match.empty and c_qtd_p else 1
+        max_qtd = max(1, estoque_disp)
+
         c1, c2, c3 = st.columns(3)
         with c1:
-            codigo_sel = prod_sel.split("]")[0].replace("[", "").strip() if prod_sel else ""
-            qtd_venda = st.number_input("Quantidade *", min_value=1, value=1, step=1)
+            qtd_venda = st.number_input("Quantidade *", min_value=1, max_value=max_qtd, value=1, step=1, help=f"Quantidade máxima disponível em estoque: {max_qtd}")
             cliente = st.text_input("Nome do Cliente *")
         with c2:
             valor_venda = st.number_input("Valor Total (R$) *", min_value=0.0, value=60.0, step=5.0)
@@ -357,7 +363,6 @@ elif menu == "🛒 Vendas":
                 st.session_state["flash_success"] = f"🎉 Venda salva com sucesso!"
                 st.rerun()
 
-    # MELHORIA 1: Opção de exclusão / cancelamento de venda incorreta
     st.markdown("---")
     st.subheader("⏳ Vendas Pendentes de Recebimento")
     if not df_vendas.empty:
@@ -398,7 +403,7 @@ elif menu == "🛒 Vendas":
                 if st.button("🗑️ Excluir Venda Incorreta", use_container_width=True, type="secondary"):
                     venda_id = int(venda_sel.split("|")[0].replace("ID", "").strip())
                     supabase.table("vendas").delete().eq("id", venda_id).execute()
-                    st.success("🗑️️ Venda excluída com sucesso!")
+                    st.success("🗑️ Venda excluída com sucesso!")
                     st.rerun()
 
             cols_pend_exibir = [col for col in df_pendentes.columns if col not in ["created_at"]]
@@ -467,10 +472,8 @@ elif menu == "🛍️ Compras":
             cat_c = st.selectbox("Produto", cat_opts, index=idx_cat)
             custo_c = st.number_input("Custo Unitário (R$) *", min_value=0.0, value=float(dados_item.get("custo", 29.0)))
 
-        c4, c5 = st.columns(2)
+        c4 = st.container()
         with c4:
-            qtd_c = st.number_input("Qtd Comprada *", min_value=1, value=int(dados_item.get(col_qtd_nome, 1)))
-        with c5:
             dt_aquisicao = st.date_input("Data da Aquisição *", datetime.date.today())
 
         b_col1, b_col2 = st.columns(2)
@@ -490,12 +493,12 @@ elif menu == "🛍️ Compras":
                     "cor_estampa": cor_estampa_c.strip(),
                     "categoria": cat_c,
                     "custo": float(custo_c),
-                    col_qtd_nome: int(qtd_c)
+                    col_qtd_nome: 1
                 }
                 supabase.table("produtos").upsert(novo_prod, on_conflict="codigo").execute()
                 
                 if not is_edicao:
-                    custo_total = float(custo_c * qtd_c)
+                    custo_total = float(custo_c)
                     if custo_total > 0:
                         supabase.table("caixa").insert({
                             "data": str(dt_aquisicao),
@@ -512,7 +515,7 @@ elif menu == "🛍️ Compras":
                 st.error("Selecione um produto existente para excluir!")
             else:
                 supabase.table("produtos").delete().eq("codigo", cod_c.strip()).execute()
-                st.session_state["flash_success"] = f"🗑️ Produto {cod_c} excluído com sucesso!"
+                st.session_state["flash_success"] = f"🗑️️ Produto {cod_c} excluído com sucesso!"
                 st.rerun()
 
     st.markdown("---")
@@ -537,10 +540,32 @@ elif menu == "🛍️ Compras":
 
 elif menu == "📦 Estoque":
     st.subheader("📦 Estoque Atual em Tempo Real (Saldo Disponível)")
+    
     if not df_produtos.empty:
         df_est = df_produtos.copy()
         df_est["Status"] = "Disponível"
         
+        with st.expander("🔍 Consultar e Pesquisar no Estoque", expanded=False):
+            c_f1, c_f2, c_f3 = st.columns(3)
+            with c_f1:
+                busca_texto = st.text_input("Pesquisar por Código ou Arte:")
+            with c_f2:
+                cat_unicas = ["Todas"] + sorted(list(df_est["categoria"].dropna().unique())) if "categoria" in df_est.columns else ["Todas"]
+                filtro_cat = st.selectbox("Filtrar por Produto/Categoria:", cat_unicas)
+            with c_f3:
+                cor_unicas = ["Todas"] + sorted(list(df_est["cor"].dropna().unique())) if "cor" in df_est.columns else ["Todas"]
+                filtro_cor = st.selectbox("Filtrar por Cor do Boné:", cor_unicas)
+
+            if busca_texto:
+                df_est = df_est[
+                    df_est["codigo"].astype(str).str.contains(busca_texto, case=False, na=False) |
+                    df_est.get("frase", pd.Series([""]*len(df_est))).astype(str).str.contains(busca_texto, case=False, na=False)
+                ]
+            if filtro_cat != "Todas" and "categoria" in df_est.columns:
+                df_est = df_est[df_est["categoria"] == filtro_cat]
+            if filtro_cor != "Todas" and "cor" in df_est.columns:
+                df_est = df_est[df_est["cor"] == filtro_cor]
+
         mapa_colunas_est = {
             "codigo": "Código",
             "cor": "Cor do Boné",
@@ -683,3 +708,75 @@ elif menu == "📥 Importação":
                 st.rerun()
         except Exception as e:
             st.error(f"Erro ao processar o arquivo: {e}")
+
+# NOVO MÓDULO SOLICITADO: Gestão de Dados & Backup
+elif menu == "💾 Gestão de Dados":
+    st.subheader("💾 Gestão de Dados & Backup")
+    st.markdown("Gerencie o banco de dados, faça downloads de segurança e restaure backups do sistema.")
+
+    col_status, col_export = st.columns(2)
+
+    with col_status:
+        st.markdown("#### 📌 Status da Conexão")
+        # Verificação em tempo real da conexão com o banco de dados Supabase
+        if supabase is not None:
+            try:
+                # Testa chamada rápida de leitura para verificar se a conexão está ativa
+                supabase.table("produtos").select("id").limit(1).execute()
+                st.success("🟢 Conectado ao Supabase (PostgreSQL Nuvem)")
+                st.caption("Seus dados estão gravados na nuvem e imunes a reinícios do servidor.")
+            except Exception as e:
+                st.error("🔴 Falha ao conectar com o Supabase")
+                st.caption(f"Erro na verificação: {e}")
+        else:
+            st.error("🔴 Supabase não configurado ou credenciais inválidas")
+            st.caption("Verifique as chaves SUPABASE_URL e SUPABASE_KEY em seus secrets.")
+
+    with col_export:
+        st.markdown("#### 📥 Exportar Backup Geral em Excel")
+        
+        # Gerar arquivo Excel consolidado com todas as tabelas
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_produtos.to_excel(writer, sheet_name='Produtos_Estoque', index=False)
+            df_vendas.to_excel(writer, sheet_name='Vendas', index=False)
+            df_caixa.to_excel(writer, sheet_name='Caixa', index=False)
+            df_aportes.to_excel(writer, sheet_name='Aportes', index=False)
+            df_custos.to_excel(writer, sheet_name='Custos_Avulsos', index=False)
+        excel_data = output.getvalue()
+
+        st.download_button(
+            label="📥 Baixar Backup Geral (.xlsx)",
+            data=excel_data,
+            file_name=f"Backup_Geral_R2_Bones_{datetime.date.today().strftime('%Y_%m_%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
+    st.markdown("---")
+    st.markdown("#### ⚙️ Operações de Banco Supabase")
+    st.info("Seu banco de dados está sincronizado diretamente na nuvem do Supabase. Todos os cadastros e edições são mantidos permanentemente.")
+
+    with st.expander("🔄 Restaurar / Recuperar Dados via Backup Planilha (.xlsx)"):
+        st.warning("⚠️ O envio de uma planilha de restauração substituirá ou atualizará os registros existentes correspondentes aos códigos e IDs.")
+        uploaded_backup = st.file_uploader("Carregar Arquivo de Backup para Restauração (.xlsx)", type=["xlsx"])
+        
+        if uploaded_backup is not None:
+            if st.button("🚀 Confirmar Restauração do Banco de Dados", type="primary", use_container_width=True):
+                try:
+                    xls = pd.ExcelFile(uploaded_backup)
+                    
+                    if "Produtos_Estoque" in xls.sheet_names and supabase:
+                        df_p_rec = pd.read_excel(xls, sheet_name="Produtos_Estoque")
+                        if not df_p_rec.empty:
+                            supabase.table("produtos").upsert(df_p_rec.to_dict(orient="records"), on_conflict="codigo").execute()
+                    
+                    if "Vendas" in xls.sheet_names and supabase:
+                        df_v_rec = pd.read_excel(xls, sheet_name="Vendas")
+                        if not df_v_rec.empty:
+                            supabase.table("vendas").upsert(df_v_rec.to_dict(orient="records")).execute()
+                            
+                    st.success("🎉 Dados restaurados com sucesso a partir do arquivo de backup!")
+                    st.rerun()
+                except Exception as ex:
+                    st.error(f"Erro durante a restauração do backup: {ex}")
