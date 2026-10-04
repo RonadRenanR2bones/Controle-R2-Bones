@@ -276,7 +276,7 @@ if menu == "📈 Dashboard":
     with k3:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ️</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
     with k4:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -312,7 +312,7 @@ if menu == "📈 Dashboard":
             if cor_col in df_m.columns:
                 qtd_col = "qtd_x" if "qtd_x" in df_m.columns else ("qtd" if "qtd" in df_m.columns else "qtd_y")
                 agrup_cor = df_m.groupby(cor_col)[qtd_col].sum().reset_index()
-                fig2 = px.pie(agrup_cor, names=cor_col, values=qtd_col, hole=0.45, color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig2 = px.pie(agrup_cor, names=cor_col, values=qtd_cor, hole=0.45, color_discrete_sequence=px.colors.qualitative.Pastel)
                 st.plotly_chart(fig2, use_container_width=True)
             else:
                 st.info("Sem informação de cor cadastrada.")
@@ -356,6 +356,7 @@ elif menu == "🛒 Vendas":
 
                 raw_venda = {
                     "codigo": codigo_sel,
+                    "codigo_produto": codigo_sel,
                     "qtd": int(qtd_venda),
                     "cliente": cliente.strip(),
                     "valor": float(valor_venda),
@@ -366,14 +367,23 @@ elif menu == "🛒 Vendas":
                     "custo": float(custo_unit * qtd_venda)
                 }
 
-                # CORREÇÃO 1: Filtrar apenas as colunas existentes na tabela "vendas"
+                # AJUSTE DE COMPATIBILIDADE: Filtrar apenas as colunas existentes na tabela "vendas"
                 cols_vendas = df_vendas.columns.tolist() if not df_vendas.empty else []
                 if cols_vendas:
                     payload_venda = {k: v for k, v in raw_venda.items() if k in cols_vendas}
                     if dt_receb_str is None and "data_recebimento" in payload_venda:
                         payload_venda["data_recebimento"] = None
                 else:
-                    payload_venda = raw_venda
+                    payload_venda = {
+                        "qtd": int(qtd_venda),
+                        "cliente": cliente.strip(),
+                        "valor": float(valor_venda),
+                        "forma_pagto": forma_pagto,
+                        "data": str(data_venda),
+                        "custo": float(custo_unit * qtd_venda)
+                    }
+                    if dt_receb_str:
+                        payload_venda["data_recebimento"] = dt_receb_str
 
                 try:
                     supabase.table("vendas").insert(payload_venda).execute()
@@ -659,7 +669,6 @@ elif menu == "💵 Custos":
                 val_cv = st.number_input("Valor (R$) *", min_value=0.01, value=10.0)
 
             if st.form_submit_button("Adicionar Custo de Venda", use_container_width=True):
-                # CORREÇÃO 2: Filtrar apenas as colunas existentes na tabela "custos_avulsos"
                 raw_c_dict = {
                     "subcategoria": "Custos de Venda",
                     "data": str(dt_cv),
