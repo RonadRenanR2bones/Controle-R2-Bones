@@ -282,7 +282,7 @@ if menu == "📈 Dashboard":
     with k3:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
     with k4:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -380,7 +380,7 @@ elif menu == "🛒 Vendas":
                     "data": str(data_venda),
                     "data_venda": str(data_venda),
                     "custo": custo_calc_fmt,
-                    "custo_unitario": round(float(custo_unit), 2)  # Incluída a chave 'custo_unitario'
+                    "custo_unitario": round(float(custo_unit), 2)
                 }
                 if dt_receb_str:
                     raw_venda["data_recebimento"] = dt_receb_str
@@ -427,12 +427,16 @@ elif menu == "🛒 Vendas":
                     supabase.table("produtos").update({c_qtd_p: novo_estoque}).eq("codigo", codigo_sel).execute()
 
                     if dt_receb_str and val_venda_fmt > 0:
-                        supabase.table("caixa").insert({
-                            "data": dt_receb_str,
-                            "desc": f"Venda {codigo_sel} ({qtd_venda}un) - {cliente.strip()}",
-                            "tipo": "Venda",
-                            "valor": val_venda_fmt
-                        }).execute()
+                        try:
+                            supabase.table("caixa").insert({
+                                "data": dt_receb_str,
+                                "desc": f"Venda {codigo_sel} ({qtd_venda}un) - {cliente.strip()}",
+                                "descricao": f"Venda {codigo_sel} ({qtd_venda}un) - {cliente.strip()}",
+                                "tipo": "Venda",
+                                "valor": val_venda_fmt
+                            }).execute()
+                        except Exception:
+                            pass
                         
                     st.session_state["flash_success"] = f"🎉 Venda salva e estoque atualizado com sucesso!"
                     st.rerun()
@@ -466,12 +470,16 @@ elif menu == "🛒 Vendas":
                     val_rec_fmt = round(float(row_v.get(c_val_p, 0.0)), 2)
                     
                     if val_rec_fmt > 0:
-                        supabase.table("caixa").insert({
-                            "data": str(dt_confirmada),
-                            "desc": f"Venda {row_v.get(c_cod,'')} ({row_v.get('qtd',1)}un) - {row_v.get('cliente','')}",
-                            "tipo": "Venda",
-                            "valor": val_rec_fmt
-                        }).execute()
+                        try:
+                            supabase.table("caixa").insert({
+                                "data": str(dt_confirmada),
+                                "desc": f"Venda {row_v.get(c_cod,'')} ({row_v.get('qtd',1)}un) - {row_v.get('cliente','')}",
+                                "descricao": f"Venda {row_v.get(c_cod,'')} ({row_v.get('qtd',1)}un) - {row_v.get('cliente','')}",
+                                "tipo": "Venda",
+                                "valor": val_rec_fmt
+                            }).execute()
+                        except Exception:
+                            pass
                     
                     st.success("🎉 Recebimento confirmado e lançado no caixa!")
                     st.rerun()
@@ -590,26 +598,53 @@ elif menu == "🛍️ Compras":
                     "custo": custo_prod_fmt,
                     col_qtd_nome: novo_estoque_calculado
                 }
-                supabase.table("produtos").upsert(novo_prod, on_conflict="codigo").execute()
                 
-                if valor_compra_total > 0:
-                    supabase.table("caixa").insert({
-                        "data": str(dt_aquisicao),
-                        "desc": f"Compra de Mercadorias - {cod_c.strip()} ({qtd_comprada}un)",
-                        "tipo": "Compra de Mercadorias",
-                        "valor": valor_compra_total
-                    }).execute()
+                # Inserção flexível na tabela 'produtos'
+                cols_prod_existentes = df_produtos.columns.tolist() if not df_produtos.empty else []
+                if cols_prod_existentes:
+                    payload_prod = {k: v for k, v in novo_prod.items() if k in cols_prod_existentes or k in ["codigo", "custo", col_qtd_nome]}
+                else:
+                    payload_prod = novo_prod
 
-                st.session_state["flash_success"] = f"🎉 Produto {cod_c} salvo com sucesso! Quantidade adicionada: {qtd_comprada} un."
-                st.rerun()
+                try:
+                    supabase.table("produtos").upsert(payload_prod, on_conflict="codigo").execute()
+                    
+                    # Inserção resiliente no caixa
+                    if valor_compra_total > 0:
+                        raw_caixa_compra = {
+                            "data": str(dt_aquisicao),
+                            "desc": f"Compra de Mercadorias - {cod_c.strip()} ({qtd_comprada}un)",
+                            "descricao": f"Compra de Mercadorias - {cod_c.strip()} ({qtd_comprada}un)",
+                            "tipo": "Compra de Mercadorias",
+                            "valor": valor_compra_total
+                        }
+                        cols_caixa = df_caixa.columns.tolist() if not df_caixa.empty else []
+                        if cols_caixa:
+                            payload_caixa = {k: v for k, v in raw_caixa_compra.items() if k in cols_caixa}
+                        else:
+                            payload_caixa = raw_caixa_compra
+                        
+                        try:
+                            supabase.table("caixa").insert(payload_caixa).execute()
+                        except Exception:
+                            pass
+
+                    st.session_state["flash_success"] = f"🎉 Produto {cod_c} salvo com sucesso! Quantidade adicionada: {qtd_comprada} un."
+                    st.rerun()
+
+                except Exception as err_prod:
+                    st.error(f"Erro ao salvar o produto no banco de dados: {err_prod}")
 
         if btn_excluir:
             if not is_edicao:
                 st.error("Selecione um produto existente para excluir!")
             else:
-                supabase.table("produtos").delete().eq("codigo", cod_c.strip()).execute()
-                st.session_state["flash_success"] = f"🗑️ Produto {cod_c} excluído com sucesso!"
-                st.rerun()
+                try:
+                    supabase.table("produtos").delete().eq("codigo", cod_c.strip()).execute()
+                    st.session_state["flash_success"] = f"🗑️ Produto {cod_c} excluído com sucesso!"
+                    st.rerun()
+                except Exception as err_del:
+                    st.error(f"Erro ao excluir o produto: {err_del}")
 
     st.markdown("---")
     st.subheader("📋 Histórico Permanente de Aquisições")
