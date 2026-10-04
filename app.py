@@ -34,15 +34,16 @@ supabase = init_supabase()
 
 
 # Helper para executar operações no Supabase com suporte a reconexão automática
-def execute_supabase_operation(operation_func, max_retries=3, delay=2):
+def execute_supabase_operation(operation_func, max_retries=2, delay=1):
+  last_err = None
   for attempt in range(max_retries):
     try:
       return operation_func()
     except Exception as e:
+      last_err = e
       if attempt < max_retries - 1:
         time.sleep(delay)
-      else:
-        raise e
+  raise last_err
 
 
 # 3. Função Helper para buscar tabelas em tempo real com retry
@@ -54,7 +55,7 @@ def fetch_data(table_name: str) -> pd.DataFrame:
       return pd.DataFrame(res.data)
 
     return execute_supabase_operation(query)
-  except Exception as e:
+  except Exception:
     return pd.DataFrame()
 
 
@@ -82,6 +83,10 @@ df_produtos = fetch_data("produtos")
 df_vendas = fetch_data("vendas")
 df_caixa = fetch_data("caixa")
 df_aportes = fetch_data("aportes")
+
+# Mensagem temporária de sucesso mantida em session_state
+if "flash_success" in st.session_state:
+  st.success(st.session_state.pop("flash_success"))
 
 # ==============================================================================
 # ABA 1: DASHBOARD DE KPIS
@@ -239,16 +244,16 @@ elif menu == "🛒 Nova Venda":
                 supabase.table("caixa").insert(novo_caixa).execute()
 
             execute_supabase_operation(op_venda)
-            st.success(
+            st.session_state["flash_success"] = (
                 f"🎉 Venda do boné {opcao_bone} para {cliente} salva"
                 " permanentemente!"
             )
             st.session_state["venda_cliente"] = ""
             st.rerun()
-          except Exception as err:
+          except Exception:
             st.error(
-                "🌐 **Sem Conexão com a Internet / Supabase.** Por favor,"
-                " verifique sua conexão de rede e tente novamente."
+                "🌐 Erro de Conexão com o Supabase. Verifique sua conexão e as"
+                " credenciais de Secrets."
             )
 
   st.markdown("---")
@@ -260,13 +265,6 @@ elif menu == "🛒 Nova Venda":
 # ==============================================================================
 elif menu == "📦 Catálogo & Estoque":
   st.subheader("📦 Cadastrar Novo Boné")
-
-  if "prod_codigo" not in st.session_state:
-    st.session_state["prod_codigo"] = ""
-  if "prod_cor" not in st.session_state:
-    st.session_state["prod_cor"] = ""
-  if "prod_frase" not in st.session_state:
-    st.session_state["prod_frase"] = ""
 
   c1, c2, c3 = st.columns(3)
   with c1:
@@ -305,16 +303,18 @@ elif menu == "📦 Catálogo & Estoque":
             .execute()
         )
 
-        st.success(f"🎉 Boné {codigo} gravado com sucesso no Supabase!")
+        st.session_state["flash_success"] = (
+            f"🎉 Boné {codigo.strip()} gravado com sucesso no Supabase!"
+        )
         st.session_state["prod_codigo"] = ""
         st.session_state["prod_cor"] = ""
         st.session_state["prod_frase"] = ""
         st.rerun()
-      except Exception as err:
+      except Exception:
         st.error(
-            "🌐 **Erro de Conexão com a Internet (getaddrinfo failed):** Não"
-            " foi possível conectar ao banco de dados Supabase. Verifique sua"
-            " conexão wi-fi/cabo e tente salvar novamente."
+            "🌐 Erro de Conexão com a Internet / Supabase: Não foi possível"
+            " conectar ao banco de dados Supabase. Verifique suas chaves em"
+            " Secrets e sua conexão de rede."
         )
 
   st.markdown("---")
@@ -326,9 +326,6 @@ elif menu == "📦 Catálogo & Estoque":
 # ==============================================================================
 elif menu == "💰 Fluxo de Caixa":
   st.subheader("💰 Lançar Movimentação de Caixa")
-
-  if "cx_desc" not in st.session_state:
-    st.session_state["cx_desc"] = ""
 
   c1, c2 = st.columns(2)
   with c1:
@@ -359,12 +356,14 @@ elif menu == "💰 Fluxo de Caixa":
         execute_supabase_operation(
             lambda: supabase.table("caixa").insert(lancamento).execute()
         )
-        st.success("Movimentação financeira gravada permanentemente!")
+        st.session_state["flash_success"] = (
+            "💰 Movimentação financeira gravada permanentemente!"
+        )
         st.session_state["cx_desc"] = ""
         st.rerun()
-      except Exception as err:
+      except Exception:
         st.error(
-            "🌐 **Sem Conexão com a Internet.** Verifique sua rede e tente"
+            "🌐 Sem Conexão com a Internet. Verifique sua rede e tente"
             " novamente."
         )
 
@@ -411,13 +410,13 @@ elif menu == "🤝 Aportes dos Sócios":
         }).execute()
 
       execute_supabase_operation(op_aporte)
-      st.success(
-          f"Aporte de R$ {valor_ap:.2f} do sócio {socio} registrado no banco!"
+      st.session_state["flash_success"] = (
+          f"🤝 Aporte de R$ {valor_ap:.2f} do sócio {socio} registrado no banco!"
       )
       st.rerun()
-    except Exception as err:
+    except Exception:
       st.error(
-          "🌐 **Sem Conexão com a Internet.** Verifique sua rede e tente"
+          "🌐 Sem Conexão com a Internet. Verifique sua rede e tente"
           " novamente."
       )
 
@@ -561,15 +560,13 @@ elif menu == "📂 Importar/Exportar Excel":
                     )
                     venda_count += 1
 
-              st.success(
+              st.session_state["flash_success"] = (
                   f"🎉 Matriz Importada: {prod_count} produtos e {venda_count}"
                   " vendas inseridas!"
               )
               st.rerun()
-            except Exception as conn_err:
-              st.error(
-                  f"🌐 **Erro de Conexão com a Internet:** {conn_err}"
-              )
+            except Exception:
+              st.error("🌐 Erro de Conexão com a Internet ao importar a Matriz.")
 
       with tab_estoque:
         if "Estoque" in sheets:
@@ -624,13 +621,13 @@ elif menu == "📂 Importar/Exportar Excel":
                   )
                   est_count += 1
 
-              st.success(
+              st.session_state["flash_success"] = (
                   f"🎉 Estoque Sincronizado: {est_count} bonés atualizados!"
               )
               st.rerun()
-            except Exception as conn_err:
+            except Exception:
               st.error(
-                  f"🌐 **Erro de Conexão com a Internet:** {conn_err}"
+                  "🌐 Erro de Conexão com a Internet ao importar Estoque."
               )
 
       with tab_caixa:
@@ -716,15 +713,13 @@ elif menu == "📂 Importar/Exportar Excel":
                     )
                     ap_count += 1
 
-              st.success(
+              st.session_state["flash_success"] = (
                   f"🎉 Caixa Importado: {cx_count} lançamentos e {ap_count}"
                   " aportes inseridos!"
               )
               st.rerun()
-            except Exception as conn_err:
-              st.error(
-                  f"🌐 **Erro de Conexão com a Internet:** {conn_err}"
-              )
+            except Exception:
+              st.error("🌐 Erro de Conexão com a Internet ao importar Caixa.")
 
       st.markdown("---")
       if st.button(
@@ -938,17 +933,14 @@ elif menu == "📂 Importar/Exportar Excel":
                   )
                   total_aportes += 1
 
-          st.success(
+          st.session_state["flash_success"] = (
               f"🎉 Importação Completa Concluída! {total_prods} bonés,"
-              f" {total_vendas} vendas, {total_caixa} lançamentos de caixa e"
-              f" {total_aportes} aportes salvos no Supabase!"
+              f" {total_vendas} vendas, {total_caixa} lançamentos e"
+              f" {total_aportes} aportes!"
           )
           st.rerun()
-        except Exception as conn_err:
-          st.error(
-              "🌐 **Erro de Conexão com a Internet / Supabase:**"
-              f" {conn_err}"
-          )
+        except Exception:
+          st.error("🌐 Erro de Conexão com a Internet ao importar os dados.")
 
     except Exception as e:
       st.error(f"Erro ao processar o arquivo Excel: {e}")
@@ -998,7 +990,6 @@ elif menu == "💾 Gestão de Dados":
   with col_backup:
     st.markdown("### 💾 Exportar Backup Geral em Excel")
 
-    # Gera o arquivo Excel contendo todas as tabelas atuais
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
       (
@@ -1053,8 +1044,6 @@ elif menu == "💾 Gestão de Dados":
     )
 
   st.markdown("---")
-
-  # 3. Operações de Banco Supabase
   st.markdown("### ⚙️ Operações de Banco Supabase")
   st.info(
       "Seu banco de dados está sincronizado diretamente na nuvem do Supabase."
