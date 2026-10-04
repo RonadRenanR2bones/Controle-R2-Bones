@@ -158,6 +158,7 @@ def safe_insert(table_name: str, payload: dict):
         st.error(f"Erro ao gravar na tabela `{table_name}`: {err}")
         return False
 
+# Função adaptada para salvar produtos e tratar colunas inexistentes no banco Supabase (Imagens 3 e 4)
 def safe_upsert_produto(payload: dict):
     if not supabase:
         return False
@@ -166,9 +167,16 @@ def safe_upsert_produto(payload: dict):
         return True
     except Exception as err:
         err_str = str(err)
-        if "Could not find the 'data_aquisicao'" in err_str or "PGRST204" in err_str:
-            if "data_aquisicao" in payload:
-                del payload["data_aquisicao"]
+        if "Could not find the '" in err_str and "' column" in err_str:
+            col_err = err_str.split("Could not find the '")[1].split("' column")[0]
+            if col_err in payload:
+                del payload[col_err]
+                return safe_upsert_produto(payload)
+        elif "PGRST204" in err_str or "PGRST205" in err_str or "schema cache" in err_str:
+            # Tenta salvar removendo colunas opcionais problemáticas
+            for col_opt in ["estampa_extra", "matriz_bordado", "data_aquisicao", "qtd_comprada"]:
+                if col_opt in payload:
+                    del payload[col_opt]
             try:
                 supabase.table("produtos").upsert(payload, on_conflict="codigo").execute()
                 return True
@@ -297,11 +305,14 @@ else:
 st.markdown("<br>", unsafe_allow_html=True)
 
 # 5. Módulos
+# Correção Imagem 2: Ajuste dos cards do Dashboard Executivo
 if menu == "📈 Dashboard":
     st.subheader("📈 Dashboard Executivo")
     
     col_v_val = "valor_venda" if "valor_venda" in df_vendas.columns else ("valor" if "valor" in df_vendas.columns else ("valor_total" if "valor_total" in df_vendas.columns else None))
     total_faturado = float(df_vendas[col_v_val].sum()) if not df_vendas.empty and col_v_val else 0.0
+    
+    # CMV Total - Custo das Mercadorias Vendidas (Itens Vendidos)
     total_cmv = float(df_vendas["custo"].sum()) if not df_vendas.empty and "custo" in df_vendas.columns else 0.0
 
     saldo_caixa = 0.0
@@ -310,21 +321,22 @@ if menu == "📈 Dashboard":
         saidas = df_caixa[~df_caixa["tipo"].isin(["Venda", "Aporte de Sócio", "Entrada"])]["valor"].sum()
         saldo_caixa = float(entradas - saidas)
 
-    total_estoque_qtd = 0
-    if not df_produtos.empty:
-        col_qtd_p = "qtd_estoque" if "qtd_estoque" in df_produtos.columns else ("qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else None))
-        if col_qtd_p:
-            total_estoque_qtd = int(pd.to_numeric(df_produtos[col_qtd_p], errors="coerce").fillna(0).sum())
+    # Novo Dashboard: Quantidade Vendida (Soma do Volume total de itens faturados)
+    total_qtd_vendida = 0
+    if not df_vendas.empty:
+        col_q_venda = "qtd" if "qtd" in df_vendas.columns else ("quantidade" if "quantidade" in df_vendas.columns else None)
+        if col_q_venda:
+            total_qtd_vendida = int(pd.to_numeric(df_vendas[col_q_venda], errors="coerce").fillna(0).sum())
 
     k1, k2, k3, k4 = st.columns(4)
     with k1:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
     with k2:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV Total <span class="tooltip-icon" title="Custo das mercadorias vendidas nos bonés faturados">ℹ️</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV Total (Itens Vendidos) <span class="tooltip-icon" title="Custo das mercadorias vendidas referente aos itens faturados">ℹ️</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
     with k3:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
     with k4:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Quantidade Vendida <span class="tooltip-icon" title="Quantidade total de peças/bonés faturados nas vendas">ℹ️</span></div><div class="kpi-value">{total_qtd_vendida} un</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -604,6 +616,7 @@ elif menu == "🛒 Vendas":
                             st.rerun()
             st.markdown("<hr style='margin: 4px 0;'>", unsafe_allow_html=True)
 
+# Correção Imagens 3 e 4: Módulo de Compras tratando colunas opcionais
 elif menu == "🛍️ Compras":
     st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
     
@@ -724,16 +737,32 @@ elif menu == "🛍️ Compras":
         if "custo" in df_exib_compras.columns:
             df_exib_compras["custo"] = df_exib_compras["custo"].apply(lambda v: f"R$ {float(v):,.2f}")
 
+        # Exibição dinâmica das colunas Estampa Extra e Matriz Bordado apenas se existirem com valores (Imagens 3 e 4)
+        has_estampa_ext = "estampa_extra" in df_exib_compras.columns and pd.to_numeric(df_exib_compras["estampa_extra"], errors="coerce").fillna(0).sum() > 0
+        has_matriz_bord = "matriz_bordado" in df_exib_compras.columns and pd.to_numeric(df_exib_compras["matriz_bordado"], errors="coerce").fillna(0).sum() > 0
+
+        if has_estampa_ext:
+            df_exib_compras["Estampa Extra"] = pd.to_numeric(df_exib_compras["estampa_extra"], errors="coerce").fillna(0).apply(lambda v: f"R$ {float(v):,.2f}")
+        if has_matriz_bord:
+            df_exib_compras["Matriz Bordado"] = pd.to_numeric(df_exib_compras["matriz_bordado"], errors="coerce").fillna(0).apply(lambda v: f"R$ {float(v):,.2f}")
+
         mapa_colunas_compras = {
             "codigo": "Código",
             "cor": "Cor do Boné",
             "frase": "Arte Estampada",
             "cor_estampa": "Cor Estampada",
             "categoria": "Produto",
-            "custo": "Custo Unitário"
+            "custo": "Custo Unitário",
+            "Estampa Extra": "Estampa Extra",
+            "Matriz Bordado": "Matriz Bordado"
         }
         
-        cols_compras = [col for col in df_exib_compras.columns if col in mapa_colunas_compras]
+        cols_compras = [col for col in [
+            "codigo", "cor", "frase", "cor_estampa", "categoria", "custo",
+            "Estampa Extra" if has_estampa_ext else None,
+            "Matriz Bordado" if has_matriz_bord else None
+        ] if col is not None and col in df_exib_compras.columns]
+        
         st.dataframe(df_exib_compras[cols_compras].rename(columns=mapa_colunas_compras), use_container_width=True, hide_index=True)
 
 elif menu == "📦 Estoque":
@@ -913,7 +942,7 @@ elif menu == "💵 Custos":
                 st.session_state["flash_success"] = "Custo de Feira registrado com sucesso!"
                 st.rerun()
 
-# Módulo Aportes dos Sócios corrigido para evitar KeyError na coluna 'tipo'
+# Correção Imagem 1: Módulo Aporte dos Sócios subtraindo a devolução corretamente
 elif menu == "🤝 Aportes dos Sócios":
     st.subheader("🤝 Registro de Aportes e Devoluções")
     c1, c2, c3 = st.columns(3)
@@ -969,7 +998,6 @@ elif menu == "🤝 Aportes dos Sócios":
     if not df_aportes.empty:
         df_ap_calc = df_aportes.copy()
         
-        # Assegura a existência da coluna 'tipo' e 'socio' sem disparar KeyError
         if "tipo" not in df_ap_calc.columns:
             if "operacao" in df_ap_calc.columns:
                 df_ap_calc["tipo"] = df_ap_calc["operacao"]
@@ -989,7 +1017,10 @@ elif menu == "🤝 Aportes dos Sócios":
             
             ent = df_s[df_s["tipo"].astype(str).str.contains("Aporte", case=False, na=False)]["valor_num"].sum()
             sai = df_s[df_s["tipo"].astype(str).str.contains("Devoluc|Devoluç", case=False, na=False)]["valor_num"].sum()
+            
+            # Correção Imagem 1: O Saldo a Devolver é o Total Aportado MENOS o Total Devolvido
             saldo_dev = ent - sai
+            
             resumo_socios.append({
                 "Sócio": s,
                 "Total Aportado (R$)": f"R$ {ent:,.2f}",
@@ -1017,7 +1048,7 @@ elif menu == "🤝 Aportes dos Sócios":
     else:
         st.info("Nenhum aporte ou devolução registrado no momento.")
 
-# Módulo Fluxo de Caixa corrigido com ordenação homogênea de datas para evitar TypeError
+# Correção Imagem 5: Extrato Consolidado do Fluxo de Caixa garantindo conversão homogênea de datas
 elif menu == "💰 Fluxo de Caixa":
     st.subheader("💰 Extrato Consolidado de Caixa")
     
@@ -1034,7 +1065,7 @@ elif menu == "💰 Fluxo de Caixa":
             tot_c = custo_unit * qtd_c
             if tot_c > 0:
                 lista_movimentos.append({
-                    "Data_Val": dt_compra,
+                    "Data_Val": str(dt_compra),
                     "Data": format_data_br(dt_compra),
                     "Origem": "🛍️ Aquisição de Mercadorias",
                     "Descrição": f"Compra de Estoque - {r.get('codigo','')} ({qtd_c}un)",
@@ -1052,7 +1083,7 @@ elif menu == "💰 Fluxo de Caixa":
             cod = r.get("codigo_bone") or r.get("codigo") or ""
             if val_v > 0:
                 lista_movimentos.append({
-                    "Data_Val": dt_v,
+                    "Data_Val": str(dt_v),
                     "Data": format_data_br(dt_v),
                     "Origem": "🛒 Recebimento de Vendas",
                     "Descrição": f"Venda {cod} - Cliente: {cli}",
@@ -1071,7 +1102,7 @@ elif menu == "💰 Fluxo de Caixa":
             
             if val_c > 0:
                 lista_movimentos.append({
-                    "Data_Val": r.get("data"),
+                    "Data_Val": str(r.get("data")),
                     "Data": format_data_br(r.get("data")),
                     "Origem": origem_tag,
                     "Descrição": desc_c,
@@ -1088,7 +1119,7 @@ elif menu == "💰 Fluxo de Caixa":
             is_ent = "aporte" in tipo_ap.lower() and "devolu" not in tipo_ap.lower()
             if val_ap > 0:
                 lista_movimentos.append({
-                    "Data_Val": r.get("data"),
+                    "Data_Val": str(r.get("data")),
                     "Data": format_data_br(r.get("data")),
                     "Origem": "🤝 Aporte dos Sócios",
                     "Descrição": f"{tipo_ap} ({socio})",
@@ -1107,7 +1138,7 @@ elif menu == "💰 Fluxo de Caixa":
                 is_entrada = t_val in ["Venda", "Aporte de Sócio", "Entrada"]
                 if v_val > 0:
                     lista_movimentos.append({
-                        "Data_Val": d_val,
+                        "Data_Val": str(d_val),
                         "Data": format_data_br(d_val),
                         "Origem": f"💰 Caixa Geral ({t_val})",
                         "Descrição": desc_val,
@@ -1118,7 +1149,7 @@ elif menu == "💰 Fluxo de Caixa":
     if lista_movimentos:
         df_extrato = pd.DataFrame(lista_movimentos)
         
-        # Conversão segura de datas para garantir ordenação homogênea sem TypeError
+        # Conversão homogênea do campo de data para evitar erro de ordenação no Python 3.14 (Imagem 5)
         df_extrato["Data_Raw"] = pd.to_datetime(df_extrato["Data_Val"], errors="coerce")
         df_extrato["Data_Raw"] = df_extrato["Data_Raw"].fillna(pd.Timestamp("1970-01-01"))
         
