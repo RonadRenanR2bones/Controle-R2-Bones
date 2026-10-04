@@ -310,8 +310,8 @@ if menu == "📈 Dashboard":
 
     with g2:
         st.markdown("#### 🎨 Cores Mais Vendidas")
-        if not df_vendas_fil.empty and ("codigo" in df_vendas_fil.columns or "codigo_produto" in df_vendas_fil.columns) and not df_produtos.empty:
-            c_v_col = "codigo" if "codigo" in df_vendas_fil.columns else "codigo_produto"
+        c_v_col = "codigo_bone" if "codigo_bone" in df_vendas_fil.columns else ("codigo" if "codigo" in df_vendas_fil.columns else "codigo_produto")
+        if not df_vendas_fil.empty and c_v_col in df_vendas_fil.columns and not df_produtos.empty:
             df_m = df_vendas_fil.merge(df_produtos, left_on=c_v_col, right_on="codigo", how="left")
             cor_col = "cor" if "cor" in df_m.columns else "cor_x"
             if cor_col in df_m.columns:
@@ -356,8 +356,11 @@ elif menu == "🛒 Vendas":
                 custo_unit = float(p_info.get("custo", 0.0))
                 dt_receb_str = str(data_receb) if data_receb is not None else None
 
-                # Mapeamento com os aliases mais comuns de banco para prevenir falhas de coluna
+                # Incluída a chave 'codigo_bone' para respeitar a constraint not-null da tabela 'vendas'
                 raw_venda = {
+                    "codigo_bone": codigo_sel,
+                    "codigo": codigo_sel,
+                    "codigo_produto": codigo_sel,
                     "cliente": cliente.strip(),
                     "nome_cliente": cliente.strip(),
                     "qtd": int(qtd_venda),
@@ -368,19 +371,20 @@ elif menu == "🛒 Vendas":
                     "pagto": forma_pagto,
                     "data": str(data_venda),
                     "data_venda": str(data_venda),
-                    "custo": float(custo_unit * qtd_venda),
-                    "codigo": codigo_sel,
-                    "codigo_produto": codigo_sel
+                    "custo": float(custo_unit * qtd_venda)
                 }
                 if dt_receb_str:
                     raw_venda["data_recebimento"] = dt_receb_str
 
-                # Filtro dinâmico rigoroso: envia APENAS as colunas existentes na tabela 'vendas'
+                # Filtro dinâmico: mantém apenas colunas existentes na tabela 'vendas' e preserva 'codigo_bone'
                 cols_vendas = df_vendas.columns.tolist() if not df_vendas.empty else []
                 if cols_vendas:
                     payload_venda = {k: v for k, v in raw_venda.items() if k in cols_vendas}
+                    if "codigo_bone" not in payload_venda:
+                        payload_venda["codigo_bone"] = codigo_sel
                 else:
                     payload_venda = {
+                        "codigo_bone": codigo_sel,
                         "qtd": int(qtd_venda),
                         "cliente": cliente.strip(),
                         "valor": float(valor_venda),
@@ -395,10 +399,9 @@ elif menu == "🛒 Vendas":
                         sucesso = True
                     except Exception as err:
                         err_str = str(err)
-                        # Remove a chave específica relatada pelo erro de schema cache
                         if "Could not find the '" in err_str and "' column" in err_str:
                             col_problem = err_str.split("Could not find the '")[1].split("' column")[0]
-                            if col_problem in payload_venda:
+                            if col_problem in payload_venda and col_problem != "codigo_bone":
                                 del payload_venda[col_problem]
                         else:
                             st.error(f"Erro ao registrar a venda no banco de dados: {err}")
@@ -441,7 +444,7 @@ elif menu == "🛒 Vendas":
                     
                     supabase.table("vendas").update({col_dt_rec: str(dt_confirmada)}).eq("id", venda_id).execute()
                     
-                    c_cod = "codigo" if "codigo" in row_v else ("codigo_produto" if "codigo_produto" in row_v else "cod_produto")
+                    c_cod = "codigo_bone" if "codigo_bone" in row_v else ("codigo" if "codigo" in row_v else "codigo_produto")
                     
                     if float(row_v.get("valor", 0)) > 0:
                         supabase.table("caixa").insert({
@@ -492,7 +495,7 @@ elif menu == "🛒 Vendas":
         st.dataframe(df_v_exib, use_container_width=True, hide_index=True)
 
 elif menu == "🛍️ Compras":
-    st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
+    st.subheader("🛍️️ Cadastrar Nova Compra de Mercadoria")
     
     opcoes_prod = ["➕ [NOVO] Cadastrar Novo Produto"]
     if not df_produtos.empty and "codigo" in df_produtos.columns:
