@@ -282,7 +282,7 @@ if menu == "📈 Dashboard":
     with k3:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
     with k4:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -388,12 +388,15 @@ elif menu == "🛒 Vendas":
                 cols_vendas = df_vendas.columns.tolist() if not df_vendas.empty else []
                 if cols_vendas:
                     payload_venda = {k: v for k, v in raw_venda.items() if k in cols_vendas}
+                    # Garantir que chaves NOT NULL obrigatórias estejam no payload
                     if "codigo_bone" not in payload_venda:
                         payload_venda["codigo_bone"] = codigo_sel
                     if "valor_venda" not in payload_venda:
                         payload_venda["valor_venda"] = val_venda_fmt
                     if "custo_unitario" not in payload_venda:
                         payload_venda["custo_unitario"] = round(float(custo_unit), 2)
+                    if "forma_pagto" not in payload_venda:
+                        payload_venda["forma_pagto"] = forma_pagto
                 else:
                     payload_venda = {
                         "codigo_bone": codigo_sel,
@@ -402,7 +405,8 @@ elif menu == "🛒 Vendas":
                         "valor_venda": val_venda_fmt,
                         "valor": val_venda_fmt,
                         "data": str(data_venda),
-                        "custo_unitario": round(float(custo_unit), 2)
+                        "custo_unitario": round(float(custo_unit), 2),
+                        "forma_pagto": forma_pagto
                     }
 
                 sucesso = False
@@ -415,7 +419,8 @@ elif menu == "🛒 Vendas":
                         err_str = str(err)
                         if "Could not find the '" in err_str and "' column" in err_str:
                             col_problem = err_str.split("Could not find the '")[1].split("' column")[0]
-                            if col_problem in payload_venda and col_problem not in ["codigo_bone", "valor_venda", "custo_unitario"]:
+                            # Protege as colunas obrigatórias com NOT NULL no Supabase
+                            if col_problem in payload_venda and col_problem not in ["codigo_bone", "valor_venda", "custo_unitario", "forma_pagto"]:
                                 del payload_venda[col_problem]
                         else:
                             st.error(f"Erro ao registrar a venda no banco de dados: {err}")
@@ -522,7 +527,7 @@ elif menu == "🛒 Vendas":
 
         st.dataframe(df_v_exib, use_container_width=True, hide_index=True)
 
-elif menu == "🛍️ Compras":
+elif menu == "🛍️️ Compras":
     st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
     
     opcoes_prod = ["➕ [NOVO] Cadastrar Novo Produto"]
@@ -599,7 +604,6 @@ elif menu == "🛍️ Compras":
                     col_qtd_nome: novo_estoque_calculado
                 }
                 
-                # Inserção flexível na tabela 'produtos'
                 cols_prod_existentes = df_produtos.columns.tolist() if not df_produtos.empty else []
                 if cols_prod_existentes:
                     payload_prod = {k: v for k, v in novo_prod.items() if k in cols_prod_existentes or k in ["codigo", "custo", col_qtd_nome]}
@@ -609,7 +613,6 @@ elif menu == "🛍️ Compras":
                 try:
                     supabase.table("produtos").upsert(payload_prod, on_conflict="codigo").execute()
                     
-                    # Inserção resiliente no caixa
                     if valor_compra_total > 0:
                         raw_caixa_compra = {
                             "data": str(dt_aquisicao),
