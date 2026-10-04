@@ -158,7 +158,6 @@ def safe_insert(table_name: str, payload: dict):
         st.error(f"Erro ao gravar na tabela `{table_name}`: {err}")
         return False
 
-# Função adaptada para salvar produtos tratando a ausência da coluna 'data_aquisicao' no Supabase
 def safe_upsert_produto(payload: dict):
     if not supabase:
         return False
@@ -566,7 +565,7 @@ elif menu == "🛒 Vendas":
                     st.session_state["editing_venda_id"] = v_id
                     st.rerun()
             with c_act2:
-                if st.button("🗑️️ Excluir", key=f"btn_del_row_{v_id}", use_container_width=True):
+                if st.button("🗑 Excluir", key=f"btn_del_row_{v_id}", use_container_width=True):
                     cod_prod_e = row.get("codigo_bone") or row.get("codigo") or row.get("codigo_produto")
                     qtd_venda_e = int(row.get("qtd") or row.get("quantidade") or 1)
                     estornar_estoque(cod_prod_e, qtd_venda_e)
@@ -677,7 +676,6 @@ elif menu == "🛍️ Compras":
                 estoque_atual = int(dados_item.get(col_qtd_nome, 0)) if is_edicao else 0
                 novo_estoque_calculado = estoque_atual + int(qtd_comprada) if is_edicao else int(qtd_comprada)
                 
-                # Armazena a quantidade total comprada no histórico fixo
                 qtd_hist_comprada = int(dados_item.get("qtd_comprada", 0)) + int(qtd_comprada) if is_edicao else int(qtd_comprada)
 
                 novo_prod = {
@@ -694,7 +692,6 @@ elif menu == "🛍️ Compras":
                     "data_aquisicao": str(dt_aquisicao)
                 }
 
-                # Executa com fallback seguro para resolver o erro PGRST204 (Imagem 1)
                 if safe_upsert_produto(novo_prod):
                     if valor_compra_total > 0:
                         safe_insert("caixa", {
@@ -821,10 +818,8 @@ elif menu == "💵 Custos":
 
             df_m["custo_num"] = pd.to_numeric(df_m[col_custo], errors="coerce").fillna(0.0)
             
-            # Correção Imagem 2: Utiliza quantidade total comprada/cadastrada para não zerar no histórico
             col_qtd_ref = "qtd_comprada" if "qtd_comprada" in df_m.columns else ("qtd_estoque" if "qtd_estoque" in df_m.columns else "qtd")
             df_m["qtd_num"] = pd.to_numeric(df_m[col_qtd_ref], errors="coerce").fillna(1)
-            # Caso o produto tenha sido zerado por vendas e não tenha a coluna qtd_comprada, assegura multiplicador mínimo de 1 un
             df_m["qtd_num"] = df_m["qtd_num"].apply(lambda v: max(1, int(v)))
             
             df_m["Custo Total Calc"] = df_m["custo_num"] * df_m["qtd_num"]
@@ -918,6 +913,7 @@ elif menu == "💵 Custos":
                 st.session_state["flash_success"] = "Custo de Feira registrado com sucesso!"
                 st.rerun()
 
+# Módulo Aportes dos Sócios corrigido para evitar KeyError na coluna 'tipo'
 elif menu == "🤝 Aportes dos Sócios":
     st.subheader("🤝 Registro de Aportes e Devoluções")
     c1, c2, c3 = st.columns(3)
@@ -972,13 +968,27 @@ elif menu == "🤝 Aportes dos Sócios":
     
     if not df_aportes.empty:
         df_ap_calc = df_aportes.copy()
-        df_ap_calc["valor_num"] = pd.to_numeric(df_ap_calc["valor"], errors="coerce").fillna(0.0)
+        
+        # Assegura a existência da coluna 'tipo' e 'socio' sem disparar KeyError
+        if "tipo" not in df_ap_calc.columns:
+            if "operacao" in df_ap_calc.columns:
+                df_ap_calc["tipo"] = df_ap_calc["operacao"]
+            elif "forma" in df_ap_calc.columns:
+                df_ap_calc["tipo"] = df_ap_calc["forma"]
+            else:
+                df_ap_calc["tipo"] = "Aporte"
+                
+        if "socio" not in df_ap_calc.columns:
+            df_ap_calc["socio"] = "Não informado"
+
+        df_ap_calc["valor_num"] = pd.to_numeric(df_ap_calc.get("valor", 0), errors="coerce").fillna(0.0)
         
         resumo_socios = []
         for s in ["Renan", "Ronald"]:
-            df_s = df_ap_calc[df_ap_calc["socio"] == s]
-            ent = df_s[df_s["tipo"].isin(["Aporte", "Aporte de Sócio"])]["valor_num"].sum()
-            sai = df_s[df_s["tipo"].isin(["Devolução", "Devolução de Aporte"])]["valor_num"].sum()
+            df_s = df_ap_calc[df_ap_calc["socio"].astype(str).str.lower() == s.lower()]
+            
+            ent = df_s[df_s["tipo"].astype(str).str.contains("Aporte", case=False, na=False)]["valor_num"].sum()
+            sai = df_s[df_s["tipo"].astype(str).str.contains("Devoluc|Devoluç", case=False, na=False)]["valor_num"].sum()
             saldo_dev = ent - sai
             resumo_socios.append({
                 "Sócio": s,
@@ -991,21 +1001,23 @@ elif menu == "🤝 Aportes dos Sócios":
 
         st.markdown("##### 📋 Relatório Detalhado de Movimentações de Aportes")
         df_ap_exib = df_aportes.copy()
-        df_ap_exib["Data"] = df_ap_exib["data"].apply(format_data_br)
-        df_ap_exib["Valor (R$)"] = pd.to_numeric(df_ap_exib["valor"], errors="coerce").fillna(0.0).apply(lambda v: f"R$ {v:,.2f}")
+        
+        col_dt_ap = "data" if "data" in df_ap_exib.columns else "created_at"
+        df_ap_exib["Data_Formatada"] = df_ap_exib[col_dt_ap].apply(format_data_br) if col_dt_ap in df_ap_exib.columns else ""
+        df_ap_exib["Valor (R$)"] = pd.to_numeric(df_ap_exib.get("valor", 0), errors="coerce").fillna(0.0).apply(lambda v: f"R$ {v:,.2f}")
         
         mapa_ap = {
-            "Data": "Data",
+            "Data_Formatada": "Data",
             "socio": "Sócio",
             "tipo": "Operação / Forma",
             "Valor (R$)": "Valor (R$)"
         }
-        cols_ap_show = [c for c in ["Data", "socio", "tipo", "Valor (R$)"] if c in df_ap_exib.columns]
+        cols_ap_show = [c for c in ["Data_Formatada", "socio", "tipo", "Valor (R$)"] if c in df_ap_exib.columns]
         st.dataframe(df_ap_exib[cols_ap_show].rename(columns=mapa_ap), use_container_width=True, hide_index=True)
     else:
         st.info("Nenhum aporte ou devolução registrado no momento.")
 
-# Reestruturação Módulo Fluxo de Caixa (Correção Imagem 3)
+# Módulo Fluxo de Caixa corrigido com ordenação homogênea de datas para evitar TypeError
 elif menu == "💰 Fluxo de Caixa":
     st.subheader("💰 Extrato Consolidado de Caixa")
     
@@ -1022,7 +1034,7 @@ elif menu == "💰 Fluxo de Caixa":
             tot_c = custo_unit * qtd_c
             if tot_c > 0:
                 lista_movimentos.append({
-                    "Data_Raw": pd.to_datetime(dt_compra, errors="coerce"),
+                    "Data_Val": dt_compra,
                     "Data": format_data_br(dt_compra),
                     "Origem": "🛍️ Aquisição de Mercadorias",
                     "Descrição": f"Compra de Estoque - {r.get('codigo','')} ({qtd_c}un)",
@@ -1040,7 +1052,7 @@ elif menu == "💰 Fluxo de Caixa":
             cod = r.get("codigo_bone") or r.get("codigo") or ""
             if val_v > 0:
                 lista_movimentos.append({
-                    "Data_Raw": pd.to_datetime(dt_v, errors="coerce"),
+                    "Data_Val": dt_v,
                     "Data": format_data_br(dt_v),
                     "Origem": "🛒 Recebimento de Vendas",
                     "Descrição": f"Venda {cod} - Cliente: {cli}",
@@ -1059,7 +1071,7 @@ elif menu == "💰 Fluxo de Caixa":
             
             if val_c > 0:
                 lista_movimentos.append({
-                    "Data_Raw": pd.to_datetime(r.get("data"), errors="coerce"),
+                    "Data_Val": r.get("data"),
                     "Data": format_data_br(r.get("data")),
                     "Origem": origem_tag,
                     "Descrição": desc_c,
@@ -1076,7 +1088,7 @@ elif menu == "💰 Fluxo de Caixa":
             is_ent = "aporte" in tipo_ap.lower() and "devolu" not in tipo_ap.lower()
             if val_ap > 0:
                 lista_movimentos.append({
-                    "Data_Raw": pd.to_datetime(r.get("data"), errors="coerce"),
+                    "Data_Val": r.get("data"),
                     "Data": format_data_br(r.get("data")),
                     "Origem": "🤝 Aporte dos Sócios",
                     "Descrição": f"{tipo_ap} ({socio})",
@@ -1084,11 +1096,10 @@ elif menu == "💰 Fluxo de Caixa":
                     "Valor_Num": val_ap if is_ent else -val_ap
                 })
 
-    # 5. Complemento com registros avulsos direto do Livro Caixa (se houver)
+    # 5. Complemento com lançamentos do Livro Caixa
     if not df_caixa.empty:
         for _, r in df_caixa.iterrows():
             desc_val = str(r.get("desc", ""))
-            # Evita duplicação de itens já englobados pelas tabelas originais
             if not any(tag in desc_val for tag in ["Compra de Mercadorias", "Venda ", "Feira:", "[Custos de Venda]", "Aporte (", "Devolução ("]):
                 d_val = r.get("data") or r.get("created_at")
                 t_val = str(r.get("tipo", "Geral"))
@@ -1096,7 +1107,7 @@ elif menu == "💰 Fluxo de Caixa":
                 is_entrada = t_val in ["Venda", "Aporte de Sócio", "Entrada"]
                 if v_val > 0:
                     lista_movimentos.append({
-                        "Data_Raw": pd.to_datetime(d_val, errors="coerce"),
+                        "Data_Val": d_val,
                         "Data": format_data_br(d_val),
                         "Origem": f"💰 Caixa Geral ({t_val})",
                         "Descrição": desc_val,
@@ -1107,7 +1118,11 @@ elif menu == "💰 Fluxo de Caixa":
     if lista_movimentos:
         df_extrato = pd.DataFrame(lista_movimentos)
         
-        # Ordenação cronológica garantida
+        # Conversão segura de datas para garantir ordenação homogênea sem TypeError
+        df_extrato["Data_Raw"] = pd.to_datetime(df_extrato["Data_Val"], errors="coerce")
+        df_extrato["Data_Raw"] = df_extrato["Data_Raw"].fillna(pd.Timestamp("1970-01-01"))
+        
+        # Ordenação rigorosamente cronológica
         df_extrato = df_extrato.sort_values(by="Data_Raw", ascending=True).reset_index(drop=True)
         
         # Cálculo acumulado do saldo financeiro
