@@ -1,4 +1,5 @@
 import datetime
+import base64
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -26,7 +27,7 @@ st.markdown("""
         background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
     }
 
-    /* Container do Cabeçalho Padrão (Sem Logo Carregada) */
+    /* Container do Cabeçalho Padrão */
     .custom-header-container {
         background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
         padding: 22px 30px;
@@ -84,7 +85,6 @@ st.markdown("""
         color: #0f172a;
     }
 
-    /* Tooltip / Balão Interativo Customizado */
     .tooltip-icon {
         display: inline-block;
         background: #e2e8f0;
@@ -129,6 +129,10 @@ df_caixa = fetch_data("caixa")
 df_aportes = fetch_data("aportes")
 df_custos = fetch_data("custos_avulsos")
 
+# Gestão do estado persistente da Logomarca
+if "persistent_logo" not in st.session_state:
+    st.session_state["persistent_logo"] = None
+
 # 3. Sidebar (Barra Lateral Esquerda) Ocultável
 with st.sidebar:
     st.markdown("### 📌 Módulos do Sistema")
@@ -140,17 +144,27 @@ with st.sidebar:
 
     st.markdown("---")
     
-    # ÚLTIMO ITEM DA MENU LATERAL: Personalização da Logomarca
+    # Personalização da Logomarca (Fixa / Persistente)
     with st.expander("🎨 Personalização", expanded=False):
-        logo_file = st.file_uploader(
-            "Carregar Logo da Marca", 
+        uploaded_logo = st.file_uploader(
+            "Carregar Nova Logo da Marca", 
             type=["png", "jpg", "jpeg", "svg"],
-            help="Envie a logomarca para substituir todo o cabeçalho principal."
+            help="Envie a logomarca para definir como fixa no cabeçalho."
         )
+        if uploaded_logo is not None:
+            st.session_state["persistent_logo"] = uploaded_logo.getvalue()
+            st.success("Logo salva e fixada com sucesso!")
+            st.rerun()
 
-# 4. Cabeçalho Integrado: Se houver Logo enviada, exibe em toda a extensão
-if logo_file is not None:
-    st.image(logo_file, use_container_width=True)
+        if st.session_state["persistent_logo"] is not None:
+            if st.button("🗑️️ Excluir Logo Atual", use_container_width=True, type="secondary"):
+                st.session_state["persistent_logo"] = None
+                st.success("Logo removida!")
+                st.rerun()
+
+# 4. Cabeçalho Integrado: Exibe a Logo Persistente se existir
+if st.session_state["persistent_logo"] is not None:
+    st.image(st.session_state["persistent_logo"], use_container_width=True)
 else:
     st.markdown("""
     <div class="custom-header-container">
@@ -168,7 +182,6 @@ st.markdown("<br>", unsafe_allow_html=True)
 if menu == "📈 Dashboard":
     st.subheader("📈 Dashboard Executivo")
     
-    # Cálculos Globais de KPIs
     total_faturado = float(df_vendas["valor"].sum()) if not df_vendas.empty and "valor" in df_vendas.columns else 0.0
     total_cmv = float(df_vendas["custo"].sum()) if not df_vendas.empty and "custo" in df_vendas.columns else 0.0
 
@@ -184,14 +197,14 @@ if menu == "📈 Dashboard":
         if col_qtd_p:
             total_estoque_qtd = int(pd.to_numeric(df_produtos[col_qtd_p], errors="coerce").fillna(0).sum())
 
-    # Cards de KPIs (EXIBIDOS APENAS DENTRO DO DASHBOARD)
+    # Cards de KPIs (Exibidos dentro do Dashboard)
     k1, k2, k3, k4 = st.columns(4)
     with k1:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ️</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ️️</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
     with k2:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV Total <span class="tooltip-icon" title="Custo das mercadorias vendidas nos bonés faturados">ℹ️</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
     with k3:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ️</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ️️</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
     with k4:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
 
@@ -289,7 +302,7 @@ elif menu == "🛒 Vendas":
     if not df_vendas.empty:
         st.dataframe(df_vendas, use_container_width=True, hide_index=True)
 
-elif menu == "🛍️️ Compras":
+elif menu == "🛍️ Compras":
     st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
     with st.form("form_compra"):
         c1, c2, c3 = st.columns(3)
