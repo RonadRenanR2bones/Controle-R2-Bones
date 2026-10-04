@@ -54,7 +54,7 @@ st.markdown("""
         font-size: 1.05em;
     }
 
-    /* MEHORIA 1: Ajuste na altura do cabeçalho para exibir a imagem de forma sutil */
+    /* Ajuste na altura do cabeçalho para exibir a imagem de forma sutil */
     div[data-testid="stImage"] > img {
         border-radius: 16px;
         box-shadow: 0 8px 20px rgba(0,0,0,0.08);
@@ -220,7 +220,7 @@ with st.sidebar:
                 st.success("Logo removida permanentemente!")
                 st.rerun()
 
-# 4. Exibição do Cabeçalho Principal (Ajustado via CSS para ser sutil na vertical)
+# 4. Exibição do Cabeçalho Principal
 active_logo = st.session_state.get("current_logo")
 if active_logo:
     st.image(active_logo, use_container_width=True)
@@ -364,12 +364,22 @@ elif menu == "🛒 Vendas":
 elif menu == "🛍️ Compras":
     st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
     
-    # MELHORIA 2: Recurso para Cadastrar, Alterar / Editar e Excluir Item
+    # SOLICITAÇÃO 1: Caixa suspensa com busca pesquisável por qualquer característica do produto
     opcoes_prod = ["➕ [NOVO] Cadastrar Novo Produto"]
     if not df_produtos.empty and "codigo" in df_produtos.columns:
-        opcoes_prod.extend([f"✏️ [{r['codigo']}] - {r.get('frase', '')}" for _, r in df_produtos.iterrows()])
+        for _, r in df_produtos.iterrows():
+            cod = r.get('codigo', '')
+            frase = r.get('frase', '')
+            cor = r.get('cor', '')
+            cat = r.get('categoria', '')
+            # Formatação completa pesquisável
+            opcoes_prod.append(f"✏️ [{cod}] | {frase} - {cor} - {cat}")
     
-    item_selecionado = st.selectbox("📌 Selecione um Item para Editar/Excluir ou Cadastre um Novo:", opcoes_prod)
+    item_selecionado = st.selectbox(
+        "📌 Selecione um Item para Editar/Excluir ou Cadastre um Novo (Pesquise por código, frase, cor ou categoria):", 
+        opcoes_prod,
+        help="Digite na caixa de texto para buscar por qualquer característica do produto."
+    )
     
     # Preencher campos caso um item existente seja selecionado
     dados_item = {}
@@ -443,18 +453,44 @@ elif menu == "🛍️ Compras":
     st.markdown("---")
     st.subheader("📋 Histórico Permanente de Aquisições")
     if not df_produtos.empty:
-        # MELHORIA 3: Ocultar coluna "id" e "created_at"
+        # SOLICITAÇÃO 2: Mapeamento e Renomeação Exata das Colunas
+        mapa_colunas = {
+            "codigo": "Código",
+            "cor": "Cor do Boné",
+            "frase": "Arte Estampada",
+            "cor_estampa": "Cor Estampada",
+            "categoria": "Produto",
+            "custo": "Custo",
+            "qtd_estoque": "Estoque",
+            "qtd": "Estoque",
+            "estoque": "Estoque"
+        }
+        
+        # Oculta id e created_at
         cols_exibir = [col for col in df_produtos.columns if col not in ["id", "created_at"]]
-        st.dataframe(df_produtos[cols_exibir], use_container_width=True, hide_index=True)
+        df_exibicao = df_produtos[cols_exibir].rename(columns=mapa_colunas)
+        
+        st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
 
 elif menu == "📦 Estoque":
     st.subheader("📦 Estoque Atual em Tempo Real (Saldo Disponível)")
     if not df_produtos.empty:
         df_est = df_produtos.copy()
         df_est["Status"] = "Disponível"
-        # Ocultar colunas id e created_at
+        
+        mapa_colunas_est = {
+            "codigo": "Código",
+            "cor": "Cor do Boné",
+            "frase": "Arte Estampada",
+            "cor_estampa": "Cor Estampada",
+            "categoria": "Produto",
+            "custo": "Custo",
+            "qtd_estoque": "Estoque",
+            "qtd": "Estoque",
+            "estoque": "Estoque"
+        }
         cols_est = [col for col in df_est.columns if col not in ["id", "created_at"]]
-        st.dataframe(df_est[cols_est], use_container_width=True, hide_index=True)
+        st.dataframe(df_est[cols_est].rename(columns=mapa_colunas_est), use_container_width=True, hide_index=True)
     else:
         st.info("Estoque vazio no momento.")
 
@@ -473,7 +509,14 @@ elif menu == "💵 Custos":
                 df_m["qtd_num"] = pd.to_numeric(df_m[col_qtd], errors="coerce").fillna(0)
                 df_m["Custo Total"] = df_m["custo_num"] * df_m["qtd_num"]
                 cols_para_exibir = [c for c in ["codigo", "categoria", col_qtd, col_custo, "Custo Total"] if c in df_m.columns]
-                st.dataframe(df_m[cols_para_exibir], use_container_width=True, hide_index=True)
+                
+                mapa_colunas_custos = {
+                    "codigo": "Código",
+                    "categoria": "Produto",
+                    col_qtd: "Estoque",
+                    "custo": "Custo"
+                }
+                st.dataframe(df_m[cols_para_exibir].rename(columns=mapa_colunas_custos), use_container_width=True, hide_index=True)
             else:
                 cols_m = [col for col in df_m.columns if col not in ["id", "created_at"]]
                 st.dataframe(df_m[cols_m], use_container_width=True, hide_index=True)
