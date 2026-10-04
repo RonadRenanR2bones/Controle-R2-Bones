@@ -103,7 +103,11 @@ if not df_caixa.empty and "valor" in df_caixa.columns and "tipo" in df_caixa.col
     saidas = df_caixa[~df_caixa["tipo"].isin(["Venda", "Aporte de Sócio", "Entrada"])]["valor"].sum()
     saldo_caixa = float(entradas - saidas)
 
-total_estoque_qtd = int(df_produtos["qtd"].sum()) if not df_produtos.empty and "qtd" in df_produtos.columns else 0
+total_estoque_qtd = 0
+if not df_produtos.empty:
+    col_qtd_p = "qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else None)
+    if col_qtd_p:
+        total_estoque_qtd = int(pd.to_numeric(df_produtos[col_qtd_p], errors="coerce").fillna(0).sum())
 
 # Cards de KPIs do Topo
 k1, k2, k3, k4 = st.columns(4)
@@ -159,8 +163,13 @@ if menu == "📈 Dashboard":
     ticket = (fat_fil / len(df_vendas_fil)) if not df_vendas_fil.empty and len(df_vendas_fil) > 0 else 0.0
     
     capital_estoque = 0.0
-    if not df_produtos.empty and "custo" in df_produtos.columns and "qtd" in df_produtos.columns:
-        capital_estoque = float((df_produtos["custo"] * df_produtos["qtd"]).sum())
+    if not df_produtos.empty:
+        c_custo = "custo" if "custo" in df_produtos.columns else None
+        c_qtd = "qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else None)
+        if c_custo and c_qtd:
+            custo_serie = pd.to_numeric(df_produtos[c_custo], errors="coerce").fillna(0)
+            qtd_serie = pd.to_numeric(df_produtos[c_qtd], errors="coerce").fillna(0)
+            capital_estoque = float((custo_serie * qtd_serie).sum())
 
     dk1, dk2, dk3 = st.columns(3)
     with dk1:
@@ -187,8 +196,9 @@ if menu == "📈 Dashboard":
             df_m = df_vendas_fil.merge(df_produtos, on="codigo", how="left")
             cor_col = "cor" if "cor" in df_m.columns else "cor_x"
             if cor_col in df_m.columns:
-                agrup_cor = df_m.groupby(cor_col)["qtd_x" if "qtd_x" in df_m.columns else "qtd"].sum().reset_index()
-                fig2 = px.pie(agrup_cor, names=cor_col, values="qtd_x" if "qtd_x" in agrup_cor.columns else "qtd", hole=0.4)
+                qtd_col = "qtd_x" if "qtd_x" in df_m.columns else ("qtd" if "qtd" in df_m.columns else "qtd_y")
+                agrup_cor = df_m.groupby(cor_col)[qtd_col].sum().reset_index()
+                fig2 = px.pie(agrup_cor, names=cor_col, values=qtd_col, hole=0.4)
                 st.plotly_chart(fig2, use_container_width=True)
             else:
                 st.info("Sem informações de cor nos produtos.")
@@ -222,7 +232,8 @@ elif menu == "🛒 Vendas":
     st.subheader("🛒 Lançar Nova Venda")
 
     if not df_produtos.empty and "codigo" in df_produtos.columns:
-        opts = [f"[{r['codigo']}] \"{r.get('frase','')}\" (Disponível: {r.get('qtd',0)} un)" for _, r in df_produtos.iterrows()]
+        c_qtd_p = "qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else None)
+        opts = [f"[{r['codigo']}] \"{r.get('frase','')}\" (Disponível: {r.get(c_qtd_p, 0) if c_qtd_p else 0} un)" for _, r in df_produtos.iterrows()]
         prod_sel = st.selectbox("🔍 Selecionar Produto do Estoque *", opts)
         
         c1, c2, c3 = st.columns(3)
@@ -356,8 +367,23 @@ elif menu == "💵 Custos":
         st.markdown("#### Histórico Agrupado de Aquisições de Mercadorias")
         if not df_produtos.empty:
             df_m = df_produtos.copy()
-            df_m["Custo Total"] = df_m["custo"] * df_m["qtd"]
-            st.dataframe(df_m[["dataAquisicao", "categoria", "qtd", "custo", "Custo Total"]], use_container_width=True, hide_index=True)
+            # Tratamento seguro para colunas inexistentes ou com nomes alternativos
+            col_custo = "custo" if "custo" in df_m.columns else None
+            col_qtd = "qtd" if "qtd" in df_m.columns else ("estoque" if "estoque" in df_m.columns else None)
+
+            if col_custo and col_qtd:
+                df_m["custo_num"] = pd.to_numeric(df_m[col_custo], errors="coerce").fillna(0)
+                df_m["qtd_num"] = pd.to_numeric(df_m[col_qtd], errors="coerce").fillna(0)
+                df_m["Custo Total"] = df_m["custo_num"] * df_m["qtd_num"]
+                
+                cols_para_exibir = []
+                for col in ["dataAquisicao", "categoria", col_qtd, col_custo, "Custo Total"]:
+                    if col in df_m.columns:
+                        cols_para_exibir.append(col)
+                
+                st.dataframe(df_m[cols_para_exibir], use_container_width=True, hide_index=True)
+            else:
+                st.dataframe(df_m, use_container_width=True, hide_index=True)
         else:
             st.info("Nenhuma mercadoria cadastrada.")
 
