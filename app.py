@@ -143,6 +143,21 @@ def fetch_data(table_name: str) -> pd.DataFrame:
     except Exception:
         return pd.DataFrame()
 
+# Função para devolver o produto ao estoque ao cancelar/excluir uma venda
+def estornar_estoque(codigo_prod, qtd_estorno):
+    if not supabase or not codigo_prod or qtd_estorno <= 0:
+        return
+    try:
+        res_p = supabase.table("produtos").select("*").eq("codigo", codigo_prod).execute()
+        if res_p.data and len(res_p.data) > 0:
+            prod_row = res_p.data[0]
+            col_qtd = "qtd_estoque" if "qtd_estoque" in prod_row else ("qtd" if "qtd" in prod_row else ("estoque" if "estoque" in prod_row else "qtd_estoque"))
+            qtd_atual = int(pd.to_numeric(prod_row.get(col_qtd, 0), errors="coerce"))
+            novo_estoque = qtd_atual + int(qtd_estorno)
+            supabase.table("produtos").update({col_qtd: novo_estoque}).eq("codigo", codigo_prod).execute()
+    except Exception as e:
+        st.error(f"Erro ao estornar produto ao estoque: {e}")
+
 # Buscar logo gravada no banco de dados
 @st.cache_data(ttl=600)
 def get_saved_logo():
@@ -388,7 +403,6 @@ elif menu == "🛒 Vendas":
                 cols_vendas = df_vendas.columns.tolist() if not df_vendas.empty else []
                 if cols_vendas:
                     payload_venda = {k: v for k, v in raw_venda.items() if k in cols_vendas}
-                    # Garantir que chaves NOT NULL obrigatórias estejam no payload
                     if "codigo_bone" not in payload_venda:
                         payload_venda["codigo_bone"] = codigo_sel
                     if "valor_venda" not in payload_venda:
@@ -419,7 +433,6 @@ elif menu == "🛒 Vendas":
                         err_str = str(err)
                         if "Could not find the '" in err_str and "' column" in err_str:
                             col_problem = err_str.split("Could not find the '")[1].split("' column")[0]
-                            # Protege as colunas obrigatórias com NOT NULL no Supabase
                             if col_problem in payload_venda and col_problem not in ["codigo_bone", "valor_venda", "custo_unitario", "forma_pagto"]:
                                 del payload_venda[col_problem]
                         else:
@@ -493,8 +506,15 @@ elif menu == "🛒 Vendas":
                 st.markdown("<br>", unsafe_allow_html=True)
                 if st.button("🗑️ Excluir Venda Incorreta", use_container_width=True, type="secondary"):
                     venda_id = int(venda_sel.split("|")[0].replace("ID", "").strip())
+                    row_v = df_pendentes[df_pendentes["id"] == venda_id].iloc[0]
+                    
+                    # Estorno do estoque antes de excluir a venda
+                    cod_prod_excluir = row_v.get("codigo_bone") or row_v.get("codigo") or row_v.get("codigo_produto")
+                    qtd_venda_excluir = int(row_v.get("qtd") or row_v.get("quantidade") or 1)
+                    estornar_estoque(cod_prod_excluir, qtd_venda_excluir)
+
                     supabase.table("vendas").delete().eq("id", venda_id).execute()
-                    st.success("🗑️ Venda excluída com sucesso!")
+                    st.session_state["flash_success"] = "🗑️ Venda excluída e produtos estornados ao estoque com sucesso!"
                     st.rerun()
 
             df_pend_exib = df_pendentes.copy()
@@ -516,8 +536,15 @@ elif menu == "🛒 Vendas":
             venda_excluir_hist = st.selectbox("Selecione Venda do Histórico para Excluir:", [f"ID {r['id']} | {r.get('cliente','')} - R$ {round(float(r.get(c_val_h, 0.0)), 2):,.2f}" for _, r in df_vendas.iterrows()])
             if st.button("🗑️ Excluir Venda Selecionada", use_container_width=True):
                 v_id_excluir = int(venda_excluir_hist.split("|")[0].replace("ID", "").strip())
+                row_h = df_vendas[df_vendas["id"] == v_id_excluir].iloc[0]
+
+                # Estorno do estoque antes de excluir a venda do histórico
+                cod_prod_excluir_h = row_h.get("codigo_bone") or row_h.get("codigo") or row_h.get("codigo_produto")
+                qtd_venda_excluir_h = int(row_h.get("qtd") or row_h.get("quantidade") or 1)
+                estornar_estoque(cod_prod_excluir_h, qtd_venda_excluir_h)
+
                 supabase.table("vendas").delete().eq("id", v_id_excluir).execute()
-                st.success("🗑️ Venda removida com sucesso!")
+                st.session_state["flash_success"] = "🗑️ Venda removida do histórico e produtos devolvidos ao estoque!"
                 st.rerun()
 
         df_v_exib = df_vendas.copy()
@@ -527,7 +554,7 @@ elif menu == "🛒 Vendas":
 
         st.dataframe(df_v_exib, use_container_width=True, hide_index=True)
 
-elif menu == "🛍️️ Compras":
+elif menu == "🛍️ Compras":
     st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
     
     opcoes_prod = ["➕ [NOVO] Cadastrar Novo Produto"]
