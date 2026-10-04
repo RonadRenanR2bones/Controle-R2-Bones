@@ -1,4 +1,5 @@
 import datetime
+import base64
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -53,6 +54,19 @@ st.markdown("""
         font-size: 1.05em;
     }
 
+    /* Banner para Logomarca Expandida (Substitui o Cabeçalho Escuro) */
+    .banner-logo-full {
+        width: 100%;
+        max-height: 220px;
+        border-radius: 16px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.12);
+        margin-bottom: 25px;
+        object-fit: contain;
+        background-color: #ffffff;
+        padding: 10px;
+        display: block;
+    }
+
     /* Cards de KPIs */
     .kpi-card-advanced {
         background: #ffffff;
@@ -84,7 +98,6 @@ st.markdown("""
         color: #0f172a;
     }
 
-    /* Tooltip / Balão Interativo Customizado */
     .tooltip-icon {
         display: inline-block;
         background: #e2e8f0;
@@ -122,12 +135,54 @@ def fetch_data(table_name: str) -> pd.DataFrame:
     except Exception:
         return pd.DataFrame()
 
-# Carregar dados
+# Funções de Persistência Permanente da Logo no Supabase
+def get_logo_db():
+    if not supabase:
+        return None, None
+    try:
+        res = supabase.table("configuracoes").select("*").eq("chave", "logo_header").execute()
+        if res.data and len(res.data) > 0:
+            val = res.data[0]
+            return val.get("valor_b64"), val.get("mime_type")
+    except Exception:
+        pass
+    return None, None
+
+def save_logo_db(b64_str: str, mime_type: str):
+    if not supabase:
+        return
+    try:
+        data = {
+            "chave": "logo_header",
+            "valor_b64": b64_str,
+            "mime_type": mime_type
+        }
+        supabase.table("configuracoes").upsert(data, on_conflict="chave").execute()
+    except Exception as e:
+        st.error(f"Erro ao salvar logo no banco: {e}")
+
+def delete_logo_db():
+    if not supabase:
+        return
+    try:
+        supabase.table("configuracoes").delete().eq("chave", "logo_header").execute()
+    except Exception as e:
+        st.error(f"Erro ao remover logo do banco: {e}")
+
+# Carregar dados do banco de dados
 df_produtos = fetch_data("produtos")
 df_vendas = fetch_data("vendas")
 df_caixa = fetch_data("caixa")
 df_aportes = fetch_data("aportes")
 df_custos = fetch_data("custos_avulsos")
+
+# Tentar buscar a logo gravada permanentemente no banco
+db_logo_b64, db_logo_mime = get_logo_db()
+
+# Fallback no session_state para performance local
+if "logo_b64" not in st.session_state or st.session_state["logo_b64"] is None:
+    st.session_state["logo_b64"] = db_logo_b64
+    st.session_state["logo_mime"] = db_logo_mime
 
 # 3. Sidebar (Barra Lateral Esquerda) Ocultável
 with st.sidebar:
@@ -140,17 +195,38 @@ with st.sidebar:
 
     st.markdown("---")
     
-    # ÚLTIMO ITEM DA MENU LATERAL: Personalização da Logomarca
+    # Personalização da Logomarca (Persistência Permanente no Banco)
     with st.expander("🎨 Personalização", expanded=False):
-        logo_file = st.file_uploader(
-            "Carregar Logo da Marca", 
+        uploaded_logo = st.file_uploader(
+            "Carregar Nova Logo da Marca", 
             type=["png", "jpg", "jpeg", "svg"],
-            help="Envie a logomarca para substituir todo o cabeçalho principal."
+            help="Envie a logomarca para fixar permanentemente no site."
         )
+        if uploaded_logo is not None:
+            bytes_data = uploaded_logo.getvalue()
+            b64_str = base64.b64encode(bytes_data).decode("utf-8")
+            mime_type = uploaded_logo.type
+            
+            # Salva no Banco de Dados Supabase + Sessão
+            save_logo_db(b64_str, mime_type)
+            st.session_state["logo_b64"] = b64_str
+            st.session_state["logo_mime"] = mime_type
+            
+            st.success("Logo fixa salva com sucesso!")
+            st.rerun()
 
-# 4. Cabeçalho Integrado: Se houver Logo enviada, exibe em toda a extensão
-if logo_file is not None:
-    st.image(logo_file, use_container_width=True)
+        if st.session_state["logo_b64"] is not None:
+            if st.button("🗑️ Excluir Logo Atual", use_container_width=True, type="secondary"):
+                delete_logo_db()
+                st.session_state["logo_b64"] = None
+                st.session_state["logo_mime"] = None
+                st.success("Logo removida permanentemente!")
+                st.rerun()
+
+# 4. Cabeçalho Principal: Substitui toda a área escura pela logo fixa se houver
+if st.session_state["logo_b64"] is not None:
+    logo_src = f"data:{st.session_state['logo_mime']};base64,{st.session_state['logo_b64']}"
+    st.markdown(f'<img src="{logo_src}" class="banner-logo-full">', unsafe_allow_html=True)
 else:
     st.markdown("""
     <div class="custom-header-container">
@@ -168,7 +244,6 @@ st.markdown("<br>", unsafe_allow_html=True)
 if menu == "📈 Dashboard":
     st.subheader("📈 Dashboard Executivo")
     
-    # Cálculos Globais de KPIs
     total_faturado = float(df_vendas["valor"].sum()) if not df_vendas.empty and "valor" in df_vendas.columns else 0.0
     total_cmv = float(df_vendas["custo"].sum()) if not df_vendas.empty and "custo" in df_vendas.columns else 0.0
 
@@ -184,7 +259,7 @@ if menu == "📈 Dashboard":
         if col_qtd_p:
             total_estoque_qtd = int(pd.to_numeric(df_produtos[col_qtd_p], errors="coerce").fillna(0).sum())
 
-    # Cards de KPIs (EXIBIDOS APENAS DENTRO DO DASHBOARD)
+    # Cards de KPIs
     k1, k2, k3, k4 = st.columns(4)
     with k1:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ️</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
@@ -193,7 +268,7 @@ if menu == "📈 Dashboard":
     with k3:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ️</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
     with k4:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -289,7 +364,7 @@ elif menu == "🛒 Vendas":
     if not df_vendas.empty:
         st.dataframe(df_vendas, use_container_width=True, hide_index=True)
 
-elif menu == "🛍️️ Compras":
+elif menu == "🛍️ Compras":
     st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
     with st.form("form_compra"):
         c1, c2, c3 = st.columns(3)
