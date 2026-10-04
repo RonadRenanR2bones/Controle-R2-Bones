@@ -322,7 +322,6 @@ if menu == "📈 Dashboard":
             if cor_col in df_m.columns:
                 qtd_col = "qtd_x" if "qtd_x" in df_m.columns else ("qtd" if "qtd" in df_m.columns else "qtd_y")
                 agrup_cor = df_m.groupby(cor_col)[qtd_col].sum().reset_index()
-                # Correção aplicada: substituído qtd_cor por qtd_col
                 fig2 = px.pie(agrup_cor, names=cor_col, values=qtd_col, hole=0.45, color_discrete_sequence=px.colors.qualitative.Pastel)
                 st.plotly_chart(fig2, use_container_width=True)
             else:
@@ -380,7 +379,8 @@ elif menu == "🛒 Vendas":
                     "pagto": forma_pagto,
                     "data": str(data_venda),
                     "data_venda": str(data_venda),
-                    "custo": custo_calc_fmt
+                    "custo": custo_calc_fmt,
+                    "custo_unitario": round(float(custo_unit), 2)  # Incluída a chave 'custo_unitario'
                 }
                 if dt_receb_str:
                     raw_venda["data_recebimento"] = dt_receb_str
@@ -392,6 +392,8 @@ elif menu == "🛒 Vendas":
                         payload_venda["codigo_bone"] = codigo_sel
                     if "valor_venda" not in payload_venda:
                         payload_venda["valor_venda"] = val_venda_fmt
+                    if "custo_unitario" not in payload_venda:
+                        payload_venda["custo_unitario"] = round(float(custo_unit), 2)
                 else:
                     payload_venda = {
                         "codigo_bone": codigo_sel,
@@ -399,7 +401,8 @@ elif menu == "🛒 Vendas":
                         "cliente": cliente.strip(),
                         "valor_venda": val_venda_fmt,
                         "valor": val_venda_fmt,
-                        "data": str(data_venda)
+                        "data": str(data_venda),
+                        "custo_unitario": round(float(custo_unit), 2)
                     }
 
                 sucesso = False
@@ -412,7 +415,7 @@ elif menu == "🛒 Vendas":
                         err_str = str(err)
                         if "Could not find the '" in err_str and "' column" in err_str:
                             col_problem = err_str.split("Could not find the '")[1].split("' column")[0]
-                            if col_problem in payload_venda and col_problem not in ["codigo_bone", "valor_venda"]:
+                            if col_problem in payload_venda and col_problem not in ["codigo_bone", "valor_venda", "custo_unitario"]:
                                 del payload_venda[col_problem]
                         else:
                             st.error(f"Erro ao registrar a venda no banco de dados: {err}")
@@ -420,7 +423,6 @@ elif menu == "🛒 Vendas":
                         tentativas += 1
 
                 if sucesso:
-                    # Correção aplicada: Abater a quantidade vendida do estoque no banco
                     novo_estoque = max(0, estoque_disp - int(qtd_venda))
                     supabase.table("produtos").update({c_qtd_p: novo_estoque}).eq("codigo", codigo_sel).execute()
 
@@ -576,7 +578,6 @@ elif menu == "🛍️ Compras":
                 custo_prod_fmt = round(float(custo_c), 2)
                 valor_compra_total = round(custo_prod_fmt * int(qtd_comprada), 2)
                 
-                # Correção aplicada: Soma do estoque existente se for produto já cadastrado
                 estoque_atual = int(dados_item.get(col_qtd_nome, 0)) if is_edicao else 0
                 novo_estoque_calculado = estoque_atual + int(qtd_comprada) if is_edicao else int(qtd_comprada)
 
@@ -591,7 +592,6 @@ elif menu == "🛍️ Compras":
                 }
                 supabase.table("produtos").upsert(novo_prod, on_conflict="codigo").execute()
                 
-                # Correção aplicada: Lançar custo total no Caixa
                 if valor_compra_total > 0:
                     supabase.table("caixa").insert({
                         "data": str(dt_aquisicao),
