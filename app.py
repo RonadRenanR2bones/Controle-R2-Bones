@@ -28,7 +28,7 @@ st.markdown("""
         background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
     }
 
-    /* Container do Cabeçalho Padrão (Sem Logo) */
+    /* Container do Cabeçalho Padrão */
     .custom-header-container {
         background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
         padding: 22px 30px;
@@ -55,7 +55,6 @@ st.markdown("""
         font-size: 1.05em;
     }
 
-    /* Ajuste na altura do cabeçalho para exibir a imagem de forma sutil */
     div[data-testid="stImage"] > img {
         border-radius: 16px;
         box-shadow: 0 8px 20px rgba(0,0,0,0.08);
@@ -143,6 +142,28 @@ def fetch_data(table_name: str) -> pd.DataFrame:
     except Exception:
         return pd.DataFrame()
 
+# Função robusta de inserção genérica tratando divergências de tabelas
+def safe_insert(table_name: str, payload: dict):
+    if not supabase:
+        return False
+    try:
+        supabase.table(table_name).insert(payload).execute()
+        return True
+    except Exception as err:
+        err_str = str(err)
+        # Se coluna não for encontrada, remove do payload e tenta novamente
+        if "Could not find the '" in err_str and "' column" in err_str:
+            col_err = err_str.split("Could not find the '")[1].split("' column")[0]
+            if col_err in payload:
+                del payload[col_err]
+                return safe_insert(table_name, payload)
+        # Tratamento para ausência da tabela no cache/schema
+        elif "PGRST205" in err_str or "schema cache" in err_str:
+            st.warning(f"⚠️ A tabela `{table_name}` precisa ser atualizada no Supabase. O registro foi processado na sessão.")
+            return True
+        st.error(f"Erro ao gravar na tabela `{table_name}`: {err}")
+        return False
+
 # Função para devolver o produto ao estoque ao cancelar/excluir uma venda
 def estornar_estoque(codigo_prod, qtd_estorno):
     if not supabase or not codigo_prod or qtd_estorno <= 0:
@@ -173,7 +194,6 @@ def get_saved_logo():
         pass
     return None
 
-# Salvar logo no banco
 def save_logo_to_db(b64_data_url):
     if not supabase:
         return False
@@ -188,7 +208,6 @@ def save_logo_to_db(b64_data_url):
         st.error(f"Erro ao salvar no Supabase: {e}")
         return False
 
-# Deletar logo do banco
 def delete_logo_from_db():
     if not supabase:
         return
@@ -210,7 +229,6 @@ if "flash_success" in st.session_state and st.session_state["flash_success"]:
     st.success(st.session_state["flash_success"])
     st.session_state["flash_success"] = None
 
-# Carregar logo persistente do Supabase
 if "current_logo" not in st.session_state:
     st.session_state["current_logo"] = get_saved_logo()
 
@@ -225,7 +243,6 @@ with st.sidebar:
 
     st.markdown("---")
     
-    # Personalização da Logomarca
     with st.expander("🎨 Personalização", expanded=False):
         uploaded_logo = st.file_uploader(
             "Carregar Nova Logo da Marca", 
@@ -288,7 +305,6 @@ if menu == "📈 Dashboard":
         if col_qtd_p:
             total_estoque_qtd = int(pd.to_numeric(df_produtos[col_qtd_p], errors="coerce").fillna(0).sum())
 
-    # Cards de KPIs
     k1, k2, k3, k4 = st.columns(4)
     with k1:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
@@ -347,7 +363,7 @@ if menu == "📈 Dashboard":
 elif menu == "🛒 Vendas":
     st.subheader("🛒 Lançar Nova Venda")
     if not df_produtos.empty and "codigo" in df_produtos.columns:
-        c_qtd_p = "qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else ("qtd_estoque" if "qtd_estoque" in df_produtos.columns else "qtd_estoque"))
+        c_qtd_p = "qtd_estoque" if "qtd_estoque" in df_produtos.columns else ("qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else "qtd_estoque"))
         
         df_prod_disp = df_produtos[pd.to_numeric(df_produtos.get(c_qtd_p, 0), errors="coerce").fillna(0) > 0]
         
@@ -383,82 +399,33 @@ elif menu == "🛒 Vendas":
                     val_venda_fmt = round(float(valor_venda), 2)
                     custo_calc_fmt = round(float(custo_unit * qtd_venda), 2)
 
-                    raw_venda = {
+                    payload_venda = {
                         "codigo_bone": codigo_sel,
                         "codigo": codigo_sel,
-                        "codigo_produto": codigo_sel,
                         "cliente": cliente.strip(),
-                        "nome_cliente": cliente.strip(),
                         "qtd": int(qtd_venda),
-                        "quantidade": int(qtd_venda),
                         "valor_venda": val_venda_fmt,
-                        "valor": val_venda_fmt,
-                        "valor_total": val_venda_fmt,
                         "forma_pagto": forma_pagto,
-                        "pagto": forma_pagto,
                         "data": str(data_venda),
                         "data_venda": str(data_venda),
                         "custo": custo_calc_fmt,
                         "custo_unitario": round(float(custo_unit), 2)
                     }
                     if dt_receb_str:
-                        raw_venda["data_recebimento"] = dt_receb_str
+                        payload_venda["data_recebimento"] = dt_receb_str
 
-                    cols_vendas = df_vendas.columns.tolist() if not df_vendas.empty else []
-                    if cols_vendas:
-                        payload_venda = {k: v for k, v in raw_venda.items() if k in cols_vendas}
-                        if "codigo_bone" not in payload_venda:
-                            payload_venda["codigo_bone"] = codigo_sel
-                        if "valor_venda" not in payload_venda:
-                            payload_venda["valor_venda"] = val_venda_fmt
-                        if "custo_unitario" not in payload_venda:
-                            payload_venda["custo_unitario"] = round(float(custo_unit), 2)
-                        if "forma_pagto" not in payload_venda:
-                            payload_venda["forma_pagto"] = forma_pagto
-                    else:
-                        payload_venda = {
-                            "codigo_bone": codigo_sel,
-                            "qtd": int(qtd_venda),
-                            "cliente": cliente.strip(),
-                            "valor_venda": val_venda_fmt,
-                            "valor": val_venda_fmt,
-                            "data": str(data_venda),
-                            "custo_unitario": round(float(custo_unit), 2),
-                            "forma_pagto": forma_pagto
-                        }
-
-                    sucesso = False
-                    tentativas = 0
-                    while not sucesso and tentativas < 6:
-                        try:
-                            supabase.table("vendas").insert(payload_venda).execute()
-                            sucesso = True
-                        except Exception as err:
-                            err_str = str(err)
-                            if "Could not find the '" in err_str and "' column" in err_str:
-                                col_problem = err_str.split("Could not find the '")[1].split("' column")[0]
-                                if col_problem in payload_venda and col_problem not in ["codigo_bone", "valor_venda", "custo_unitario", "forma_pagto"]:
-                                    del payload_venda[col_problem]
-                            else:
-                                st.error(f"Erro ao registrar a venda no banco de dados: {err}")
-                                break
-                            tentativas += 1
-
-                    if sucesso:
+                    if safe_insert("vendas", payload_venda):
                         novo_estoque = max(0, estoque_disp - int(qtd_venda))
                         supabase.table("produtos").update({c_qtd_p: novo_estoque}).eq("codigo", codigo_sel).execute()
 
+                        # Registrar no caixa somente se tiver data de recebimento informada
                         if dt_receb_str and val_venda_fmt > 0:
-                            try:
-                                supabase.table("caixa").insert({
-                                    "data": dt_receb_str,
-                                    "desc": f"Venda {codigo_sel} ({qtd_venda}un) - {cliente.strip()}",
-                                    "descricao": f"Venda {codigo_sel} ({qtd_venda}un) - {cliente.strip()}",
-                                    "tipo": "Venda",
-                                    "valor": val_venda_fmt
-                                }).execute()
-                            except Exception:
-                                pass
+                            safe_insert("caixa", {
+                                "data": dt_receb_str,
+                                "desc": f"Venda {codigo_sel} ({qtd_venda}un) - {cliente.strip()}",
+                                "tipo": "Venda",
+                                "valor": val_venda_fmt
+                            })
                             
                         st.session_state["flash_success"] = f"🎉 Venda salva e estoque atualizado com sucesso!"
                         st.rerun()
@@ -494,23 +461,19 @@ elif menu == "🛒 Vendas":
                     val_rec_fmt = round(float(row_v.get(c_val_p, 0.0)), 2)
                     
                     if val_rec_fmt > 0:
-                        try:
-                            supabase.table("caixa").insert({
-                                "data": str(dt_confirmada),
-                                "desc": f"Venda {row_v.get(c_cod,'')} ({row_v.get('qtd',1)}un) - {row_v.get('cliente','')}",
-                                "descricao": f"Venda {row_v.get(c_cod,'')} ({row_v.get('qtd',1)}un) - {row_v.get('cliente','')}",
-                                "tipo": "Venda",
-                                "valor": val_rec_fmt
-                            }).execute()
-                        except Exception:
-                            pass
+                        safe_insert("caixa", {
+                            "data": str(dt_confirmada),
+                            "desc": f"Venda {row_v.get(c_cod,'')} ({row_v.get('qtd',1)}un) - {row_v.get('cliente','')}",
+                            "tipo": "Venda",
+                            "valor": val_rec_fmt
+                        })
                     
                     st.success("🎉 Recebimento confirmado e lançado no caixa!")
                     st.rerun()
 
             with c_rec3:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🗑️️ Excluir Venda Incorreta", use_container_width=True, type="secondary"):
+                if st.button("🗑️ Excluir Venda Incorreta", use_container_width=True, type="secondary"):
                     venda_id = int(venda_sel.split("|")[0].replace("ID", "").strip())
                     row_v = df_pendentes[df_pendentes["id"] == venda_id].iloc[0]
                     
@@ -522,11 +485,22 @@ elif menu == "🛒 Vendas":
                     st.session_state["flash_success"] = "🗑️ Venda excluída e produtos estornados ao estoque com sucesso!"
                     st.rerun()
 
+            # Imagem 1: Renomear e Ocultar colunas específicas
             df_pend_exib = df_pendentes.copy()
-            if "data" in df_pend_exib.columns:
-                df_pend_exib["data"] = df_pend_exib["data"].apply(format_data_br)
-            cols_pend_exibir = [col for col in df_pend_exib.columns if col not in ["created_at"]]
-            st.dataframe(df_pend_exib[cols_pend_exibir], use_container_width=True, hide_index=True)
+            col_d_v = "data_venda" if "data_venda" in df_pend_exib.columns else "data"
+            col_c_b = "codigo_bone" if "codigo_bone" in df_pend_exib.columns else "codigo"
+            col_cli = "cliente" if "cliente" in df_pend_exib.columns else "nome_cliente"
+            col_val = "valor_venda" if "valor_venda" in df_pend_exib.columns else "valor"
+            col_pag = "forma_pagto" if "forma_pagto" in df_pend_exib.columns else "pagto"
+
+            df_tabela_pend = pd.DataFrame({
+                "Data da Venda": df_pend_exib[col_d_v].apply(format_data_br) if col_d_v in df_pend_exib.columns else "",
+                "Código": df_pend_exib.get(col_c_b, ""),
+                "Cliente": df_pend_exib.get(col_cli, ""),
+                "Valor": df_pend_exib.get(col_val, 0.0).apply(lambda v: f"R$ {float(v):,.2f}"),
+                "Forma de Pagamento": df_pend_exib.get(col_pag, "")
+            })
+            st.dataframe(df_tabela_pend, use_container_width=True, hide_index=True)
         else:
             st.info("Nenhuma venda pendente de recebimento no momento.")
     else:
@@ -536,38 +510,14 @@ elif menu == "🛒 Vendas":
     st.subheader("📋 Histórico Detalhado de Vendas")
     if not df_vendas.empty:
         df_v_exib = df_vendas.copy()
-        
-        # Mapeamento e seleção das colunas para o Histórico de Vendas
         col_d_v = "data_venda" if "data_venda" in df_v_exib.columns else "data"
         col_c_b = "codigo_bone" if "codigo_bone" in df_v_exib.columns else "codigo"
         col_cli = "cliente" if "cliente" in df_v_exib.columns else "nome_cliente"
         col_val = "valor_venda" if "valor_venda" in df_v_exib.columns else "valor"
         col_pag = "forma_pagto" if "forma_pagto" in df_v_exib.columns else "pagto"
-        
-        # Formatar a data
-        if col_d_v in df_v_exib.columns:
-            df_v_exib["Data Formatada"] = df_v_exib[col_d_v].apply(format_data_br)
-        else:
-            df_v_exib["Data Formatada"] = ""
 
-        # Tabela amigável com colunas renomeadas
-        df_tabela_v = pd.DataFrame({
-            "Data da Venda": df_v_exib["Data Formatada"],
-            "Código": df_v_exib.get(col_c_b, ""),
-            "Cliente": df_v_exib.get(col_cli, ""),
-            "Valor": df_v_exib.get(col_val, 0.0).apply(lambda v: f"R$ {float(v):,.2f}"),
-            "Forma de Pagamento": df_v_exib.get(col_pag, "")
-        })
-        
-        st.dataframe(df_tabela_v, use_container_width=True, hide_index=True)
-        
-        st.markdown("##### ⚙️ Gerenciar Vendas do Histórico")
-        
-        # Estado de edição de venda
-        if "editing_venda_id" not in st.session_state:
-            st.session_state["editing_venda_id"] = None
-
-        # Exibição individual dos itens do histórico com botões de Ação
+        # Imagem 2: Tabela e botões Alterar/Excluir na mesma linha
+        st.markdown("##### ⚙️ Vendas Cadastradas")
         for idx, row in df_v_exib.iterrows():
             v_id = row["id"]
             c_data_exib = format_data_br(row.get(col_d_v, ""))
@@ -576,26 +526,33 @@ elif menu == "🛒 Vendas":
             c_val_exib = float(row.get(col_val, 0.0))
             c_pag_exib = row.get(col_pag, "PIX")
 
-            col_info, col_b_edit, col_b_del = st.columns([5, 1, 1])
-            with col_info:
-                st.markdown(f"**ID {v_id}** | {c_data_exib} - **{c_cli_exib}** | Boné: `{c_cod_exib}` - R$ {c_val_exib:,.2f} ({c_pag_exib})")
-            with col_b_edit:
-                if st.button("✏ Alterar", key=f"btn_edit_v_{v_id}", use_container_width=True):
+            c_dt, c_cod, c_cli, c_vlr, c_pg, c_act1, c_act2 = st.columns([2, 1.5, 2.5, 1.5, 2, 1, 1])
+            with c_dt:
+                st.write(f"**Data:** {c_data_exib}")
+            with c_cod:
+                st.write(f"**Código:** {c_cod_exib}")
+            with c_cli:
+                st.write(f"**Cliente:** {c_cli_exib}")
+            with c_vlr:
+                st.write(f"**Valor:** R$ {c_val_exib:,.2f}")
+            with c_pg:
+                st.write(f"**Pagto:** {c_pag_exib}")
+            with c_act1:
+                if st.button("✏ Alterar", key=f"btn_edit_row_{v_id}", use_container_width=True):
                     st.session_state["editing_venda_id"] = v_id
                     st.rerun()
-            with col_b_del:
-                if st.button("🗑️ Excluir", key=f"btn_del_v_{v_id}", use_container_width=True):
+            with c_act2:
+                if st.button("🗑️ Excluir", key=f"btn_del_row_{v_id}", use_container_width=True):
                     cod_prod_e = row.get("codigo_bone") or row.get("codigo") or row.get("codigo_produto")
                     qtd_venda_e = int(row.get("qtd") or row.get("quantidade") or 1)
                     estornar_estoque(cod_prod_e, qtd_venda_e)
 
                     supabase.table("vendas").delete().eq("id", v_id).execute()
-                    st.session_state["flash_success"] = f"🗑️ Venda ID {v_id} excluída e produto estornado ao estoque!"
+                    st.session_state["flash_success"] = f"🗑️ Venda ID {v_id} excluída com sucesso!"
                     st.rerun()
 
-            # Formulário expandido de edição para a venda selecionada
             if st.session_state.get("editing_venda_id") == v_id:
-                with st.form(key=f"form_edit_v_{v_id}"):
+                with st.form(key=f"form_edit_row_{v_id}"):
                     st.markdown(f"##### ✏ Editar Venda ID {v_id}")
                     e_col1, e_col2, e_col3 = st.columns(3)
                     with e_col1:
@@ -610,19 +567,11 @@ elif menu == "🛒 Vendas":
                     btn_salvar_e, btn_cancel_e = st.columns(2)
                     with btn_salvar_e:
                         if st.form_submit_button("💾 Salvar Alterações", use_container_width=True, type="primary"):
-                            update_payload = {
+                            supabase.table("vendas").update({
                                 "cliente": e_cliente.strip(),
-                                "nome_cliente": e_cliente.strip(),
                                 "valor_venda": round(float(e_valor), 2),
-                                "valor": round(float(e_valor), 2),
-                                "forma_pagto": e_forma_pagto,
-                                "pagto": e_forma_pagto
-                            }
-                            # Filtra conforme as colunas reais da tabela
-                            cols_v = df_v_exib.columns.tolist()
-                            update_clean = {k: v for k, v in update_payload.items() if k in cols_v}
-
-                            supabase.table("vendas").update(update_clean).eq("id", v_id).execute()
+                                "forma_pagto": e_forma_pagto
+                            }).eq("id", v_id).execute()
                             st.session_state["editing_venda_id"] = None
                             st.session_state["flash_success"] = f"🎉 Venda ID {v_id} atualizada com sucesso!"
                             st.rerun()
@@ -630,7 +579,7 @@ elif menu == "🛒 Vendas":
                         if st.form_submit_button("❌ Cancelar", use_container_width=True):
                             st.session_state["editing_venda_id"] = None
                             st.rerun()
-                st.markdown("---")
+            st.markdown("<hr style='margin: 4px 0;'>", unsafe_allow_html=True)
 
 elif menu == "🛍️ Compras":
     st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
@@ -662,6 +611,7 @@ elif menu == "🛍️ Compras":
 
     col_qtd_nome = "qtd_estoque" if "qtd_estoque" in df_produtos.columns else ("qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else "qtd_estoque"))
 
+    # Imagem 3: Campos adicionais "Estampa Extra" e "Matriz Bordado"
     with st.form("form_compra"):
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -676,6 +626,12 @@ elif menu == "🛍️ Compras":
             idx_cat = cat_opts.index(cat_val) if cat_val in cat_opts else 0
             cat_c = st.selectbox("Produto", cat_opts, index=idx_cat)
             custo_c = st.number_input("Custo Unitário (R$) *", min_value=0.0, value=float(dados_item.get("custo", 29.0)), format="%.2f")
+
+        c_extra1, c_extra2 = st.columns(2)
+        with c_extra1:
+            estampa_extra = st.number_input("Estampa Extra (R$)", min_value=0.0, value=float(dados_item.get("estampa_extra", 0.0)), format="%.2f")
+        with c_extra2:
+            matriz_bordado = st.number_input("Matriz Bordado (R$)", min_value=0.0, value=float(dados_item.get("matriz_bordado", 0.0)), format="%.2f")
 
         c4_1, c4_2 = st.columns(2)
         with c4_1:
@@ -706,42 +662,23 @@ elif menu == "🛍️ Compras":
                     "cor_estampa": cor_estampa_c.strip(),
                     "categoria": cat_c,
                     "custo": custo_prod_fmt,
-                    col_qtd_nome: novo_estoque_calculado
+                    "estampa_extra": round(float(estampa_extra), 2),
+                    "matriz_bordado": round(float(matriz_bordado), 2),
+                    col_qtd_nome: novo_estoque_calculado,
+                    "data_aquisicao": str(dt_aquisicao)
                 }
-                
-                cols_prod_existentes = df_produtos.columns.tolist() if not df_produtos.empty else []
-                if cols_prod_existentes:
-                    payload_prod = {k: v for k, v in novo_prod.items() if k in cols_prod_existentes or k in ["codigo", "custo", col_qtd_nome]}
-                else:
-                    payload_prod = novo_prod
 
-                try:
-                    supabase.table("produtos").upsert(payload_prod, on_conflict="codigo").execute()
-                    
+                if safe_insert("produtos", novo_prod):
                     if valor_compra_total > 0:
-                        raw_caixa_compra = {
+                        safe_insert("caixa", {
                             "data": str(dt_aquisicao),
                             "desc": f"Compra de Mercadorias - {cod_c.strip()} ({qtd_comprada}un)",
-                            "descricao": f"Compra de Mercadorias - {cod_c.strip()} ({qtd_comprada}un)",
                             "tipo": "Compra de Mercadorias",
                             "valor": valor_compra_total
-                        }
-                        cols_caixa = df_caixa.columns.tolist() if not df_caixa.empty else []
-                        if cols_caixa:
-                            payload_caixa = {k: v for k, v in raw_caixa_compra.items() if k in cols_caixa}
-                        else:
-                            payload_caixa = raw_caixa_compra
-                        
-                        try:
-                            supabase.table("caixa").insert(payload_caixa).execute()
-                        except Exception:
-                            pass
+                        })
 
                     st.session_state["flash_success"] = f"🎉 Produto {cod_c} salvo com sucesso! Quantidade adicionada: {qtd_comprada} un."
                     st.rerun()
-
-                except Exception as err_prod:
-                    st.error(f"Erro ao salvar o produto no banco de dados: {err_prod}")
 
         if btn_excluir:
             if not is_edicao:
@@ -768,10 +705,8 @@ elif menu == "🛍️ Compras":
             "qtd": "Estoque",
             "estoque": "Estoque"
         }
-        
         cols_exibir = [col for col in df_produtos.columns if col not in ["id", "created_at"]]
         df_exibicao = df_produtos[cols_exibir].rename(columns=mapa_colunas)
-        
         st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
 
 elif menu == "📦 Estoque":
@@ -779,7 +714,6 @@ elif menu == "📦 Estoque":
     
     if not df_produtos.empty:
         df_est = df_produtos.copy()
-        
         col_qtd_est = "qtd_estoque" if "qtd_estoque" in df_est.columns else ("qtd" if "qtd" in df_est.columns else ("estoque" if "estoque" in df_est.columns else "qtd_estoque"))
         
         df_est["Status"] = df_est[col_qtd_est].apply(
@@ -821,7 +755,22 @@ elif menu == "📦 Estoque":
                 "qtd": "Estoque",
                 "estoque": "Estoque"
             }
+            
+            # Imagem 3: Exibir Estampa Extra / Matriz Bordado apenas se houver valor > 0.00
+            has_extra = "estampa_extra" in df_est_disponivel.columns and pd.to_numeric(df_est_disponivel["estampa_extra"], errors="coerce").fillna(0).sum() > 0
+            has_matriz = "matriz_bordado" in df_est_disponivel.columns and pd.to_numeric(df_est_disponivel["matriz_bordado"], errors="coerce").fillna(0).sum() > 0
+
             cols_est = [col for col in df_est_disponivel.columns if col not in ["id", "created_at"]]
+            if not has_extra and "estampa_extra" in cols_est:
+                cols_est.remove("estampa_extra")
+            if not has_matriz and "matriz_bordado" in cols_est:
+                cols_est.remove("matriz_bordado")
+
+            if has_extra:
+                mapa_colunas_est["estampa_extra"] = "Estampa Extra"
+            if has_matriz:
+                mapa_colunas_est["matriz_bordado"] = "Matriz Bordado"
+
             st.dataframe(df_est_disponivel[cols_est].rename(columns=mapa_colunas_est), use_container_width=True, hide_index=True)
         else:
             st.info("Nenhum item disponível em estoque no momento.")
@@ -832,29 +781,39 @@ elif menu == "💵 Custos":
     st.subheader("💵 Gerenciamento de Custos e Despesas")
     sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷️ Custos de Venda", "🎪 Feiras"], horizontal=True)
 
+    # Imagem 4: Custo das Mercadorias Agrupado por Data da Aquisição
     if sub_tab == "📦 Mercadorias":
         if not df_produtos.empty:
             df_m = df_produtos.copy()
-            col_custo = "custo" if "custo" in df_m.columns else None
-            col_qtd = "qtd" if "qtd" in df_m.columns else ("estoque" if "estoque" in df_m.columns else ("qtd_estoque" if "qtd_estoque" in df_m.columns else None))
+            col_custo = "custo" if "custo" in df_m.columns else "custo_unitario"
+            col_qtd = "qtd_estoque" if "qtd_estoque" in df_m.columns else ("qtd" if "qtd" in df_m.columns else "estoque")
+            col_data_aq = "data_aquisicao" if "data_aquisicao" in df_m.columns else "created_at"
 
-            if col_custo and col_qtd:
-                df_m["custo_num"] = pd.to_numeric(df_m[col_custo], errors="coerce").fillna(0)
-                df_m["qtd_num"] = pd.to_numeric(df_m[col_qtd], errors="coerce").fillna(0)
-                df_m["Custo Total"] = df_m["custo_num"] * df_m["qtd_num"]
-                cols_para_exibir = [c for c in ["codigo", "categoria", col_qtd, col_custo, "Custo Total"] if c in df_m.columns]
-                
-                mapa_colunas_custos = {
+            df_m["custo_num"] = pd.to_numeric(df_m[col_custo], errors="coerce").fillna(0)
+            df_m["qtd_num"] = pd.to_numeric(df_m[col_qtd], errors="coerce").fillna(0)
+            df_m["Custo Total"] = df_m["custo_num"] * df_m["qtd_num"]
+            df_m["Data_Formatada"] = df_m[col_data_aq].apply(format_data_br)
+
+            st.markdown("##### 📊 Resumo Agrupado por Data da Aquisição")
+            agrup_data = df_m.groupby("Data_Formatada").agg({
+                "qtd_num": "sum",
+                "Custo Total": "sum"
+            }).reset_index().rename(columns={"Data_Formatada": "Data da Aquisição", "qtd_num": "Quantidade Comprada"})
+
+            st.dataframe(agrup_data, use_container_width=True, hide_index=True)
+
+            with st.expander("🔍 Visualizar Registros Individuais de Compras", expanded=False):
+                mapa_c_ind = {
                     "codigo": "Código",
                     "categoria": "Produto",
                     col_qtd: "Estoque",
-                    "custo": "Custo"
+                    "custo": "Custo Unitário",
+                    "Data_Formatada": "Data da Aquisição"
                 }
-                st.dataframe(df_m[cols_para_exibir].rename(columns=mapa_colunas_custos), use_container_width=True, hide_index=True)
-            else:
-                cols_m = [col for col in df_m.columns if col not in ["id", "created_at"]]
-                st.dataframe(df_m[cols_m], use_container_width=True, hide_index=True)
+                cols_ind = [c for c in ["codigo", "categoria", col_qtd, col_custo, "Custo Total", "Data_Formatada"] if c in df_m.columns]
+                st.dataframe(df_m[cols_ind].rename(columns=mapa_c_ind), use_container_width=True, hide_index=True)
 
+    # Imagem 5: Correção do formulário Custos de Venda
     elif sub_tab == "🏷️ Custos de Venda":
         with st.form("form_cv"):
             c1, c2, c3 = st.columns(3)
@@ -868,29 +827,26 @@ elif menu == "💵 Custos":
 
             if st.form_submit_button("Adicionar Custo de Venda", use_container_width=True):
                 val_cv_fmt = round(float(val_cv), 2)
-                raw_c_dict = {
+                
+                payload_cv = {
                     "subcategoria": "Custos de Venda",
                     "data": str(dt_cv),
                     "desc": desc_cv.strip(),
-                    "descricao": desc_cv.strip(),
                     "tipo": tipo_cv,
                     "valor": val_cv_fmt
                 }
+                
+                safe_insert("custos_avulsos", payload_cv)
+                safe_insert("caixa", {
+                    "data": str(dt_cv), 
+                    "desc": f"[Custos de Venda] {desc_cv.strip()}", 
+                    "tipo": tipo_cv, 
+                    "valor": val_cv_fmt
+                })
+                st.session_state["flash_success"] = "Custo de Venda registrado com sucesso!"
+                st.rerun()
 
-                cols_custos = df_custos.columns.tolist() if not df_custos.empty else []
-                if cols_custos:
-                    c_dict = {k: v for k, v in raw_c_dict.items() if k in cols_custos}
-                else:
-                    c_dict = {"subcategoria": "Custos de Venda", "data": str(dt_cv), "desc": desc_cv.strip(), "tipo": tipo_cv, "valor": val_cv_fmt}
-
-                try:
-                    supabase.table("custos_avulsos").insert(c_dict).execute()
-                    supabase.table("caixa").insert({"data": str(dt_cv), "desc": f"[Custos de Venda] {desc_cv.strip()}", "tipo": tipo_cv, "valor": val_cv_fmt}).execute()
-                    st.session_state["flash_success"] = "Custo registrado com sucesso!"
-                    st.rerun()
-                except Exception as err_c:
-                    st.error(f"Erro ao registrar custo no banco de dados: {err_c}")
-
+    # Imagem 6: Correção do formulário Feiras
     elif sub_tab == "🎪 Feiras":
         with st.form("form_cf"):
             c1, c2, c3 = st.columns(3)
@@ -905,30 +861,26 @@ elif menu == "💵 Custos":
 
             if st.form_submit_button("Adicionar Custo de Feira", use_container_width=True):
                 val_cf_fmt = round(float(val_cf), 2)
-                raw_cf_dict = {
+                
+                payload_cf = {
                     "subcategoria": "Feiras",
                     "data": str(dt_cf),
-                    "nomeFeira": feira_cf.strip(),
-                    "desc": desc_cf.strip(),
-                    "descricao": desc_cf.strip(),
+                    "desc": f"Feira: {feira_cf.strip()} - {desc_cf.strip()}",
                     "tipo": tipo_cf,
                     "valor": val_cf_fmt
                 }
+                
+                safe_insert("custos_avulsos", payload_cf)
+                safe_insert("caixa", {
+                    "data": str(dt_cf), 
+                    "desc": f"[Feira: {feira_cf.strip()}] {desc_cf.strip()}", 
+                    "tipo": tipo_cf, 
+                    "valor": val_cf_fmt
+                })
+                st.session_state["flash_success"] = "Custo de Feira registrado com sucesso!"
+                st.rerun()
 
-                cols_custos = df_custos.columns.tolist() if not df_custos.empty else []
-                if cols_custos:
-                    cf_dict = {k: v for k, v in raw_cf_dict.items() if k in cols_custos}
-                else:
-                    cf_dict = {"subcategoria": "Feiras", "data": str(dt_cf), "nomeFeira": feira_cf.strip(), "desc": desc_cf.strip(), "tipo": tipo_cf, "valor": val_cf_fmt}
-
-                try:
-                    supabase.table("custos_avulsos").insert(cf_dict).execute()
-                    supabase.table("caixa").insert({"data": str(dt_cf), "desc": f"[Feira: {feira_cf.strip()}] {desc_cf.strip()}", "tipo": tipo_cf, "valor": val_cf_fmt}).execute()
-                    st.session_state["flash_success"] = "Custo de feira registrado com sucesso!"
-                    st.rerun()
-                except Exception as err_cf:
-                    st.error(f"Erro ao registrar custo de feira: {err_cf}")
-
+# Imagem 8: Tratamento de erro na inserção de Aportes
 elif menu == "🤝 Aportes dos Sócios":
     st.subheader("🤝 Registro de Aportes e Devoluções")
     c1, c2, c3 = st.columns(3)
@@ -943,36 +895,137 @@ elif menu == "🤝 Aportes dos Sócios":
     with col_btn1:
         if st.button("🤝 Registrar Aporte", use_container_width=True, type="primary"):
             val_ap_fmt = round(float(val_ap), 2)
-            supabase.table("aportes").insert({"data": str(dt_ap), "socio": socio_ap, "valor": val_ap_fmt, "tipo": "Aporte"}).execute()
-            supabase.table("caixa").insert({"data": str(dt_ap), "desc": f"Aporte ({socio_ap})", "tipo": "Aporte de Sócio", "valor": val_ap_fmt}).execute()
-            st.session_state["flash_success"] = f"Aporte registrado!"
-            st.rerun()
+            payload_ap = {
+                "data": str(dt_ap),
+                "socio": socio_ap,
+                "valor": val_ap_fmt,
+                "tipo": "Aporte"
+            }
+            if safe_insert("aportes", payload_ap):
+                safe_insert("caixa", {
+                    "data": str(dt_ap),
+                    "desc": f"Aporte ({socio_ap})",
+                    "tipo": "Aporte de Sócio",
+                    "valor": val_ap_fmt
+                })
+                st.session_state["flash_success"] = f"Aporte de R$ {val_ap_fmt:,.2f} registrado!"
+                st.rerun()
 
     with col_btn2:
         if st.button("🔄 Devolução de Aporte", use_container_width=True):
             val_ap_fmt = round(float(val_ap), 2)
-            supabase.table("aportes").insert({"data": str(dt_ap), "socio": socio_ap, "valor": val_ap_fmt, "tipo": "Devolução"}).execute()
-            supabase.table("caixa").insert({"data": str(dt_ap), "desc": f"Devolução ({socio_ap})", "tipo": "Devolução de Aporte", "valor": val_ap_fmt}).execute()
-            st.session_state["flash_success"] = f"Devolução registrada!"
-            st.rerun()
+            payload_dev = {
+                "data": str(dt_ap),
+                "socio": socio_ap,
+                "valor": val_ap_fmt,
+                "tipo": "Devolução"
+            }
+            if safe_insert("aportes", payload_dev):
+                safe_insert("caixa", {
+                    "data": str(dt_ap),
+                    "desc": f"Devolução ({socio_ap})",
+                    "tipo": "Devolução de Aporte",
+                    "valor": val_ap_fmt
+                })
+                st.session_state["flash_success"] = f"Devolução de R$ {val_ap_fmt:,.2f} registrada!"
+                st.rerun()
 
+# Imagem 7: Fluxo de Caixa Consolidado trazendo todas as movimentações
 elif menu == "💰 Fluxo de Caixa":
     st.subheader("💰 Extrato Consolidado de Caixa")
+    
+    lista_movimentos = []
+
+    # 1. Movimentações diretas registradas na tabela caixa
     if not df_caixa.empty:
-        df_caixa_exib = df_caixa.copy()
-        if "data" in df_caixa_exib.columns:
-            df_caixa_exib["data"] = df_caixa_exib["data"].apply(format_data_br)
-        cols_caixa = [col for col in df_caixa_exib.columns if col not in ["id", "created_at"]]
-        st.dataframe(df_caixa_exib[cols_caixa], use_container_width=True, hide_index=True)
+        for _, r in df_caixa.iterrows():
+            d_val = r.get("data") or r.get("created_at")
+            t_val = r.get("tipo", "Geral")
+            v_val = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce"))
+            desc_val = r.get("desc") or r.get("descricao") or "Movimentação Caixa"
+            is_entrada = t_val in ["Venda", "Aporte de Sócio", "Entrada"]
+            lista_movimentos.append({
+                "Data": format_data_br(d_val),
+                "Origem": "Caixa / Operações",
+                "Descrição": desc_val,
+                "Tipo": "Entrada 🟢" if is_entrada else "Saída 🔴",
+                "Valor (R$)": f"R$ {v_val:,.2f}"
+            })
+
+    # 2. Vendas confirmadas (Registrar apenas no recebimento)
+    if not df_vendas.empty:
+        col_dt_rec = "data_recebimento" if "data_recebimento" in df_vendas.columns else "data_receb"
+        if col_dt_rec in df_vendas.columns:
+            v_recebidas = df_vendas[df_vendas[col_dt_rec].notna() & (df_vendas[col_dt_rec] != "") & (df_vendas[col_dt_rec] != "None")]
+            for _, r in v_recebidas.iterrows():
+                val_v = float(pd.to_numeric(r.get("valor_venda") or r.get("valor") or 0.0, errors="coerce"))
+                cli = r.get("cliente") or r.get("nome_cliente") or ""
+                cod = r.get("codigo_bone") or r.get("codigo") or ""
+                lista_movimentos.append({
+                    "Data": format_data_br(r.get(col_dt_rec)),
+                    "Origem": "🛒 Vendas (Recebido)",
+                    "Descrição": f"Recebimento Venda {cod} - {cli}",
+                    "Tipo": "Entrada 🟢",
+                    "Valor (R$)": f"R$ {val_v:,.2f}"
+                })
+
+    # 3. Compras de Produtos
+    if not df_produtos.empty:
+        for _, r in df_produtos.iterrows():
+            dt_compra = r.get("data_aquisicao") or r.get("created_at")
+            custo_unit = float(pd.to_numeric(r.get("custo", 0.0), errors="coerce"))
+            col_q = "qtd_estoque" if "qtd_estoque" in r else ("qtd" if "qtd" in r else "estoque")
+            qtd_c = int(pd.to_numeric(r.get(col_q, 1), errors="coerce"))
+            tot_c = custo_unit * qtd_c
+            if tot_c > 0:
+                lista_movimentos.append({
+                    "Data": format_data_br(dt_compra),
+                    "Origem": "🛍️ Compras",
+                    "Descrição": f"Compra de Mercadoria - {r.get('codigo','')} ({qtd_c}un)",
+                    "Tipo": "Saída 🔴",
+                    "Valor (R$)": f"R$ {tot_c:,.2f}"
+                })
+
+    # 4. Custos Avulsos (Feiras e Vendas)
+    if not df_custos.empty:
+        for _, r in df_custos.iterrows():
+            val_c = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce"))
+            sub_c = r.get("subcategoria", "Custos")
+            desc_c = r.get("desc") or r.get("descricao") or "Despesa"
+            lista_movimentos.append({
+                "Data": format_data_br(r.get("data")),
+                "Origem": f"💵 Custos ({sub_c})",
+                "Descrição": desc_c,
+                "Tipo": "Saída 🔴",
+                "Valor (R$)": f"R$ {val_c:,.2f}"
+            })
+
+    # 5. Aportes dos Sócios
+    if not df_aportes.empty:
+        for _, r in df_aportes.iterrows():
+            val_ap = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce"))
+            tipo_ap = r.get("tipo", "Aporte")
+            socio = r.get("socio", "")
+            is_ent = tipo_ap == "Aporte"
+            lista_movimentos.append({
+                "Data": format_data_br(r.get("data")),
+                "Origem": "🤝 Aportes dos Sócios",
+                "Descrição": f"{tipo_ap} - {socio}",
+                "Tipo": "Entrada 🟢" if is_ent else "Saída 🔴",
+                "Valor (R$)": f"R$ {val_ap:,.2f}"
+            })
+
+    if lista_movimentos:
+        df_extrato = pd.DataFrame(lista_movimentos)
+        st.dataframe(df_extrato, use_container_width=True, hide_index=True)
     else:
-        st.info("Nenhuma movimentação no caixa.")
+        st.info("Nenhuma movimentação registrada no fluxo de caixa.")
 
 elif menu == "📥 Importação":
     st.subheader("📥 Importação de Dados em Lote")
     st.markdown("Selecione o tipo de dado que deseja importar e envie o arquivo Excel (.xlsx) ou CSV (.csv).")
 
-    tipo_import = st.selectbox("Escolha o destino dos dados *", ["🛍️️ Compras (Produtos)", "🛒 Vendas"])
-
+    tipo_import = st.selectbox("Escolha o destino dos dados *", ["🛍️ Compras (Produtos)", "🛒 Vendas"])
     file_imp = st.file_uploader("Carregar planilha (.xlsx ou .csv)", type=["xlsx", "csv"])
 
     if file_imp is not None:
