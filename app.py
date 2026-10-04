@@ -186,9 +186,10 @@ if "current_logo" not in st.session_state:
 # 3. Sidebar (Barra Lateral)
 with st.sidebar:
     st.markdown("### 📌 Módulos do Sistema")
+    # MELHORIA 2: Reordenado conforme solicitado: Dashboard | Compras | Estoque | Vendas | Custos | Fluxo de Caixa | Aportes dos Sócios | Importação
     menu = st.radio(
         "Navegue entre os módulos:",
-        ["📈 Dashboard", "🛒 Vendas", "🛍️ Compras", "📦 Estoque", "💵 Custos", "🤝 Aportes dos Sócios", "💰 Fluxo de Caixa", "📥 Importação"],
+        ["📈 Dashboard", "🛍️ Compras", "📦 Estoque", "🛒 Vendas", "💵 Custos", "💰 Fluxo de Caixa", "🤝 Aportes dos Sócios", "📥 Importação"],
         label_visibility="collapsed"
     )
 
@@ -356,7 +357,7 @@ elif menu == "🛒 Vendas":
                 st.session_state["flash_success"] = f"🎉 Venda salva com sucesso!"
                 st.rerun()
 
-    # MELHORIA 2: Segunda Etapa - Vendas Pendentes de Recebimento
+    # MELHORIA 1: Opção de exclusão / cancelamento de venda incorreta
     st.markdown("---")
     st.subheader("⏳ Vendas Pendentes de Recebimento")
     if not df_vendas.empty:
@@ -368,9 +369,9 @@ elif menu == "🛒 Vendas":
 
         if not df_pendentes.empty:
             opts_pend = [f"ID {r['id']} | {r.get('cliente','')} - R$ {r.get('valor',0.0):,.2f} (Venda: {r.get('data','')})" for _, r in df_pendentes.iterrows()]
-            venda_sel = st.selectbox("📌 Selecione uma Venda para Confirmar o Recebimento:", opts_pend)
+            venda_sel = st.selectbox("📌 Selecione uma Venda para Gerenciar / Confirmar Recebimento:", opts_pend)
             
-            c_rec1, c_rec2 = st.columns(2)
+            c_rec1, c_rec2, c_rec3 = st.columns([2, 2, 1])
             with c_rec1:
                 dt_confirmada = st.date_input("Data Efetiva de Recebimento *", datetime.date.today(), key="dt_conf_rec")
             with c_rec2:
@@ -379,10 +380,8 @@ elif menu == "🛒 Vendas":
                     venda_id = int(venda_sel.split("|")[0].replace("ID", "").strip())
                     row_v = df_pendentes[df_pendentes["id"] == venda_id].iloc[0]
                     
-                    # Atualiza a data de recebimento da venda
                     supabase.table("vendas").update({col_dt_rec: str(dt_confirmada)}).eq("id", venda_id).execute()
                     
-                    # Insere o lançamento de entrada no Fluxo de Caixa
                     if float(row_v.get("valor", 0)) > 0:
                         supabase.table("caixa").insert({
                             "data": str(dt_confirmada),
@@ -392,6 +391,14 @@ elif menu == "🛒 Vendas":
                         }).execute()
                     
                     st.success("🎉 Recebimento confirmado e lançado no caixa!")
+                    st.rerun()
+
+            with c_rec3:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("🗑️ Excluir Venda Incorreta", use_container_width=True, type="secondary"):
+                    venda_id = int(venda_sel.split("|")[0].replace("ID", "").strip())
+                    supabase.table("vendas").delete().eq("id", venda_id).execute()
+                    st.success("🗑️️ Venda excluída com sucesso!")
                     st.rerun()
 
             cols_pend_exibir = [col for col in df_pendentes.columns if col not in ["created_at"]]
@@ -404,6 +411,15 @@ elif menu == "🛒 Vendas":
     st.markdown("---")
     st.subheader("📋 Histórico Detalhado de Vendas")
     if not df_vendas.empty:
+        col1_hist, col2_hist = st.columns([3, 1])
+        with col2_hist:
+            venda_excluir_hist = st.selectbox("Selecione Venda do Histórico para Excluir:", [f"ID {r['id']} | {r.get('cliente','')} - R$ {r.get('valor',0.0):,.2f}" for _, r in df_vendas.iterrows()])
+            if st.button("🗑️ Excluir Venda Selecionada", use_container_width=True):
+                v_id_excluir = int(venda_excluir_hist.split("|")[0].replace("ID", "").strip())
+                supabase.table("vendas").delete().eq("id", v_id_excluir).execute()
+                st.success("🗑️ Venda removida com sucesso!")
+                st.rerun()
+
         st.dataframe(df_vendas, use_container_width=True, hide_index=True)
 
 elif menu == "🛍️ Compras":
@@ -445,7 +461,6 @@ elif menu == "🛍️ Compras":
             frase_c = st.text_input("Arte Estampada *", value=str(dados_item.get("frase", "")))
             cor_estampa_c = st.text_input("Cor Estampada *", value=str(dados_item.get("cor_estampa", "")))
         with c3:
-            # MELHORIA 1: Excluído "Liso", adicionados "Kids" e "Outro", organizados em ordem alfabética
             cat_opts = ["Básico", "Kids", "Outro", "Premium"]
             cat_val = str(dados_item.get("categoria", "Básico"))
             idx_cat = cat_opts.index(cat_val) if cat_val in cat_opts else 0
