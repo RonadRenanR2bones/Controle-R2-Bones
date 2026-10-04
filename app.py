@@ -212,6 +212,7 @@ elif menu == "🛒 Nova Venda":
         if not cliente.strip():
           st.error("Por favor, informe o nome do cliente!")
         else:
+          venda_sucesso = False
           try:
             prod_info = df_produtos[
                 df_produtos["codigo"] == opcao_bone
@@ -244,21 +245,24 @@ elif menu == "🛒 Nova Venda":
                 supabase.table("caixa").insert(novo_caixa).execute()
 
             execute_supabase_operation(op_venda)
+            venda_sucesso = True
+          except Exception:
+            st.error(
+                "🌐 Erro de Conexão com o Supabase. Verifique sua conexão e"
+                " tente novamente."
+            )
+
+          if venda_sucesso:
             st.session_state["flash_success"] = (
                 f"🎉 Venda do boné {opcao_bone} para {cliente} salva"
                 " permanentemente!"
             )
             st.session_state["venda_cliente"] = ""
             st.rerun()
-          except Exception:
-            st.error(
-                "🌐 Erro de Conexão com o Supabase. Verifique sua conexão e as"
-                " credenciais de Secrets."
-            )
 
   st.markdown("---")
   st.subheader("📋 Histórico de Vendas")
-  st.dataframe(df_vendas, use_container_width=True)
+  st.dataframe(df_vendas, use_container_width=True, hide_index=True)
 
 # ==============================================================================
 # ABA 3: CATÁLOGO & ESTOQUE
@@ -288,6 +292,7 @@ elif menu == "📦 Catálogo & Estoque":
     if not codigo.strip() or not cor.strip() or not frase.strip():
       st.error("Preencha Código, Cor e Frase obrigatoriamente!")
     else:
+      salvou_com_sucesso = False
       try:
         novo_prod = {
             "codigo": codigo.strip(),
@@ -302,7 +307,14 @@ elif menu == "📦 Catálogo & Estoque":
             .upsert(novo_prod, on_conflict="codigo")
             .execute()
         )
+        salvou_com_sucesso = True
+      except Exception:
+        st.error(
+            "🌐 Erro de Conexão com o Banco de Dados. Verifique sua conexão e"
+            " tente novamente."
+        )
 
+      if salvou_com_sucesso:
         st.session_state["flash_success"] = (
             f"🎉 Boné {codigo.strip()} gravado com sucesso no Supabase!"
         )
@@ -310,16 +322,132 @@ elif menu == "📦 Catálogo & Estoque":
         st.session_state["prod_cor"] = ""
         st.session_state["prod_frase"] = ""
         st.rerun()
-      except Exception:
-        st.error(
-            "🌐 Erro de Conexão com a Internet / Supabase: Não foi possível"
-            " conectar ao banco de dados Supabase. Verifique suas chaves em"
-            " Secrets e sua conexão de rede."
-        )
 
   st.markdown("---")
   st.subheader("📦 Produtos em Estoque")
-  st.dataframe(df_produtos, use_container_width=True)
+
+  if not df_produtos.empty:
+    df_display = df_produtos.copy()
+
+    for col in ["cor_estampa", "categoria", "custo"]:
+      if col not in df_display.columns:
+        df_display[col] = (
+            "None"
+            if col == "cor_estampa"
+            else ("Básico" if col == "categoria" else 29.0)
+        )
+
+    renames = {
+        "codigo": "Código",
+        "cor": "Cor do Boné",
+        "frase": "Arte Estampada",
+        "cor_estampa": "Cor da Estampa",
+        "categoria": "Produto",
+        "custo": "Custo",
+    }
+
+    cols_presentes = [c for c in renames.keys() if c in df_display.columns]
+    df_filtered = df_display[cols_presentes].rename(columns=renames)
+
+    st.dataframe(df_filtered, use_container_width=True, hide_index=True)
+
+    # ======================================================================
+    # OPÇÃO PARA ALTERAR OU EXCLUIR PRODUTOS JÁ INSERIDOS
+    # ======================================================================
+    st.markdown("---")
+    st.subheader("✏️ Alterar ou Excluir Produto Cadastrado")
+
+    lista_codigos = df_produtos["codigo"].unique().tolist()
+    cod_selecionado = st.selectbox(
+        "Selecione o Código do Boné para Gerenciar:", lista_codigos
+    )
+
+    if cod_selecionado:
+      prod_row = df_produtos[df_produtos["codigo"] == cod_selecionado].iloc[0]
+
+      with st.expander(
+          f"⚙️ Opções para o Boné: **{cod_selecionado}**", expanded=True
+      ):
+        ec1, ec2 = st.columns(2)
+        with ec1:
+          edit_cor = st.text_input(
+              "Cor do Boné",
+              value=str(prod_row.get("cor", "")),
+              key="edit_cor",
+          )
+          edit_frase = st.text_input(
+              "Arte Estampada",
+              value=str(prod_row.get("frase", "")),
+              key="edit_frase",
+          )
+          edit_cor_estampa = st.text_input(
+              "Cor da Estampa",
+              value=str(prod_row.get("cor_estampa", "None")),
+              key="edit_cor_estampa",
+          )
+        with ec2:
+          cat_atual = str(prod_row.get("categoria", "Básico"))
+          opts_cat = ["Básico", "Premium", "Liso"]
+          idx_cat = (
+              opts_cat.index(cat_atual) if cat_atual in opts_cat else 0
+          )
+          edit_cat = st.selectbox(
+              "Produto (Categoria)",
+              opts_cat,
+              index=idx_cat,
+              key="edit_cat",
+          )
+          edit_custo = st.number_input(
+              "Custo (R$)",
+              value=float(prod_row.get("custo", 29.0)),
+              step=1.0,
+              key="edit_custo",
+          )
+
+        col_bt1, col_bt2 = st.columns(2)
+        with col_bt1:
+          if st.button(
+              "💾 Salvar Alterações", use_container_width=True, type="primary"
+          ):
+            try:
+              prod_upd = {
+                  "codigo": cod_selecionado,
+                  "cor": edit_cor.strip(),
+                  "frase": edit_frase.strip(),
+                  "cor_estampa": edit_cor_estampa.strip(),
+                  "categoria": edit_cat,
+                  "custo": edit_custo,
+              }
+              execute_supabase_operation(
+                  lambda: supabase.table("produtos")
+                  .update(prod_upd)
+                  .eq("codigo", cod_selecionado)
+                  .execute()
+              )
+              st.session_state["flash_success"] = (
+                  f"✅ Produto {cod_selecionado} atualizado com sucesso!"
+              )
+              st.rerun()
+            except Exception as e:
+              st.error(f"Erro ao atualizar produto: {e}")
+
+        with col_bt2:
+          if st.button("🗑️ Excluir Produto", use_container_width=True):
+            try:
+              execute_supabase_operation(
+                  lambda: supabase.table("produtos")
+                  .delete()
+                  .eq("codigo", cod_selecionado)
+                  .execute()
+              )
+              st.session_state["flash_success"] = (
+                  f"🗑️ Produto {cod_selecionado} excluído com sucesso!"
+              )
+              st.rerun()
+            except Exception as e:
+              st.error(f"Erro ao excluir produto: {e}")
+  else:
+    st.info("Nenhum produto em estoque.")
 
 # ==============================================================================
 # ABA 4: FLUXO DE CAIXA
@@ -346,6 +474,7 @@ elif menu == "💰 Fluxo de Caixa":
     if not desc.strip():
       st.error("Informe a descrição da movimentação!")
     else:
+      cx_sucesso = False
       try:
         lancamento = {
             "data_movimentacao": str(data_mov),
@@ -356,20 +485,23 @@ elif menu == "💰 Fluxo de Caixa":
         execute_supabase_operation(
             lambda: supabase.table("caixa").insert(lancamento).execute()
         )
-        st.session_state["flash_success"] = (
-            "💰 Movimentação financeira gravada permanentemente!"
-        )
-        st.session_state["cx_desc"] = ""
-        st.rerun()
+        cx_sucesso = True
       except Exception:
         st.error(
             "🌐 Sem Conexão com a Internet. Verifique sua rede e tente"
             " novamente."
         )
 
+      if cx_sucesso:
+        st.session_state["flash_success"] = (
+            "💰 Movimentação financeira gravada permanentemente!"
+        )
+        st.session_state["cx_desc"] = ""
+        st.rerun()
+
   st.markdown("---")
   st.subheader("📜 Extrato de Caixa")
-  st.dataframe(df_caixa, use_container_width=True)
+  st.dataframe(df_caixa, use_container_width=True, hide_index=True)
 
 # ==============================================================================
 # ABA 5: APORTES DOS SÓCIOS
@@ -392,6 +524,7 @@ elif menu == "🤝 Aportes dos Sócios":
 
   btn_ap = st.button("📥 Confirmar Aporte", use_container_width=True)
   if btn_ap:
+    ap_sucesso = False
     try:
 
       def op_aporte():
@@ -410,21 +543,24 @@ elif menu == "🤝 Aportes dos Sócios":
         }).execute()
 
       execute_supabase_operation(op_aporte)
-      st.session_state["flash_success"] = (
-          f"🤝 Aporte de R$ {valor_ap:.2f} do sócio {socio} registrado no banco!"
-      )
-      st.rerun()
+      ap_sucesso = True
     except Exception:
       st.error(
           "🌐 Sem Conexão com a Internet. Verifique sua rede e tente"
           " novamente."
       )
 
+    if ap_sucesso:
+      st.session_state["flash_success"] = (
+          f"🤝 Aporte de R$ {valor_ap:.2f} do sócio {socio} registrado no banco!"
+      )
+      st.rerun()
+
   st.markdown("---")
   st.subheader("📊 Totais Investidos por Sócio")
   if not df_aportes.empty:
     totais = df_aportes.groupby("socio")["valor"].sum().reset_index()
-    st.dataframe(totais, use_container_width=True)
+    st.dataframe(totais, use_container_width=True, hide_index=True)
   else:
     st.info("Nenhum aporte registrado ainda.")
 
@@ -456,7 +592,9 @@ elif menu == "📂 Importar/Exportar Excel":
       with tab_matriz:
         if "Matriz" in sheets:
           df_matriz = pd.read_excel(uploaded_file, sheet_name="Matriz")
-          st.dataframe(df_matriz.head(5), use_container_width=True)
+          st.dataframe(
+              df_matriz.head(5), use_container_width=True, hide_index=True
+          )
 
           if st.button(
               "🚀 Importar Dados da Matriz",
@@ -571,7 +709,9 @@ elif menu == "📂 Importar/Exportar Excel":
       with tab_estoque:
         if "Estoque" in sheets:
           df_estoque = pd.read_excel(uploaded_file, sheet_name="Estoque")
-          st.dataframe(df_estoque.head(5), use_container_width=True)
+          st.dataframe(
+              df_estoque.head(5), use_container_width=True, hide_index=True
+          )
 
           if st.button(
               "🚀 Importar/Atualizar Estoque",
@@ -633,7 +773,9 @@ elif menu == "📂 Importar/Exportar Excel":
       with tab_caixa:
         if "Caixa" in sheets:
           df_caixa = pd.read_excel(uploaded_file, sheet_name="Caixa")
-          st.dataframe(df_caixa.head(5), use_container_width=True)
+          st.dataframe(
+              df_caixa.head(5), use_container_width=True, hide_index=True
+          )
 
           if st.button(
               "🚀 Importar Caixa & Aportes",
