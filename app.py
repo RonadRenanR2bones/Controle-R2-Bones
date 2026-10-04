@@ -190,6 +190,11 @@ df_caixa = fetch_data("caixa")
 df_aportes = fetch_data("aportes")
 df_custos = fetch_data("custos_avulsos")
 
+# Mensagens Flash de Sucesso
+if "flash_success" in st.session_state and st.session_state["flash_success"]:
+    st.success(st.session_state["flash_success"])
+    st.session_state["flash_success"] = None
+
 # Carregar logo persistente do Supabase
 if "current_logo" not in st.session_state:
     st.session_state["current_logo"] = get_saved_logo()
@@ -271,11 +276,11 @@ if menu == "📈 Dashboard":
     # Cards de KPIs
     k1, k2, k3, k4 = st.columns(4)
     with k1:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ️️</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
     with k2:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV Total <span class="tooltip-icon" title="Custo das mercadorias vendidas nos bonés faturados">ℹ️</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
     with k3:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ️️</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
     with k4:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
 
@@ -317,7 +322,8 @@ if menu == "📈 Dashboard":
             if cor_col in df_m.columns:
                 qtd_col = "qtd_x" if "qtd_x" in df_m.columns else ("qtd" if "qtd" in df_m.columns else "qtd_y")
                 agrup_cor = df_m.groupby(cor_col)[qtd_col].sum().reset_index()
-                fig2 = px.pie(agrup_cor, names=cor_col, values=qtd_cor, hole=0.45, color_discrete_sequence=px.colors.qualitative.Pastel)
+                # Correção aplicada: substituído qtd_cor por qtd_col
+                fig2 = px.pie(agrup_cor, names=cor_col, values=qtd_col, hole=0.45, color_discrete_sequence=px.colors.qualitative.Pastel)
                 st.plotly_chart(fig2, use_container_width=True)
             else:
                 st.info("Sem informação de cor cadastrada.")
@@ -327,14 +333,14 @@ if menu == "📈 Dashboard":
 elif menu == "🛒 Vendas":
     st.subheader("🛒 Lançar Nova Venda")
     if not df_produtos.empty and "codigo" in df_produtos.columns:
-        c_qtd_p = "qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else ("qtd_estoque" if "qtd_estoque" in df_produtos.columns else None))
-        opts = [f"[{r['codigo']}] \"{r.get('frase','')}\" (Disponível: {r.get(c_qtd_p, 0) if c_qtd_p else 0} un)" for _, r in df_produtos.iterrows()]
+        c_qtd_p = "qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else ("qtd_estoque" if "qtd_estoque" in df_produtos.columns else "qtd_estoque"))
+        opts = [f"[{r['codigo']}] \"{r.get('frase','')}\" (Disponível: {r.get(c_qtd_p, 0) if c_qtd_p in r else 0} un)" for _, r in df_produtos.iterrows()]
         prod_sel = st.selectbox("🔍 Selecionar Boné do Estoque *", opts)
         
         codigo_sel = prod_sel.split("]")[0].replace("[", "").strip() if prod_sel else ""
         
         p_match = df_produtos[df_produtos["codigo"] == codigo_sel]
-        estoque_disp = int(pd.to_numeric(p_match.iloc[0].get(c_qtd_p, 1), errors="coerce")) if not p_match.empty and c_qtd_p else 1
+        estoque_disp = int(pd.to_numeric(p_match.iloc[0].get(c_qtd_p, 1), errors="coerce")) if not p_match.empty and c_qtd_p in p_match.columns else 1
         max_qtd = max(1, estoque_disp)
 
         c1, c2, c3 = st.columns(3)
@@ -359,7 +365,6 @@ elif menu == "🛒 Vendas":
                 val_venda_fmt = round(float(valor_venda), 2)
                 custo_calc_fmt = round(float(custo_unit * qtd_venda), 2)
 
-                # Incluída a chave 'valor_venda' para satisfazer a not-null constraint do Supabase
                 raw_venda = {
                     "codigo_bone": codigo_sel,
                     "codigo": codigo_sel,
@@ -380,7 +385,6 @@ elif menu == "🛒 Vendas":
                 if dt_receb_str:
                     raw_venda["data_recebimento"] = dt_receb_str
 
-                # Filtro dinâmico: garante inclusão de valor_venda e codigo_bone
                 cols_vendas = df_vendas.columns.tolist() if not df_vendas.empty else []
                 if cols_vendas:
                     payload_venda = {k: v for k, v in raw_venda.items() if k in cols_vendas}
@@ -416,6 +420,10 @@ elif menu == "🛒 Vendas":
                         tentativas += 1
 
                 if sucesso:
+                    # Correção aplicada: Abater a quantidade vendida do estoque no banco
+                    novo_estoque = max(0, estoque_disp - int(qtd_venda))
+                    supabase.table("produtos").update({c_qtd_p: novo_estoque}).eq("codigo", codigo_sel).execute()
+
                     if dt_receb_str and val_venda_fmt > 0:
                         supabase.table("caixa").insert({
                             "data": dt_receb_str,
@@ -424,7 +432,7 @@ elif menu == "🛒 Vendas":
                             "valor": val_venda_fmt
                         }).execute()
                         
-                    st.session_state["flash_success"] = f"🎉 Venda salva com sucesso!"
+                    st.session_state["flash_success"] = f"🎉 Venda salva e estoque atualizado com sucesso!"
                     st.rerun()
 
     st.markdown("---")
@@ -515,7 +523,7 @@ elif menu == "🛍️ Compras":
             cor = r.get('cor', '')
             cor_e = r.get('cor_estampa', '')
             cat = r.get('categoria', '')
-            opcoes_prod.append(f"✏️️ [{cod}] | {frase} - {cor} - {cor_e} - {cat}")
+            opcoes_prod.append(f"✏ [{cod}] | {frase} - {cor} - {cor_e} - {cat}")
     
     item_selecionado = st.selectbox(
         "📌 Selecione um Item para Editar/Excluir ou Cadastre um Novo (Pesquise por código, frase, cor ou categoria):", 
@@ -527,12 +535,12 @@ elif menu == "🛍️ Compras":
     is_edicao = False
     if item_selecionado and not item_selecionado.startswith("➕"):
         is_edicao = True
-        cod_existente = item_selecionado.split("]")[0].replace("✏️ [", "").strip()
+        cod_existente = item_selecionado.split("]")[0].replace("✏ [", "").strip()
         row_match = df_produtos[df_produtos["codigo"] == cod_existente]
         if not row_match.empty:
             dados_item = row_match.iloc[0].to_dict()
 
-    col_qtd_nome = "qtd_estoque" if "qtd_estoque" in dados_item else ("qtd" if "qtd" in dados_item else "estoque")
+    col_qtd_nome = "qtd_estoque" if "qtd_estoque" in df_produtos.columns else ("qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else "qtd_estoque"))
 
     with st.form("form_compra"):
         c1, c2, c3 = st.columns(3)
@@ -549,8 +557,10 @@ elif menu == "🛍️ Compras":
             cat_c = st.selectbox("Produto", cat_opts, index=idx_cat)
             custo_c = st.number_input("Custo Unitário (R$) *", min_value=0.0, value=float(dados_item.get("custo", 29.0)), format="%.2f")
 
-        c4 = st.container()
-        with c4:
+        c4_1, c4_2 = st.columns(2)
+        with c4_1:
+            qtd_comprada = st.number_input("Quantidade Comprada *", min_value=1, value=1, step=1)
+        with c4_2:
             dt_aquisicao = st.date_input("Data da Aquisição *", datetime.date.today(), format="DD/MM/YYYY")
 
         b_col1, b_col2 = st.columns(2)
@@ -564,6 +574,12 @@ elif menu == "🛍️ Compras":
                 st.error("Informe o código do produto!")
             else:
                 custo_prod_fmt = round(float(custo_c), 2)
+                valor_compra_total = round(custo_prod_fmt * int(qtd_comprada), 2)
+                
+                # Correção aplicada: Soma do estoque existente se for produto já cadastrado
+                estoque_atual = int(dados_item.get(col_qtd_nome, 0)) if is_edicao else 0
+                novo_estoque_calculado = estoque_atual + int(qtd_comprada) if is_edicao else int(qtd_comprada)
+
                 novo_prod = {
                     "codigo": cod_c.strip(),
                     "cor": cor_c.strip(),
@@ -571,20 +587,20 @@ elif menu == "🛍️ Compras":
                     "cor_estampa": cor_estampa_c.strip(),
                     "categoria": cat_c,
                     "custo": custo_prod_fmt,
-                    col_qtd_nome: 1
+                    col_qtd_nome: novo_estoque_calculado
                 }
                 supabase.table("produtos").upsert(novo_prod, on_conflict="codigo").execute()
                 
-                if not is_edicao:
-                    if custo_prod_fmt > 0:
-                        supabase.table("caixa").insert({
-                            "data": str(dt_aquisicao),
-                            "desc": "Compra de Mercadorias (Estoque)",
-                            "tipo": "Compra de Mercadorias",
-                            "valor": custo_prod_fmt
-                        }).execute()
+                # Correção aplicada: Lançar custo total no Caixa
+                if valor_compra_total > 0:
+                    supabase.table("caixa").insert({
+                        "data": str(dt_aquisicao),
+                        "desc": f"Compra de Mercadorias - {cod_c.strip()} ({qtd_comprada}un)",
+                        "tipo": "Compra de Mercadorias",
+                        "valor": valor_compra_total
+                    }).execute()
 
-                st.session_state["flash_success"] = f"🎉 Produto {cod_c} salvo com sucesso!"
+                st.session_state["flash_success"] = f"🎉 Produto {cod_c} salvo com sucesso! Quantidade adicionada: {qtd_comprada} un."
                 st.rerun()
 
         if btn_excluir:
@@ -870,7 +886,7 @@ elif menu == "💾 Gestão de Dados":
 
     st.markdown("---")
     st.markdown("#### ⚙️ Operações de Banco Supabase")
-    st.info("Seu banco de dados está synchronizado diretamente na nuvem do Supabase. Todos os cadastros e edições são mantidos permanentemente.")
+    st.info("Seu banco de dados está sincronizado diretamente na nuvem do Supabase. Todos os cadastros e edições são mantidos permanentemente.")
 
     with st.expander("🔄 Restaurar / Recuperar Dados via Backup Planilha (.xlsx)"):
         st.warning("⚠️ O envio de uma planilha de restauração substituirá ou atualizará os registros existentes correspondentes aos códigos e IDs.")
