@@ -348,116 +348,123 @@ elif menu == "🛒 Vendas":
     st.subheader("🛒 Lançar Nova Venda")
     if not df_produtos.empty and "codigo" in df_produtos.columns:
         c_qtd_p = "qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else ("qtd_estoque" if "qtd_estoque" in df_produtos.columns else "qtd_estoque"))
-        opts = [f"[{r['codigo']}] \"{r.get('frase','')}\" (Disponível: {r.get(c_qtd_p, 0) if c_qtd_p in r else 0} un)" for _, r in df_produtos.iterrows()]
-        prod_sel = st.selectbox("🔍 Selecionar Boné do Estoque *", opts)
         
-        codigo_sel = prod_sel.split("]")[0].replace("[", "").strip() if prod_sel else ""
+        # Filtra produtos com estoque maior que 0 para venda
+        df_prod_disp = df_produtos[pd.to_numeric(df_produtos.get(c_qtd_p, 0), errors="coerce").fillna(0) > 0]
         
-        p_match = df_produtos[df_produtos["codigo"] == codigo_sel]
-        estoque_disp = int(pd.to_numeric(p_match.iloc[0].get(c_qtd_p, 1), errors="coerce")) if not p_match.empty and c_qtd_p in p_match.columns else 1
-        max_qtd = max(1, estoque_disp)
+        if not df_prod_disp.empty:
+            opts = [f"[{r['codigo']}] \"{r.get('frase','')}\" (Disponível: {r.get(c_qtd_p, 0)} un)" for _, r in df_prod_disp.iterrows()]
+            prod_sel = st.selectbox("🔍 Selecionar Boné do Estoque *", opts)
+            
+            codigo_sel = prod_sel.split("]")[0].replace("[", "").strip() if prod_sel else ""
+            
+            p_match = df_prod_disp[df_prod_disp["codigo"] == codigo_sel]
+            estoque_disp = int(pd.to_numeric(p_match.iloc[0].get(c_qtd_p, 1), errors="coerce")) if not p_match.empty else 1
+            max_qtd = max(1, estoque_disp)
 
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            qtd_venda = st.number_input("Quantidade *", min_value=1, max_value=max_qtd, value=1, step=1, help=f"Quantidade máxima disponível em estoque: {max_qtd}")
-            cliente = st.text_input("Nome do Cliente *")
-        with c2:
-            valor_venda = st.number_input("Valor Total (R$) *", min_value=0.0, value=60.0, step=5.0, format="%.2f")
-            forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
-        with c3:
-            data_venda = st.date_input("Data da Venda *", datetime.date.today(), format="DD/MM/YYYY")
-            data_receb = st.date_input("Data de Recebimento (Opcional)", value=None, format="DD/MM/YYYY")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                qtd_venda = st.number_input("Quantidade *", min_value=1, max_value=max_qtd, value=1, step=1, help=f"Quantidade máxima disponível em estoque: {max_qtd}")
+                cliente = st.text_input("Nome do Cliente *")
+            with c2:
+                valor_venda = st.number_input("Valor Total (R$) *", min_value=0.0, value=60.0, step=5.0, format="%.2f")
+                forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
+            with c3:
+                data_venda = st.date_input("Data da Venda *", datetime.date.today(), format="DD/MM/YYYY")
+                data_receb = st.date_input("Data de Recebimento (Opcional)", value=None, format="DD/MM/YYYY")
 
-        if st.button("🚀 Finalizar Venda", type="primary", use_container_width=True):
-            if not cliente.strip():
-                st.error("Informe o nome do cliente!")
-            else:
-                p_info = df_produtos[df_produtos["codigo"] == codigo_sel].iloc[0]
-                custo_unit = float(p_info.get("custo", 0.0))
-                dt_receb_str = str(data_receb) if data_receb is not None else None
-
-                val_venda_fmt = round(float(valor_venda), 2)
-                custo_calc_fmt = round(float(custo_unit * qtd_venda), 2)
-
-                raw_venda = {
-                    "codigo_bone": codigo_sel,
-                    "codigo": codigo_sel,
-                    "codigo_produto": codigo_sel,
-                    "cliente": cliente.strip(),
-                    "nome_cliente": cliente.strip(),
-                    "qtd": int(qtd_venda),
-                    "quantidade": int(qtd_venda),
-                    "valor_venda": val_venda_fmt,
-                    "valor": val_venda_fmt,
-                    "valor_total": val_venda_fmt,
-                    "forma_pagto": forma_pagto,
-                    "pagto": forma_pagto,
-                    "data": str(data_venda),
-                    "data_venda": str(data_venda),
-                    "custo": custo_calc_fmt,
-                    "custo_unitario": round(float(custo_unit), 2)
-                }
-                if dt_receb_str:
-                    raw_venda["data_recebimento"] = dt_receb_str
-
-                cols_vendas = df_vendas.columns.tolist() if not df_vendas.empty else []
-                if cols_vendas:
-                    payload_venda = {k: v for k, v in raw_venda.items() if k in cols_vendas}
-                    if "codigo_bone" not in payload_venda:
-                        payload_venda["codigo_bone"] = codigo_sel
-                    if "valor_venda" not in payload_venda:
-                        payload_venda["valor_venda"] = val_venda_fmt
-                    if "custo_unitario" not in payload_venda:
-                        payload_venda["custo_unitario"] = round(float(custo_unit), 2)
-                    if "forma_pagto" not in payload_venda:
-                        payload_venda["forma_pagto"] = forma_pagto
+            if st.button("🚀 Finalizar Venda", type="primary", use_container_width=True):
+                if not cliente.strip():
+                    st.error("Informe o nome do cliente!")
                 else:
-                    payload_venda = {
+                    p_info = df_produtos[df_produtos["codigo"] == codigo_sel].iloc[0]
+                    custo_unit = float(p_info.get("custo", 0.0))
+                    dt_receb_str = str(data_receb) if data_receb is not None else None
+
+                    val_venda_fmt = round(float(valor_venda), 2)
+                    custo_calc_fmt = round(float(custo_unit * qtd_venda), 2)
+
+                    raw_venda = {
                         "codigo_bone": codigo_sel,
-                        "qtd": int(qtd_venda),
+                        "codigo": codigo_sel,
+                        "codigo_produto": codigo_sel,
                         "cliente": cliente.strip(),
+                        "nome_cliente": cliente.strip(),
+                        "qtd": int(qtd_venda),
+                        "quantidade": int(qtd_venda),
                         "valor_venda": val_venda_fmt,
                         "valor": val_venda_fmt,
+                        "valor_total": val_venda_fmt,
+                        "forma_pagto": forma_pagto,
+                        "pagto": forma_pagto,
                         "data": str(data_venda),
-                        "custo_unitario": round(float(custo_unit), 2),
-                        "forma_pagto": forma_pagto
+                        "data_venda": str(data_venda),
+                        "custo": custo_calc_fmt,
+                        "custo_unitario": round(float(custo_unit), 2)
                     }
+                    if dt_receb_str:
+                        raw_venda["data_recebimento"] = dt_receb_str
 
-                sucesso = False
-                tentativas = 0
-                while not sucesso and tentativas < 6:
-                    try:
-                        supabase.table("vendas").insert(payload_venda).execute()
-                        sucesso = True
-                    except Exception as err:
-                        err_str = str(err)
-                        if "Could not find the '" in err_str and "' column" in err_str:
-                            col_problem = err_str.split("Could not find the '")[1].split("' column")[0]
-                            if col_problem in payload_venda and col_problem not in ["codigo_bone", "valor_venda", "custo_unitario", "forma_pagto"]:
-                                del payload_venda[col_problem]
-                        else:
-                            st.error(f"Erro ao registrar a venda no banco de dados: {err}")
-                            break
-                        tentativas += 1
+                    cols_vendas = df_vendas.columns.tolist() if not df_vendas.empty else []
+                    if cols_vendas:
+                        payload_venda = {k: v for k, v in raw_venda.items() if k in cols_vendas}
+                        if "codigo_bone" not in payload_venda:
+                            payload_venda["codigo_bone"] = codigo_sel
+                        if "valor_venda" not in payload_venda:
+                            payload_venda["valor_venda"] = val_venda_fmt
+                        if "custo_unitario" not in payload_venda:
+                            payload_venda["custo_unitario"] = round(float(custo_unit), 2)
+                        if "forma_pagto" not in payload_venda:
+                            payload_venda["forma_pagto"] = forma_pagto
+                    else:
+                        payload_venda = {
+                            "codigo_bone": codigo_sel,
+                            "qtd": int(qtd_venda),
+                            "cliente": cliente.strip(),
+                            "valor_venda": val_venda_fmt,
+                            "valor": val_venda_fmt,
+                            "data": str(data_venda),
+                            "custo_unitario": round(float(custo_unit), 2),
+                            "forma_pagto": forma_pagto
+                        }
 
-                if sucesso:
-                    novo_estoque = max(0, estoque_disp - int(qtd_venda))
-                    supabase.table("produtos").update({c_qtd_p: novo_estoque}).eq("codigo", codigo_sel).execute()
-
-                    if dt_receb_str and val_venda_fmt > 0:
+                    sucesso = False
+                    tentativas = 0
+                    while not sucesso and tentativas < 6:
                         try:
-                            supabase.table("caixa").insert({
-                                "data": dt_receb_str,
-                                "desc": f"Venda {codigo_sel} ({qtd_venda}un) - {cliente.strip()}",
-                                "descricao": f"Venda {codigo_sel} ({qtd_venda}un) - {cliente.strip()}",
-                                "tipo": "Venda",
-                                "valor": val_venda_fmt
-                            }).execute()
-                        except Exception:
-                            pass
-                        
-                    st.session_state["flash_success"] = f"🎉 Venda salva e estoque atualizado com sucesso!"
-                    st.rerun()
+                            supabase.table("vendas").insert(payload_venda).execute()
+                            sucesso = True
+                        except Exception as err:
+                            err_str = str(err)
+                            if "Could not find the '" in err_str and "' column" in err_str:
+                                col_problem = err_str.split("Could not find the '")[1].split("' column")[0]
+                                if col_problem in payload_venda and col_problem not in ["codigo_bone", "valor_venda", "custo_unitario", "forma_pagto"]:
+                                    del payload_venda[col_problem]
+                            else:
+                                st.error(f"Erro ao registrar a venda no banco de dados: {err}")
+                                break
+                            tentativas += 1
+
+                    if sucesso:
+                        novo_estoque = max(0, estoque_disp - int(qtd_venda))
+                        supabase.table("produtos").update({c_qtd_p: novo_estoque}).eq("codigo", codigo_sel).execute()
+
+                        if dt_receb_str and val_venda_fmt > 0:
+                            try:
+                                supabase.table("caixa").insert({
+                                    "data": dt_receb_str,
+                                    "desc": f"Venda {codigo_sel} ({qtd_venda}un) - {cliente.strip()}",
+                                    "descricao": f"Venda {codigo_sel} ({qtd_venda}un) - {cliente.strip()}",
+                                    "tipo": "Venda",
+                                    "valor": val_venda_fmt
+                                }).execute()
+                            except Exception:
+                                pass
+                            
+                        st.session_state["flash_success"] = f"🎉 Venda salva e estoque atualizado com sucesso!"
+                        st.rerun()
+        else:
+            st.warning("Nenhum produto disponível em estoque no momento.")
 
     st.markdown("---")
     st.subheader("⏳ Vendas Pendentes de Recebimento")
@@ -508,7 +515,6 @@ elif menu == "🛒 Vendas":
                     venda_id = int(venda_sel.split("|")[0].replace("ID", "").strip())
                     row_v = df_pendentes[df_pendentes["id"] == venda_id].iloc[0]
                     
-                    # Estorno do estoque antes de excluir a venda
                     cod_prod_excluir = row_v.get("codigo_bone") or row_v.get("codigo") or row_v.get("codigo_produto")
                     qtd_venda_excluir = int(row_v.get("qtd") or row_v.get("quantidade") or 1)
                     estornar_estoque(cod_prod_excluir, qtd_venda_excluir)
@@ -538,13 +544,12 @@ elif menu == "🛒 Vendas":
                 v_id_excluir = int(venda_excluir_hist.split("|")[0].replace("ID", "").strip())
                 row_h = df_vendas[df_vendas["id"] == v_id_excluir].iloc[0]
 
-                # Estorno do estoque antes de excluir a venda do histórico
                 cod_prod_excluir_h = row_h.get("codigo_bone") or row_h.get("codigo") or row_h.get("codigo_produto")
                 qtd_venda_excluir_h = int(row_h.get("qtd") or row_h.get("quantidade") or 1)
                 estornar_estoque(cod_prod_excluir_h, qtd_venda_excluir_h)
 
                 supabase.table("vendas").delete().eq("id", v_id_excluir).execute()
-                st.session_state["flash_success"] = "🗑️ Venda removida do histórico e produtos devolvidos ao estoque!"
+                st.session_state["flash_success"] = "🗑️️ Venda removida do histórico e produtos devolvidos ao estoque!"
                 st.rerun()
 
         df_v_exib = df_vendas.copy()
@@ -701,42 +706,54 @@ elif menu == "📦 Estoque":
     
     if not df_produtos.empty:
         df_est = df_produtos.copy()
-        df_est["Status"] = "Disponível"
         
-        with st.expander("🔍 Consultar e Pesquisar no Estoque", expanded=False):
-            c_f1, c_f2, c_f3 = st.columns(3)
-            with c_f1:
-                busca_texto = st.text_input("Pesquisar por Código ou Arte:")
-            with c_f2:
-                cat_unicas = ["Todas"] + sorted(list(df_est["categoria"].dropna().unique())) if "categoria" in df_est.columns else ["Todas"]
-                filtro_cat = st.selectbox("Filtrar por Produto/Categoria:", cat_unicas)
-            with c_f3:
-                cor_unicas = ["Todas"] + sorted(list(df_est["cor"].dropna().unique())) if "cor" in df_est.columns else ["Todas"]
-                filtro_cor = st.selectbox("Filtrar por Cor do Boné:", cor_unicas)
+        col_qtd_est = "qtd_estoque" if "qtd_estoque" in df_est.columns else ("qtd" if "qtd" in df_est.columns else ("estoque" if "estoque" in df_est.columns else "qtd_estoque"))
+        
+        # 1. Ajuste do Status baseado no valor do estoque (0 -> 'Indisponível', >0 -> 'Disponível')
+        df_est["Status"] = df_est[col_qtd_est].apply(
+            lambda val: "Disponível" if pd.to_numeric(val, errors="coerce") > 0 else "Indisponível"
+        )
+        
+        # 2. Oculta do menu de estoque itens com status 'Indisponível'
+        df_est_disponivel = df_est[df_est["Status"] == "Disponível"].copy()
+        
+        if not df_est_disponivel.empty:
+            with st.expander("🔍 Consultar e Pesquisar no Estoque", expanded=False):
+                c_f1, c_f2, c_f3 = st.columns(3)
+                with c_f1:
+                    busca_texto = st.text_input("Pesquisar por Código ou Arte:")
+                with c_f2:
+                    cat_unicas = ["Todas"] + sorted(list(df_est_disponivel["categoria"].dropna().unique())) if "categoria" in df_est_disponivel.columns else ["Todas"]
+                    filtro_cat = st.selectbox("Filtrar por Produto/Categoria:", cat_unicas)
+                with c_f3:
+                    cor_unicas = ["Todas"] + sorted(list(df_est_disponivel["cor"].dropna().unique())) if "cor" in df_est_disponivel.columns else ["Todas"]
+                    filtro_cor = st.selectbox("Filtrar por Cor do Boné:", cor_unicas)
 
-            if busca_texto:
-                df_est = df_est[
-                    df_est["codigo"].astype(str).str.contains(busca_texto, case=False, na=False) |
-                    df_est.get("frase", pd.Series([""]*len(df_est))).astype(str).str.contains(busca_texto, case=False, na=False)
-                ]
-            if filtro_cat != "Todas" and "categoria" in df_est.columns:
-                df_est = df_est[df_est["categoria"] == filtro_cat]
-            if filtro_cor != "Todas" and "cor" in df_est.columns:
-                df_est = df_est[df_est["cor"] == filtro_cor]
+                if busca_texto:
+                    df_est_disponivel = df_est_disponivel[
+                        df_est_disponivel["codigo"].astype(str).str.contains(busca_texto, case=False, na=False) |
+                        df_est_disponivel.get("frase", pd.Series([""]*len(df_est_disponivel))).astype(str).str.contains(busca_texto, case=False, na=False)
+                    ]
+                if filtro_cat != "Todas" and "categoria" in df_est_disponivel.columns:
+                    df_est_disponivel = df_est_disponivel[df_est_disponivel["categoria"] == filtro_cat]
+                if filtro_cor != "Todas" and "cor" in df_est_disponivel.columns:
+                    df_est_disponivel = df_est_disponivel[df_est_disponivel["cor"] == filtro_cor]
 
-        mapa_colunas_est = {
-            "codigo": "Código",
-            "cor": "Cor do Boné",
-            "frase": "Arte Estampada",
-            "cor_estampa": "Cor Estampada",
-            "categoria": "Produto",
-            "custo": "Custo",
-            "qtd_estoque": "Estoque",
-            "qtd": "Estoque",
-            "estoque": "Estoque"
-        }
-        cols_est = [col for col in df_est.columns if col not in ["id", "created_at"]]
-        st.dataframe(df_est[cols_est].rename(columns=mapa_colunas_est), use_container_width=True, hide_index=True)
+            mapa_colunas_est = {
+                "codigo": "Código",
+                "cor": "Cor do Boné",
+                "frase": "Arte Estampada",
+                "cor_estampa": "Cor Estampada",
+                "categoria": "Produto",
+                "custo": "Custo",
+                "qtd_estoque": "Estoque",
+                "qtd": "Estoque",
+                "estoque": "Estoque"
+            }
+            cols_est = [col for col in df_est_disponivel.columns if col not in ["id", "created_at"]]
+            st.dataframe(df_est_disponivel[cols_est].rename(columns=mapa_colunas_est), use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum item disponível em estoque no momento.")
     else:
         st.info("Estoque vazio no momento.")
 
