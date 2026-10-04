@@ -27,7 +27,7 @@ st.markdown("""
         background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
     }
 
-    /* Container do Cabeçalho Padrão */
+    /* Container do Cabeçalho Padrão (Sem Logo) */
     .custom-header-container {
         background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
         padding: 22px 30px;
@@ -52,6 +52,16 @@ st.markdown("""
         margin: 4px 0 0 0;
         opacity: 0.85;
         font-size: 1.05em;
+    }
+
+    /* Container para Logomarca Expandida (Substitui o Cabeçalho) */
+    .banner-logo-full {
+        width: 100%;
+        border-radius: 16px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.12);
+        margin-bottom: 25px;
+        object-fit: cover;
+        display: block;
     }
 
     /* Cards de KPIs */
@@ -129,42 +139,47 @@ df_caixa = fetch_data("caixa")
 df_aportes = fetch_data("aportes")
 df_custos = fetch_data("custos_avulsos")
 
-# Gestão do estado persistente da Logomarca
-if "persistent_logo" not in st.session_state:
-    st.session_state["persistent_logo"] = None
+# Gestão da Logomarca Persistente na Sessão
+if "logo_b64" not in st.session_state:
+    st.session_state["logo_b64"] = None
+if "logo_mime" not in st.session_state:
+    st.session_state["logo_mime"] = "image/png"
 
 # 3. Sidebar (Barra Lateral Esquerda) Ocultável
 with st.sidebar:
     st.markdown("### 📌 Módulos do Sistema")
     menu = st.radio(
         "Navegue entre os módulos:",
-        ["📈 Dashboard", "🛒 Vendas", "🛍️ Compras", "📦 Estoque", "💵 Custos", "🤝 Aportes dos Sócios", "💰 Fluxo de Caixa"],
+        ["📈 Dashboard", "🛒 Vendas", "🛍️️ Compras", "📦 Estoque", "💵 Custos", "🤝 Aportes dos Sócios", "💰 Fluxo de Caixa"],
         label_visibility="collapsed"
     )
 
     st.markdown("---")
     
-    # Personalização da Logomarca (Fixa / Persistente)
+    # Personalização da Logomarca
     with st.expander("🎨 Personalização", expanded=False):
         uploaded_logo = st.file_uploader(
             "Carregar Nova Logo da Marca", 
             type=["png", "jpg", "jpeg", "svg"],
-            help="Envie a logomarca para definir como fixa no cabeçalho."
+            help="Envie a logomarca para substituir todo o cabeçalho principal."
         )
         if uploaded_logo is not None:
-            st.session_state["persistent_logo"] = uploaded_logo.getvalue()
+            bytes_data = uploaded_logo.getvalue()
+            st.session_state["logo_b64"] = base64.b64encode(bytes_data).decode("utf-8")
+            st.session_state["logo_mime"] = uploaded_logo.type
             st.success("Logo salva e fixada com sucesso!")
             st.rerun()
 
-        if st.session_state["persistent_logo"] is not None:
-            if st.button("🗑️️ Excluir Logo Atual", use_container_width=True, type="secondary"):
-                st.session_state["persistent_logo"] = None
-                st.success("Logo removida!")
+        if st.session_state["logo_b64"] is not None:
+            if st.button("🗑️ Excluir Logo Atual", use_container_width=True, type="secondary"):
+                st.session_state["logo_b64"] = None
+                st.success("Logo removida com sucesso!")
                 st.rerun()
 
-# 4. Cabeçalho Integrado: Exibe a Logo Persistente se existir
-if st.session_state["persistent_logo"] is not None:
-    st.image(st.session_state["persistent_logo"], use_container_width=True)
+# 4. Cabeçalho Principal: Substitui toda a área escura pela logo se enviada
+if st.session_state["logo_b64"] is not None:
+    logo_src = f"data:{st.session_state['logo_mime']};base64,{st.session_state['logo_b64']}"
+    st.markdown(f'<img src="{logo_src}" class="banner-logo-full">', unsafe_allow_html=True)
 else:
     st.markdown("""
     <div class="custom-header-container">
@@ -197,14 +212,14 @@ if menu == "📈 Dashboard":
         if col_qtd_p:
             total_estoque_qtd = int(pd.to_numeric(df_produtos[col_qtd_p], errors="coerce").fillna(0).sum())
 
-    # Cards de KPIs (Exibidos dentro do Dashboard)
+    # Cards de KPIs
     k1, k2, k3, k4 = st.columns(4)
     with k1:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ️️</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ️</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
     with k2:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV Total <span class="tooltip-icon" title="Custo das mercadorias vendidas nos bonés faturados">ℹ️</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV Total <span class="tooltip-icon" title="Custo das mercadorias vendidas nos bonés faturados">ℹ️️</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
     with k3:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ️️</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ️</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
     with k4:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Itens no Estoque <span class="tooltip-icon" title="Quantidade total de bonés disponíveis no estoque">ℹ️</span></div><div class="kpi-value">{total_estoque_qtd} un</div></div>', unsafe_allow_html=True)
 
