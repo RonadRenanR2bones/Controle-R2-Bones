@@ -252,7 +252,8 @@ st.markdown("<br>", unsafe_allow_html=True)
 if menu == "📈 Dashboard":
     st.subheader("📈 Dashboard Executivo")
     
-    total_faturado = float(df_vendas["valor"].sum()) if not df_vendas.empty and "valor" in df_vendas.columns else 0.0
+    col_v_val = "valor" if "valor" in df_vendas.columns else ("valor_total" if "valor_total" in df_vendas.columns else None)
+    total_faturado = float(df_vendas[col_v_val].sum()) if not df_vendas.empty and col_v_val else 0.0
     total_cmv = float(df_vendas["custo"].sum()) if not df_vendas.empty and "custo" in df_vendas.columns else 0.0
 
     saldo_caixa = 0.0
@@ -280,24 +281,28 @@ if menu == "📈 Dashboard":
 
     st.markdown("<br>", unsafe_allow_html=True)
     
+    col_d_venda = "data" if "data" in df_vendas.columns else ("data_venda" if "data_venda" in df_vendas.columns else None)
     meses_disponiveis = ["TODOS"]
-    if not df_vendas.empty and "data" in df_vendas.columns:
-        df_vendas["mes_ano"] = df_vendas["data"].astype(str).str.slice(0, 7)
+    if not df_vendas.empty and col_d_venda:
+        df_vendas["mes_ano"] = df_vendas[col_d_venda].astype(str).str.slice(0, 7)
         meses_disponiveis.extend(sorted(df_vendas["mes_ano"].unique().tolist()))
     
     mes_sel = st.selectbox("📅 Selecionar Período / Mês:", list(set(meses_disponiveis)))
     
     df_vendas_fil = df_vendas.copy()
-    if mes_sel != "TODOS" and not df_vendas_fil.empty:
-        df_vendas_fil = df_vendas_fil[df_vendas_fil["data"].astype(str).str.startswith(mes_sel)]
+    if mes_sel != "TODOS" and not df_vendas_fil.empty and col_d_venda:
+        df_vendas_fil = df_vendas_fil[df_vendas_fil[col_d_venda].astype(str).str.startswith(mes_sel)]
         
     g1, g2 = st.columns(2)
     with g1:
         st.markdown("#### 🟢 Faturamento vs. 🔴 CMV")
-        if not df_vendas_fil.empty and "data" in df_vendas_fil.columns:
-            df_vendas_fil["mes"] = df_vendas_fil["data"].astype(str).str.slice(0, 7)
-            agrup = df_vendas_fil.groupby("mes")[["valor", "custo"]].sum().reset_index()
-            fig1 = px.bar(agrup, x="mes", y=["valor", "custo"], barmode="group",
+        if not df_vendas_fil.empty and col_d_venda and col_v_val:
+            df_vendas_fil["mes"] = df_vendas_fil[col_d_venda].astype(str).str.slice(0, 7)
+            y_cols = [col_v_val]
+            if "custo" in df_vendas_fil.columns:
+                y_cols.append("custo")
+            agrup = df_vendas_fil.groupby("mes")[y_cols].sum().reset_index()
+            fig1 = px.bar(agrup, x="mes", y=y_cols, barmode="group",
                           color_discrete_sequence=["#10b981", "#ef4444"], template="plotly_white")
             st.plotly_chart(fig1, use_container_width=True)
         else:
@@ -351,33 +356,50 @@ elif menu == "🛒 Vendas":
                 custo_unit = float(p_info.get("custo", 0.0))
                 dt_receb_str = str(data_receb) if data_receb is not None else None
 
-                payload_venda = {
-                    "qtd": int(qtd_venda),
+                # Mapeamento com os aliases mais comuns de banco para prevenir falhas de coluna
+                raw_venda = {
                     "cliente": cliente.strip(),
+                    "nome_cliente": cliente.strip(),
+                    "qtd": int(qtd_venda),
+                    "quantidade": int(qtd_venda),
                     "valor": float(valor_venda),
+                    "valor_total": float(valor_venda),
                     "forma_pagto": forma_pagto,
+                    "pagto": forma_pagto,
                     "data": str(data_venda),
+                    "data_venda": str(data_venda),
                     "custo": float(custo_unit * qtd_venda),
-                    "codigo": codigo_sel
+                    "codigo": codigo_sel,
+                    "codigo_produto": codigo_sel
                 }
                 if dt_receb_str:
-                    payload_venda["data_recebimento"] = dt_receb_str
+                    raw_venda["data_recebimento"] = dt_receb_str
 
-                # TENTATIVA RESILIENTE: Se o Supabase reclamar que 'custo' ou 'codigo' não existem, remove a chave e tenta novamente
+                # Filtro dinâmico rigoroso: envia APENAS as colunas existentes na tabela 'vendas'
+                cols_vendas = df_vendas.columns.tolist() if not df_vendas.empty else []
+                if cols_vendas:
+                    payload_venda = {k: v for k, v in raw_venda.items() if k in cols_vendas}
+                else:
+                    payload_venda = {
+                        "qtd": int(qtd_venda),
+                        "cliente": cliente.strip(),
+                        "valor": float(valor_venda),
+                        "data": str(data_venda)
+                    }
+
                 sucesso = False
                 tentativas = 0
-                while not sucesso and tentativas < 4:
+                while not sucesso and tentativas < 6:
                     try:
                         supabase.table("vendas").insert(payload_venda).execute()
                         sucesso = True
                     except Exception as err:
                         err_str = str(err)
-                        if "Could not find the 'custo' column" in err_str and "custo" in payload_venda:
-                            del payload_venda["custo"]
-                        elif "Could not find the 'codigo' column" in err_str and "codigo" in payload_venda:
-                            del payload_venda["codigo"]
-                        elif "Could not find the 'forma_pagto' column" in err_str and "forma_pagto" in payload_venda:
-                            del payload_venda["forma_pagto"]
+                        # Remove a chave específica relatada pelo erro de schema cache
+                        if "Could not find the '" in err_str and "' column" in err_str:
+                            col_problem = err_str.split("Could not find the '")[1].split("' column")[0]
+                            if col_problem in payload_venda:
+                                del payload_venda[col_problem]
                         else:
                             st.error(f"Erro ao registrar a venda no banco de dados: {err}")
                             break
@@ -463,7 +485,7 @@ elif menu == "🛒 Vendas":
                 st.rerun()
 
         df_v_exib = df_vendas.copy()
-        for c_dt in ["data", "data_recebimento", "data_receb"]:
+        for c_dt in ["data", "data_venda", "data_recebimento", "data_receb"]:
             if c_dt in df_v_exib.columns:
                 df_v_exib[c_dt] = df_v_exib[c_dt].apply(format_data_br)
 
@@ -522,7 +544,7 @@ elif menu == "🛍️ Compras":
         with b_col1:
             btn_salvar = st.form_submit_button("💾 Salvar / Atualizar Item", use_container_width=True, type="primary")
         with b_col2:
-            btn_excluir = st.form_submit_button("🗑️️ Excluir Item Cadastrado", use_container_width=True)
+            btn_excluir = st.form_submit_button("🗑️ Excluir Item Cadastrado", use_container_width=True)
 
         if btn_salvar:
             if not cod_c.strip():
