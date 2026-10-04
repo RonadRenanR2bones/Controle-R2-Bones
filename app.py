@@ -211,7 +211,7 @@ with st.sidebar:
                 
                 if save_logo_to_db(data_url):
                     st.session_state["current_logo"] = data_url
-                    st.success("Logo fixa salva e aplicada!")
+                    st.success("Logo fixa salva e applied!")
                     st.rerun()
 
         if st.session_state.get("current_logo") is not None:
@@ -340,6 +340,9 @@ elif menu == "🛒 Vendas":
                 p_info = df_produtos[df_produtos["codigo"] == codigo_sel].iloc[0]
                 custo_unit = float(p_info.get("custo", 0.0))
                 
+                # CORREÇÃO: Tratar data opcional garantindo formato correto de data para o PostgreSQL
+                dt_receb_str = str(data_receb) if data_receb is not None else None
+
                 nova_venda = {
                     "codigo": codigo_sel,
                     "qtd": int(qtd_venda),
@@ -347,21 +350,32 @@ elif menu == "🛒 Vendas":
                     "valor": float(valor_venda),
                     "pagto": forma_pagto,
                     "data": str(data_venda),
-                    "data_recebimento": str(data_receb) if data_receb else None,
+                    "data_recebimento": dt_receb_str,
                     "custo": float(custo_unit * qtd_venda)
                 }
-                supabase.table("vendas").insert(nova_venda).execute()
-                
-                if data_receb and valor_venda > 0:
-                    supabase.table("caixa").insert({
-                        "data": str(data_receb),
-                        "desc": f"Venda {codigo_sel} ({qtd_venda}un) - {cliente.strip()}",
-                        "tipo": "Venda",
-                        "valor": float(valor_venda)
-                    }).execute()
+
+                # Ajustar chaves se necessário conforme o esquema do banco de dados
+                if not df_vendas.empty:
+                    if "forma_pagto" in df_vendas.columns and "pagto" not in df_vendas.columns:
+                        nova_venda["forma_pagto"] = nova_venda.pop("pagto")
+                    if "data_receb" in df_vendas.columns and "data_recebimento" not in df_vendas.columns:
+                        nova_venda["data_receb"] = nova_venda.pop("data_recebimento")
+
+                try:
+                    supabase.table("vendas").insert(nova_venda).execute()
                     
-                st.session_state["flash_success"] = f"🎉 Venda salva com sucesso!"
-                st.rerun()
+                    if dt_receb_str and valor_venda > 0:
+                        supabase.table("caixa").insert({
+                            "data": dt_receb_str,
+                            "desc": f"Venda {codigo_sel} ({qtd_venda}un) - {cliente.strip()}",
+                            "tipo": "Venda",
+                            "valor": float(valor_venda)
+                        }).execute()
+                        
+                    st.session_state["flash_success"] = f"🎉 Venda salva com sucesso!"
+                    st.rerun()
+                except Exception as err:
+                    st.error(f"Erro ao registrar a venda no banco de dados: {err}")
 
     st.markdown("---")
     st.subheader("⏳ Vendas Pendentes de Recebimento")
@@ -400,7 +414,7 @@ elif menu == "🛒 Vendas":
 
             with c_rec3:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🗑️ Excluir Venda Incorreta", use_container_width=True, type="secondary"):
+                if st.button("🗑️️ Excluir Venda Incorreta", use_container_width=True, type="secondary"):
                     venda_id = int(venda_sel.split("|")[0].replace("ID", "").strip())
                     supabase.table("vendas").delete().eq("id", venda_id).execute()
                     st.success("🗑️ Venda excluída com sucesso!")
@@ -515,7 +529,7 @@ elif menu == "🛍️ Compras":
                 st.error("Selecione um produto existente para excluir!")
             else:
                 supabase.table("produtos").delete().eq("codigo", cod_c.strip()).execute()
-                st.session_state["flash_success"] = f"🗑️️ Produto {cod_c} excluído com sucesso!"
+                st.session_state["flash_success"] = f"🗑️ Produto {cod_c} excluído com sucesso!"
                 st.rerun()
 
     st.markdown("---")
@@ -709,7 +723,6 @@ elif menu == "📥 Importação":
         except Exception as e:
             st.error(f"Erro ao processar o arquivo: {e}")
 
-# NOVO MÓDULO SOLICITADO: Gestão de Dados & Backup
 elif menu == "💾 Gestão de Dados":
     st.subheader("💾 Gestão de Dados & Backup")
     st.markdown("Gerencie o banco de dados, faça downloads de segurança e restaure backups do sistema.")
@@ -718,10 +731,8 @@ elif menu == "💾 Gestão de Dados":
 
     with col_status:
         st.markdown("#### 📌 Status da Conexão")
-        # Verificação em tempo real da conexão com o banco de dados Supabase
         if supabase is not None:
             try:
-                # Testa chamada rápida de leitura para verificar se a conexão está ativa
                 supabase.table("produtos").select("id").limit(1).execute()
                 st.success("🟢 Conectado ao Supabase (PostgreSQL Nuvem)")
                 st.caption("Seus dados estão gravados na nuvem e imunes a reinícios do servidor.")
@@ -735,7 +746,6 @@ elif menu == "💾 Gestão de Dados":
     with col_export:
         st.markdown("#### 📥 Exportar Backup Geral em Excel")
         
-        # Gerar arquivo Excel consolidado com todas as tabelas
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_produtos.to_excel(writer, sheet_name='Produtos_Estoque', index=False)
