@@ -188,7 +188,7 @@ with st.sidebar:
     st.markdown("### 📌 Módulos do Sistema")
     menu = st.radio(
         "Navegue entre os módulos:",
-        ["📈 Dashboard", "🛒 Vendas", "🛍️ Compras", "📦 Estoque", "💵 Custos", "🤝 Aportes dos Sócios", "💰 Fluxo de Caixa"],
+        ["📈 Dashboard", "🛒 Vendas", "🛍️ Compras", "📦 Estoque", "💵 Custos", "🤝 Aportes dos Sócios", "💰 Fluxo de Caixa", "📥 Importação"],
         label_visibility="collapsed"
     )
 
@@ -261,7 +261,7 @@ if menu == "📈 Dashboard":
     with k1:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ️</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
     with k2:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV Total <span class="tooltip-icon" title="Custo das mercadorias vendidas nos bonés faturados">ℹ️</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV Total <span class="tooltip-icon" title="Custo das mercadorias vendidas nos bonés faturados">ℹ️️</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
     with k3:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ️</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
     with k4:
@@ -362,9 +362,8 @@ elif menu == "🛒 Vendas":
         st.dataframe(df_vendas, use_container_width=True, hide_index=True)
 
 elif menu == "🛍️ Compras":
-    st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
+    st.subheader("🛍️️ Cadastrar Nova Compra de Mercadoria")
     
-    # SOLICITAÇÃO 1: Caixa suspensa com busca pesquisável por qualquer característica do produto
     opcoes_prod = ["➕ [NOVO] Cadastrar Novo Produto"]
     if not df_produtos.empty and "codigo" in df_produtos.columns:
         for _, r in df_produtos.iterrows():
@@ -372,8 +371,7 @@ elif menu == "🛍️ Compras":
             frase = r.get('frase', '')
             cor = r.get('cor', '')
             cat = r.get('categoria', '')
-            # Formatação completa pesquisável
-            opcoes_prod.append(f"✏️ [{cod}] | {frase} - {cor} - {cat}")
+            opcoes_prod.append(f"✏️️ [{cod}] | {frase} - {cor} - {cat}")
     
     item_selecionado = st.selectbox(
         "📌 Selecione um Item para Editar/Excluir ou Cadastre um Novo (Pesquise por código, frase, cor ou categoria):", 
@@ -381,7 +379,6 @@ elif menu == "🛍️ Compras":
         help="Digite na caixa de texto para buscar por qualquer característica do produto."
     )
     
-    # Preencher campos caso um item existente seja selecionado
     dados_item = {}
     is_edicao = False
     if item_selecionado and not item_selecionado.startswith("➕"):
@@ -453,7 +450,6 @@ elif menu == "🛍️ Compras":
     st.markdown("---")
     st.subheader("📋 Histórico Permanente de Aquisições")
     if not df_produtos.empty:
-        # SOLICITAÇÃO 2: Mapeamento e Renomeação Exata das Colunas
         mapa_colunas = {
             "codigo": "Código",
             "cor": "Cor do Boné",
@@ -466,7 +462,6 @@ elif menu == "🛍️ Compras":
             "estoque": "Estoque"
         }
         
-        # Oculta id e created_at
         cols_exibir = [col for col in df_produtos.columns if col not in ["id", "created_at"]]
         df_exibicao = df_produtos[cols_exibir].rename(columns=mapa_colunas)
         
@@ -590,3 +585,33 @@ elif menu == "💰 Fluxo de Caixa":
         st.dataframe(df_caixa[cols_caixa], use_container_width=True, hide_index=True)
     else:
         st.info("Nenhuma movimentação no caixa.")
+
+elif menu == "📥 Importação":
+    st.subheader("📥 Importação de Dados em Lote")
+    st.markdown("Selecione o tipo de dado que deseja importar e envie o arquivo Excel (.xlsx) ou CSV (.csv).")
+
+    tipo_import = st.selectbox("Escolha o destino dos dados *", ["🛍️ Compras (Produtos)", "🛒 Vendas"])
+
+    file_imp = st.file_uploader("Carregar planilha (.xlsx ou .csv)", type=["xlsx", "csv"])
+
+    if file_imp is not None:
+        try:
+            if file_imp.name.endswith(".csv"):
+                df_imp = pd.read_csv(file_imp)
+            else:
+                df_imp = pd.read_excel(file_imp)
+
+            st.markdown("##### 🔍 Pré-visualização dos dados a serem importados:")
+            st.dataframe(df_imp.head(10), use_container_width=True)
+
+            if st.button("🚀 Confirmar e Importar para o Banco de Dados", type="primary", use_container_width=True):
+                registros = df_imp.to_dict(orient="records")
+                if tipo_import == "🛍️ Compras (Produtos)":
+                    supabase.table("produtos").upsert(registros, on_conflict="codigo").execute()
+                else:
+                    supabase.table("vendas").insert(registros).execute()
+
+                st.success("🎉 Importação realizada com sucesso!")
+                st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao processar o arquivo: {e}")
