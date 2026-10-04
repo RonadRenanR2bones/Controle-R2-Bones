@@ -54,6 +54,16 @@ st.markdown("""
         font-size: 1.05em;
     }
 
+    /* MEHORIA 1: Ajuste na altura do cabeçalho para exibir a imagem de forma sutil */
+    div[data-testid="stImage"] > img {
+        border-radius: 16px;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+        margin-bottom: 10px;
+        width: 100% !important;
+        max-height: 120px !important;
+        object-fit: cover !important;
+    }
+
     /* Cards de KPIs */
     .kpi-card-advanced {
         background: #ffffff;
@@ -122,51 +132,58 @@ def fetch_data(table_name: str) -> pd.DataFrame:
     except Exception:
         return pd.DataFrame()
 
-# Funções para Persistência Direta da Logo em Base64 no Banco de Dados
-def get_logo_bytes():
+# Buscar logo gravada no banco de dados
+@st.cache_data(ttl=600)
+def get_saved_logo():
     if not supabase:
         return None
     try:
-        res = supabase.table("configuracoes").select("*").eq("chave", "logo_b64").execute()
+        res = supabase.table("configuracoes").select("valor_b64").eq("chave", "logo_header").execute()
         if res.data and len(res.data) > 0:
-            b64_str = res.data[0].get("valor_b64")
-            if b64_str:
-                return base64.b64decode(b64_str)
+            val = res.data[0].get("valor_b64")
+            if val and val.startswith("data:image"):
+                return val
     except Exception:
         pass
     return None
 
-def save_logo_bytes(file_bytes):
+# Salvar logo no banco
+def save_logo_to_db(b64_data_url):
     if not supabase:
         return False
     try:
-        b64_str = base64.b64encode(file_bytes).decode("utf-8")
-        supabase.table("configuracoes").upsert({"chave": "logo_b64", "valor_b64": b64_str}, on_conflict="chave").execute()
+        supabase.table("configuracoes").upsert(
+            {"chave": "logo_header", "valor_b64": b64_data_url}, 
+            on_conflict="chave"
+        ).execute()
+        get_saved_logo.clear()
         return True
     except Exception as e:
-        st.error(f"Erro ao salvar logo no banco: {e}")
+        st.error(f"Erro ao salvar no Supabase: {e}")
         return False
 
-def delete_logo_db():
+# Deletar logo do banco
+def delete_logo_from_db():
     if not supabase:
         return
     try:
-        supabase.table("configuracoes").delete().eq("chave", "logo_b64").execute()
+        supabase.table("configuracoes").delete().eq("chave", "logo_header").execute()
+        get_saved_logo.clear()
     except Exception as e:
-        st.error(f"Erro ao excluir logo: {e}")
+        st.error(f"Erro ao remover no Supabase: {e}")
 
-# Carregar dados das tabelas
+# Carregar tabelas de dados
 df_produtos = fetch_data("produtos")
 df_vendas = fetch_data("vendas")
 df_caixa = fetch_data("caixa")
 df_aportes = fetch_data("aportes")
 df_custos = fetch_data("custos_avulsos")
 
-# Tentar buscar a logo gravada no banco de dados
-if "active_logo_bytes" not in st.session_state or st.session_state["active_logo_bytes"] is None:
-    st.session_state["active_logo_bytes"] = get_logo_bytes()
+# Carregar logo persistente do Supabase
+if "current_logo" not in st.session_state:
+    st.session_state["current_logo"] = get_saved_logo()
 
-# 3. Sidebar (Barra Lateral Esquerda) Ocultável
+# 3. Sidebar (Barra Lateral)
 with st.sidebar:
     st.markdown("### 📌 Módulos do Sistema")
     menu = st.radio(
@@ -181,27 +198,32 @@ with st.sidebar:
     with st.expander("🎨 Personalização", expanded=False):
         uploaded_logo = st.file_uploader(
             "Carregar Nova Logo da Marca", 
-            type=["png", "jpg", "jpeg", "svg"],
+            type=["png", "jpg", "jpeg", "webp", "svg"],
             help="Envie a logomarca para fixar permanentemente no topo do site."
         )
         if uploaded_logo is not None:
-            raw_bytes = uploaded_logo.getvalue()
-            if save_logo_bytes(raw_bytes):
-                st.session_state["active_logo_bytes"] = raw_bytes
-                st.success("Logo fixa guardada com sucesso!")
-                st.rerun()
+            with st.spinner("Processando e salvando imagem..."):
+                bytes_data = uploaded_logo.getvalue()
+                b64_str = base64.b64encode(bytes_data).decode("utf-8")
+                mime_type = uploaded_logo.type or "image/png"
+                data_url = f"data:{mime_type};base64,{b64_str}"
+                
+                if save_logo_to_db(data_url):
+                    st.session_state["current_logo"] = data_url
+                    st.success("Logo fixa salva e aplicada!")
+                    st.rerun()
 
-        if st.session_state.get("active_logo_bytes") is not None:
+        if st.session_state.get("current_logo") is not None:
             if st.button("🗑️ Excluir Logo Atual", use_container_width=True, type="secondary"):
-                delete_logo_db()
-                st.session_state["active_logo_bytes"] = None
-                st.success("Logo removida com sucesso!")
+                delete_logo_from_db()
+                st.session_state["current_logo"] = None
+                st.success("Logo removida permanentemente!")
                 st.rerun()
 
-# 4. Cabeçalho Principal: Substitui o bloco escuro pela logo expandida usando st.image
-current_logo_bytes = st.session_state.get("active_logo_bytes")
-if current_logo_bytes:
-    st.image(current_logo_bytes, use_container_width=True)
+# 4. Exibição do Cabeçalho Principal (Ajustado via CSS para ser sutil na vertical)
+active_logo = st.session_state.get("current_logo")
+if active_logo:
+    st.image(active_logo, use_container_width=True)
 else:
     st.markdown("""
     <div class="custom-header-container">
@@ -230,7 +252,7 @@ if menu == "📈 Dashboard":
 
     total_estoque_qtd = 0
     if not df_produtos.empty:
-        col_qtd_p = "qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else None)
+        col_qtd_p = "qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else ("qtd_estoque" if "qtd_estoque" in df_produtos.columns else None))
         if col_qtd_p:
             total_estoque_qtd = int(pd.to_numeric(df_produtos[col_qtd_p], errors="coerce").fillna(0).sum())
 
@@ -288,7 +310,7 @@ if menu == "📈 Dashboard":
 elif menu == "🛒 Vendas":
     st.subheader("🛒 Lançar Nova Venda")
     if not df_produtos.empty and "codigo" in df_produtos.columns:
-        c_qtd_p = "qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else None)
+        c_qtd_p = "qtd" if "qtd" in df_produtos.columns else ("estoque" if "estoque" in df_produtos.columns else ("qtd_estoque" if "qtd_estoque" in df_produtos.columns else None))
         opts = [f"[{r['codigo']}] \"{r.get('frase','')}\" (Disponível: {r.get(c_qtd_p, 0) if c_qtd_p else 0} un)" for _, r in df_produtos.iterrows()]
         prod_sel = st.selectbox("🔍 Selecionar Boné do Estoque *", opts)
         
@@ -341,21 +363,49 @@ elif menu == "🛒 Vendas":
 
 elif menu == "🛍️ Compras":
     st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
+    
+    # MELHORIA 2: Recurso para Cadastrar, Alterar / Editar e Excluir Item
+    opcoes_prod = ["➕ [NOVO] Cadastrar Novo Produto"]
+    if not df_produtos.empty and "codigo" in df_produtos.columns:
+        opcoes_prod.extend([f"✏️ [{r['codigo']}] - {r.get('frase', '')}" for _, r in df_produtos.iterrows()])
+    
+    item_selecionado = st.selectbox("📌 Selecione um Item para Editar/Excluir ou Cadastre um Novo:", opcoes_prod)
+    
+    # Preencher campos caso um item existente seja selecionado
+    dados_item = {}
+    is_edicao = False
+    if item_selecionado and not item_selecionado.startswith("➕"):
+        is_edicao = True
+        cod_existente = item_selecionado.split("]")[0].replace("✏️ [", "").strip()
+        row_match = df_produtos[df_produtos["codigo"] == cod_existente]
+        if not row_match.empty:
+            dados_item = row_match.iloc[0].to_dict()
+
+    col_qtd_nome = "qtd_estoque" if "qtd_estoque" in dados_item else ("qtd" if "qtd" in dados_item else "estoque")
+
     with st.form("form_compra"):
         c1, c2, c3 = st.columns(3)
         with c1:
-            cod_c = st.text_input("Código (ex: BL-0001) *")
-            cor_c = st.text_input("Cor *")
+            cod_c = st.text_input("Código (ex: BL-0001) *", value=str(dados_item.get("codigo", "")), disabled=is_edicao)
+            cor_c = st.text_input("Cor *", value=str(dados_item.get("cor", "")))
         with c2:
-            frase_c = st.text_input("Frase Estampada *")
-            cat_c = st.selectbox("Categoria", ["Liso", "Premium"])
+            frase_c = st.text_input("Frase Estampada *", value=str(dados_item.get("frase", "")))
+            cat_opts = ["Liso", "Premium", "Básico"]
+            cat_val = str(dados_item.get("categoria", "Liso"))
+            idx_cat = cat_opts.index(cat_val) if cat_val in cat_opts else 0
+            cat_c = st.selectbox("Categoria", cat_opts, index=idx_cat)
         with c3:
-            custo_c = st.number_input("Custo Unitário (R$) *", min_value=0.0, value=29.0)
-            qtd_c = st.number_input("Qtd Comprada *", min_value=1, value=1)
+            custo_c = st.number_input("Custo Unitário (R$) *", min_value=0.0, value=float(dados_item.get("custo", 29.0)))
+            qtd_c = st.number_input("Qtd Comprada *", min_value=1, value=int(dados_item.get(col_qtd_nome, 1)))
             dt_aquisicao = st.date_input("Data da Aquisição *", datetime.date.today())
 
-        btn_compra = st.form_submit_button("➕ Adicionar / Atualizar Compra", use_container_width=True)
-        if btn_compra:
+        b_col1, b_col2 = st.columns(2)
+        with b_col1:
+            btn_salvar = st.form_submit_button("💾 Salvar / Atualizar Item", use_container_width=True, type="primary")
+        with b_col2:
+            btn_excluir = st.form_submit_button("🗑️ Excluir Item Cadastrado", use_container_width=True)
+
+        if btn_salvar:
             if not cod_c.strip():
                 st.error("Informe o código do produto!")
             else:
@@ -365,34 +415,46 @@ elif menu == "🛍️ Compras":
                     "frase": frase_c.strip(),
                     "categoria": cat_c,
                     "custo": float(custo_c),
-                    "qtd": int(qtd_c),
-                    "dataAquisicao": str(dt_aquisicao)
+                    col_qtd_nome: int(qtd_c)
                 }
                 supabase.table("produtos").upsert(novo_prod, on_conflict="codigo").execute()
                 
-                custo_total = float(custo_c * qtd_c)
-                if custo_total > 0:
-                    supabase.table("caixa").insert({
-                        "data": str(dt_aquisicao),
-                        "desc": "Compra de Mercadorias (Estoque)",
-                        "tipo": "Compra de Mercadorias",
-                        "valor": custo_total
-                    }).execute()
+                if not is_edicao:
+                    custo_total = float(custo_c * qtd_c)
+                    if custo_total > 0:
+                        supabase.table("caixa").insert({
+                            "data": str(dt_aquisicao),
+                            "desc": "Compra de Mercadorias (Estoque)",
+                            "tipo": "Compra de Mercadorias",
+                            "valor": custo_total
+                        }).execute()
 
-                st.session_state["flash_success"] = f"🎉 Compra do produto {cod_c} registrada!"
+                st.session_state["flash_success"] = f"🎉 Produto {cod_c} salvo com sucesso!"
+                st.rerun()
+
+        if btn_excluir:
+            if not is_edicao:
+                st.error("Selecione um produto existente para excluir!")
+            else:
+                supabase.table("produtos").delete().eq("codigo", cod_c.strip()).execute()
+                st.session_state["flash_success"] = f"🗑️ Produto {cod_c} excluído com sucesso!"
                 st.rerun()
 
     st.markdown("---")
     st.subheader("📋 Histórico Permanente de Aquisições")
     if not df_produtos.empty:
-        st.dataframe(df_produtos, use_container_width=True, hide_index=True)
+        # MELHORIA 3: Ocultar coluna "id" e "created_at"
+        cols_exibir = [col for col in df_produtos.columns if col not in ["id", "created_at"]]
+        st.dataframe(df_produtos[cols_exibir], use_container_width=True, hide_index=True)
 
 elif menu == "📦 Estoque":
     st.subheader("📦 Estoque Atual em Tempo Real (Saldo Disponível)")
     if not df_produtos.empty:
         df_est = df_produtos.copy()
         df_est["Status"] = "Disponível"
-        st.dataframe(df_est, use_container_width=True, hide_index=True)
+        # Ocultar colunas id e created_at
+        cols_est = [col for col in df_est.columns if col not in ["id", "created_at"]]
+        st.dataframe(df_est[cols_est], use_container_width=True, hide_index=True)
     else:
         st.info("Estoque vazio no momento.")
 
@@ -404,16 +466,17 @@ elif menu == "💵 Custos":
         if not df_produtos.empty:
             df_m = df_produtos.copy()
             col_custo = "custo" if "custo" in df_m.columns else None
-            col_qtd = "qtd" if "qtd" in df_m.columns else ("estoque" if "estoque" in df_m.columns else None)
+            col_qtd = "qtd" if "qtd" in df_m.columns else ("estoque" if "estoque" in df_m.columns else ("qtd_estoque" if "qtd_estoque" in df_m.columns else None))
 
             if col_custo and col_qtd:
                 df_m["custo_num"] = pd.to_numeric(df_m[col_custo], errors="coerce").fillna(0)
                 df_m["qtd_num"] = pd.to_numeric(df_m[col_qtd], errors="coerce").fillna(0)
                 df_m["Custo Total"] = df_m["custo_num"] * df_m["qtd_num"]
-                cols_para_exibir = [c for c in ["dataAquisicao", "categoria", col_qtd, col_custo, "Custo Total"] if c in df_m.columns]
+                cols_para_exibir = [c for c in ["codigo", "categoria", col_qtd, col_custo, "Custo Total"] if c in df_m.columns]
                 st.dataframe(df_m[cols_para_exibir], use_container_width=True, hide_index=True)
             else:
-                st.dataframe(df_m, use_container_width=True, hide_index=True)
+                cols_m = [col for col in df_m.columns if col not in ["id", "created_at"]]
+                st.dataframe(df_m[cols_m], use_container_width=True, hide_index=True)
 
     elif sub_tab == "🏷️ Custos de Venda":
         with st.form("form_cv"):
@@ -480,6 +543,7 @@ elif menu == "🤝 Aportes dos Sócios":
 elif menu == "💰 Fluxo de Caixa":
     st.subheader("💰 Extrato Consolidado de Caixa")
     if not df_caixa.empty:
-        st.dataframe(df_caixa, use_container_width=True, hide_index=True)
+        cols_caixa = [col for col in df_caixa.columns if col not in ["id", "created_at"]]
+        st.dataframe(df_caixa[cols_caixa], use_container_width=True, hide_index=True)
     else:
         st.info("Nenhuma movimentação no caixa.")
