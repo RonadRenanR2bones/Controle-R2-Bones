@@ -508,7 +508,7 @@ else:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# 5. Módulos com Verificação por Palavra-Chave (Garantia contra falhas de renderização de emojis)
+# 5. Módulos do Sistema
 
 if "Dashboard" in menu:
     st.subheader("📈 Dashboard Executivo")
@@ -597,31 +597,79 @@ if "Dashboard" in menu:
 elif "Pedidos" in menu:
     st.subheader("📦 Gerenciamento de Pedidos e Encomendas")
 
-    # Opção para Cadastro Manual de Novo Item no Pedido/Lote
+    df_todos_pedidos = carregar_dataframe("SELECT * FROM pedidos ORDER BY id DESC")
+
+    # Opção para Cadastro/Atualização/Exclusão Manual de Item no Pedido
     with st.expander("➕ Cadastrar Novo Item no Pedido (Manual)", expanded=False):
+        opcoes_itens = ["➕ [NOVO] Cadastrar Novo Item"]
+        if not df_todos_pedidos.empty:
+            for _, r in df_todos_pedidos.iterrows():
+                id_p = r.get("id")
+                lote_p = r.get("lote_id", "")
+                cor_p = r.get("cor_bone", "")
+                arte_p = r.get("frase_arte", "")
+                opcoes_itens.append(f"✏️ [ID #{id_p}] Pedido: {lote_p} | {cor_p} - {arte_p}")
+
+        item_ped_sel = st.selectbox(
+            "📌 Selecione uma opção para Cadastrar Novo ou Editar/Excluir um Item Existente:",
+            opcoes_itens,
+            key="sel_man_ped_item"
+        )
+
+        dados_p_edit = {}
+        is_edit_ped = False
+        id_ped_edit = None
+
+        if item_ped_sel and not item_ped_sel.startswith("➕"):
+            is_edit_ped = True
+            try:
+                id_ped_edit = int(item_ped_sel.split("]")[0].replace("✏️ [ID #", "").strip())
+                match_p = df_todos_pedidos[df_todos_pedidos["id"] == id_ped_edit]
+                if not match_p.empty:
+                    dados_p_edit = match_p.iloc[0].to_dict()
+            except Exception:
+                pass
+
         with st.form("form_novo_pedido_manual"):
             c_p1, c_p2, c_p3 = st.columns(3)
             with c_p1:
-                lote_m = st.text_input("Identificador / Lote do Pedido *", value="Pedido #3.10-2026")
-                cor_b_m = st.text_input("Cor do Boné *")
+                lote_m = st.text_input("Identificador / Lote do Pedido *", value=str(dados_p_edit.get("lote_id", "Pedido #3.10-2026")))
+                cor_b_m = st.text_input("Cor do Boné *", value=str(dados_p_edit.get("cor_bone", "")))
             with c_p2:
-                arte_m = st.text_input("Arte Estampada *")
-                cor_e_m = st.text_input("Cor da Estampa")
+                arte_m = st.text_input("Arte Estampada *", value=str(dados_p_edit.get("frase_arte", "")))
+                cor_e_m = st.text_input("Cor da Estampa", value=str(dados_p_edit.get("cor_linha", "")))
             with c_p3:
-                prod_m = st.selectbox("Produto *", ["Básico", "Kids", "Outro", "Premium"])
-                preco_m = st.number_input("Preço Base (R$) *", min_value=0.0, value=29.0, format="%.2f")
+                prod_opts = ["Básico", "Kids", "Outro", "Premium"]
+                prod_cur = str(dados_p_edit.get("tipo", "Básico"))
+                idx_prod = prod_opts.index(prod_cur) if prod_cur in prod_opts else 0
+                prod_m = st.selectbox("Produto *", prod_opts, index=idx_prod)
+                preco_m = st.number_input("Preço Base (R$) *", min_value=0.0, value=float(dados_p_edit.get("preco", 29.0)), format="%.2f")
 
             c_ex1, c_ex2, c_ex3 = st.columns(3)
             with c_ex1:
-                v_extra_m = st.number_input("Estampa Extra (R$)", min_value=0.0, value=0.0, format="%.2f")
+                v_extra_m = st.number_input("Estampa Extra (R$)", min_value=0.0, value=float(dados_p_edit.get("valor_estampa_extra", 0.0)), format="%.2f")
             with c_ex2:
-                v_matriz_m = st.number_input("Matriz Bordado (R$)", min_value=0.0, value=0.0, format="%.2f")
+                v_matriz_m = st.number_input("Matriz Bordado (R$)", min_value=0.0, value=float(dados_p_edit.get("valor_matriz", 0.0)), format="%.2f")
             with c_ex3:
-                dt_p_m = st.date_input("Data da Criação *", datetime.date.today(), format="DD/MM/YYYY")
+                dt_init_val = datetime.date.today()
+                if is_edit_ped and dados_p_edit.get("data_criacao"):
+                    try:
+                        dt_init_val = pd.to_datetime(dados_p_edit.get("data_criacao")).date()
+                    except Exception:
+                        pass
+                dt_p_m = st.date_input("Data da Criação *", dt_init_val, format="DD/MM/YYYY")
 
-            obs_p_m = st.text_area("Observações do Pedido")
+            obs_p_m = st.text_area("Observações do Pedido", value=str(dados_p_edit.get("observacoes", "")))
 
-            if st.form_submit_button("🚀 Cadastrar Item no Pedido", use_container_width=True, type="primary"):
+            col_b1, col_b2, col_b3 = st.columns(3)
+            with col_b1:
+                btn_cadastrar_p = st.form_submit_button("💾 Cadastrar Item", use_container_width=True, type="primary")
+            with col_b2:
+                btn_atualizar_p = st.form_submit_button("✏️️ Atualizar Item", use_container_width=True)
+            with col_b3:
+                btn_excluir_p = st.form_submit_button("🗑 Excluir Item", use_container_width=True)
+
+            if btn_cadastrar_p:
                 if not lote_m.strip() or not cor_b_m.strip() or not arte_m.strip():
                     st.error("Preencha os campos obrigatórios (Lote, Cor e Arte)!")
                 else:
@@ -650,6 +698,60 @@ elif "Pedidos" in menu:
                         })
 
                     st.session_state["flash_success"] = f"🎉 Item cadastrado no lote '{lote_m.strip()}' com sucesso!"
+                    st.rerun()
+
+            if btn_atualizar_p:
+                if not is_edit_ped or not id_ped_edit:
+                    st.error("Selecione um item existente para atualizar!")
+                elif not lote_m.strip() or not cor_b_m.strip() or not arte_m.strip():
+                    st.error("Preencha os campos obrigatórios (Lote, Cor e Arte)!")
+                else:
+                    conn = sqlite3.connect(DB_NAME)
+                    c = conn.cursor()
+                    c.execute('''
+                        UPDATE pedidos SET lote_id=?, data_criacao=?, cor_bone=?, frase_arte=?, cor_linha=?, tipo=?, preco=?, observacoes=?, valor_estampa_extra=?, valor_matriz=?
+                        WHERE id=?
+                    ''', (lote_m.strip(), str(dt_p_m), cor_b_m.strip(), arte_m.strip(), cor_e_m.strip(), prod_m, preco_m, obs_p_m.strip(), v_extra_m, v_matriz_m, id_ped_edit))
+                    conn.commit()
+                    conn.close()
+
+                    if supabase:
+                        try:
+                            supabase.table("pedidos").update({
+                                "lote_id": lote_m.strip(),
+                                "data_criacao": str(dt_p_m),
+                                "cor_bone": cor_b_m.strip(),
+                                "frase_arte": arte_m.strip(),
+                                "cor_linha": cor_e_m.strip(),
+                                "tipo": prod_m,
+                                "preco": preco_m,
+                                "observacoes": obs_p_m.strip(),
+                                "valor_estampa_extra": v_extra_m,
+                                "valor_matriz": v_matriz_m
+                            }).eq("id", id_ped_edit).execute()
+                        except Exception as err_upd:
+                            st.error(f"Erro ao atualizar no Supabase: {err_upd}")
+
+                    st.session_state["flash_success"] = f"🎉 Item ID #{id_ped_edit} atualizado com sucesso!"
+                    st.rerun()
+
+            if btn_excluir_p:
+                if not is_edit_ped or not id_ped_edit:
+                    st.error("Selecione um item existente para excluir!")
+                else:
+                    conn = sqlite3.connect(DB_NAME)
+                    c = conn.cursor()
+                    c.execute("DELETE FROM pedidos WHERE id = ?", (id_ped_edit,))
+                    conn.commit()
+                    conn.close()
+
+                    if supabase:
+                        try:
+                            supabase.table("pedidos").delete().eq("id", id_ped_edit).execute()
+                        except Exception as err_del_p:
+                            st.error(f"Erro ao excluir no Supabase: {err_del_p}")
+
+                    st.session_state["flash_success"] = f"🗑️ Item ID #{id_ped_edit} excluído com sucesso!"
                     st.rerun()
 
     # Botão de Importação de Planilha de Pedidos
@@ -819,139 +921,7 @@ elif "Pedidos" in menu:
                             st.rerun()
 
 elif "Compras" in menu:
-    st.subheader("🛍 Cadastrar Nova Compra de Mercadoria")
-    
-    opcoes_prod = ["➕ [NOVO] Cadastrar Novo Produto"]
-    if not df_produtos.empty and "codigo" in df_produtos.columns:
-        for _, r in df_produtos.iterrows():
-            cod = r.get('codigo', '')
-            frase = r.get('frase', '')
-            cor = r.get('cor', '')
-            cor_e = r.get('cor_estampa', '')
-            cat = r.get('categoria', '')
-            opcoes_prod.append(f"✏ [{cod}] | {frase} - {cor} - {cor_e} - {cat}")
-    
-    item_selecionado = st.selectbox(
-        "📌 Selecione um Item para Editar/Excluir ou Cadastre um Novo (Pesquise por código, frase, cor ou categoria):", 
-        opcoes_prod
-    )
-    
-    dados_item = {}
-    is_edicao = False
-    if item_selecionado and not item_selecionado.startswith("➕"):
-        is_edicao = True
-        cod_existente = item_selecionado.split("]")[0].replace("✏ [", "").strip()
-        row_match = df_produtos[df_produtos["codigo"] == cod_existente]
-        if not row_match.empty:
-            dados_item = row_match.iloc[0].to_dict()
-
-    col_qtd_nome = "qtd_estoque" if "qtd_estoque" in df_produtos.columns else ("qtd" if "qtd" in df_produtos.columns else "estoque")
-    qtd_atual_item = int(pd.to_numeric(dados_item.get(col_qtd_nome, 1), errors="coerce") or 1) if is_edicao else 1
-
-    cod_cur = str(dados_item.get("codigo", ""))
-    cache_extras = st.session_state["extra_costs_cache"].get(cod_cur, {})
-
-    val_e_extra_init = float(dados_item.get("estampa_extra") or cache_extras.get("estampa_extra", 0.0))
-    val_m_bord_init = float(dados_item.get("matriz_bordado") or cache_extras.get("matriz_bordado", 0.0))
-
-    with st.form("form_compra"):
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            cod_c = st.text_input("Código (ex: BL-0001) *", value=cod_cur, disabled=is_edicao)
-            cor_c = st.text_input("Cor do Boné *", value=str(dados_item.get("cor", "")))
-        with c2:
-            frase_c = st.text_input("Arte Estampada *", value=str(dados_item.get("frase", "")))
-            cor_estampa_c = st.text_input("Cor Estampada *", value=str(dados_item.get("cor_estampa", "")))
-        with c3:
-            cat_opts = ["Básico", "Kids", "Outro", "Premium"]
-            cat_val = str(dados_item.get("categoria", "Básico"))
-            idx_cat = cat_opts.index(cat_val) if cat_val in cat_opts else 0
-            cat_c = st.selectbox("Produto", cat_opts, index=idx_cat)
-            custo_c = st.number_input("Custo Base Unitário (R$) *", min_value=0.0, value=float(dados_item.get("custo", 29.0)), format="%.2f")
-
-        c_extra1, c_extra2 = st.columns(2)
-        with c_extra1:
-            estampa_extra = st.number_input("Estampa Extra (R$)", min_value=0.0, value=val_e_extra_init, format="%.2f")
-        with c_extra2:
-            matriz_bordado = st.number_input("Matriz Bordado (R$)", min_value=0.0, value=val_m_bord_init, format="%.2f")
-
-        c4_1, c4_2 = st.columns(2)
-        with c4_1:
-            qtd_comprada = st.number_input(
-                "Quantidade Comprada / Estoque *",
-                min_value=1,
-                value=qtd_atual_item,
-                step=1
-            )
-        with c4_2:
-            dt_aquisicao = st.date_input("Data da Aquisição *", datetime.date.today(), format="DD/MM/YYYY")
-
-        b_col1, b_col2 = st.columns(2)
-        with b_col1:
-            btn_salvar = st.form_submit_button("💾 Salvar / Atualizar Item", use_container_width=True, type="primary")
-        with b_col2:
-            btn_excluir = st.form_submit_button("🗑 Excluir Item Cadastrado", use_container_width=True)
-
-        if btn_salvar:
-            if not cod_c.strip():
-                st.error("Informe o código do produto!")
-            else:
-                custo_base = round(float(custo_c), 2)
-                e_extra = round(float(estampa_extra), 2)
-                m_bordado = round(float(matriz_bordado), 2)
-                
-                custo_unit_total = custo_base + e_extra + m_bordado
-                valor_compra_total = round(custo_unit_total * int(qtd_comprada), 2)
-
-                novo_prod = {
-                    "codigo": cod_c.strip(),
-                    "cor": cor_c.strip(),
-                    "frase": frase_c.strip(),
-                    "cor_estampa": cor_estampa_c.strip(),
-                    "categoria": cat_c,
-                    "custo": custo_base,
-                    "estampa_extra": e_extra,
-                    "matriz_bordado": m_bordado,
-                    col_qtd_nome: int(qtd_comprada),
-                    "qtd_comprada": int(qtd_comprada),
-                    "data_aquisicao": str(dt_aquisicao)
-                }
-
-                if safe_upsert_produto(novo_prod):
-                    if valor_compra_total > 0 and not is_edicao:
-                        safe_insert("caixa", {
-                            "data": str(dt_aquisicao),
-                            "desc": f"Compra de Mercadorias - {cod_c.strip()} ({qtd_comprada}un)",
-                            "tipo": "Compra de Mercadorias",
-                            "valor": valor_compra_total
-                        })
-
-                    st.session_state["flash_success"] = f"🎉 Produto {cod_c} atualizado com sucesso!"
-                    st.rerun()
-
-        if btn_excluir:
-            if not is_edicao:
-                st.error("Selecione um produto existente para excluir!")
-            else:
-                codigo_alvo = cod_c.strip()
-                vendas_relacionadas = False
-                if not df_vendas.empty:
-                    col_c_venda = "codigo_bone" if "codigo_bone" in df_vendas.columns else ("codigo" if "codigo" in df_vendas.columns else "codigo_produto")
-                    if col_c_venda in df_vendas.columns:
-                        vendas_relacionadas = not df_vendas[df_vendas[col_c_venda].astype(str) == codigo_alvo].empty
-
-                if vendas_relacionadas:
-                    st.error(f"⛔ Operação Bloqueada! O produto '{codigo_alvo}' possui vendas registradas no sistema e não pode ser excluído.")
-                else:
-                    try:
-                        supabase.table("produtos").delete().eq("codigo", codigo_alvo).execute()
-                        st.session_state["flash_success"] = f"🗑️ Produto {codigo_alvo} excluído com sucesso!"
-                        st.rerun()
-                    except Exception as err_del:
-                        st.error(f"Erro ao excluir o produto: {err_del}")
-
-    st.markdown("---")
-    st.subheader("📋 Histórico Permanente de Aquisições")
+    st.subheader("🛍 Aquisições de Mercadorias")
     
     if not df_produtos.empty:
         df_exib_compras = df_produtos.copy()
@@ -1000,6 +970,8 @@ elif "Compras" in menu:
         cols_compras_existentes = [c for c in cols_compras if c in df_exib_compras.columns]
         
         st.dataframe(df_exib_compras[cols_compras_existentes].rename(columns=mapa_colunas_compras), use_container_width=True, hide_index=True)
+    else:
+        st.info("Nenhuma aquisição de mercadoria registrada até o momento.")
 
 elif "Estoque" in menu:
     st.subheader("📦 Estoque Atual")
@@ -1148,7 +1120,7 @@ elif "Vendas" in menu:
                         st.session_state["flash_success"] = f"🎉 Venda salva e estoque atualizado com sucesso!"
                         st.rerun()
     else:
-        st.info("Nenhum produto cadastrado no banco de dados. Cadastre primeiro em Compras.")
+        st.info("Nenum produto cadastrado no banco de dados. Cadastre primeiro via entregas de pedidos ou importação.")
 
     st.markdown("---")
     st.subheader("⏳ Vendas Pendentes de Recebimento")
@@ -1848,7 +1820,7 @@ elif "Importação" in menu or "Importar" in menu:
 
             if st.button("🚀 Confirmar e Importar para o Banco de Dados", type="primary", use_container_width=True):
                 registros = df_imp.to_dict(orient="records")
-                if tipo_import == "🛍️ Compras (Produtos)":
+                if tipo_import == "🛍️️ Compras (Produtos)":
                     supabase.table("produtos").upsert(registros, on_conflict="codigo").execute()
                 else:
                     supabase.table("vendas").insert(registros).execute()
