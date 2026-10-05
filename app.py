@@ -1004,7 +1004,6 @@ elif "Pedidos" in menu:
 
                     st.markdown("##### 🚚 Ações do Pedido (Entregas e Acompanhamento)")
                     
-                    # REQUISITO IMAGEM 1 e 2: Seleção múltipla para "Entregue" ou "Cancelar" + Incremento correto de códigos únicos
                     col_e1, col_e2, col_e3 = st.columns([3, 1.5, 1.5])
                     with col_e1:
                         dict_itens_ped = {row["id"]: f"ID #{row['id']} | {row['cor_bone']} - {row['frase_arte']} (Status: {row['status']})" for _, row in df_lote.iterrows()}
@@ -1164,7 +1163,6 @@ elif "Estoque" in menu:
 elif "Vendas" in menu:
     st.subheader("🛒 Lançar Nova Venda")
     
-    # REQUISITO IMAGEM 3: Restaurado o formulário para realização de Vendas de Forma Individual
     df_cm_estoque = get_df_compra_mercadorias()
     if not df_cm_estoque.empty:
         df_cm_estoque = df_cm_estoque[~df_cm_estoque["Código"].isin(CODIGOS_REMOVER)]
@@ -1317,7 +1315,6 @@ elif "Vendas" in menu:
     else:
         st.info("Nenhuma venda registrada.")
 
-    # REQUISITO IMAGEM 3: Reorganizado para ficar abaixo de "Vendas Pendentes de Recebimento"
     st.markdown("---")
     with st.expander("🔄 Registrar Devolução de Mercadoria (Devolução de Venda)", expanded=False):
         if not df_vendas.empty:
@@ -1383,8 +1380,13 @@ elif "Vendas" in menu:
                 c_cli_exib = str(row.get(col_cli, ""))
                 c_val_exib = float(pd.to_numeric(row.get(col_val, 0.0), errors="coerce") or 0.0)
                 c_pag_exib = str(row.get(col_pag, "PIX"))
+                
+                # ADICIONADO (Imagem 1): Busca de tarifa cartão e valor recebido
+                c_tarifa_exib = float(pd.to_numeric(row.get("tarifa_cartao", 0.0), errors="coerce") or 0.0)
+                c_receb_exib = float(pd.to_numeric(row.get("valor_recebido", c_val_exib - c_tarifa_exib), errors="coerce") or (c_val_exib - c_tarifa_exib))
 
-                c_linha_unica = st.columns([2, 1.8, 2.2, 1.5, 1.5, 1, 1])
+                # ADICIONADO (Imagem 1): Manter todas as informações na mesma linha divididas em colunas do Streamlit
+                c_linha_unica = st.columns([1.6, 1.4, 1.8, 1.5, 1.5, 1.6, 1.6, 0.5, 0.5])
                 with c_linha_unica[0]:
                     st.markdown(f"**Data:** {c_data_exib}", unsafe_allow_html=True)
                 with c_linha_unica[1]:
@@ -1396,10 +1398,14 @@ elif "Vendas" in menu:
                 with c_linha_unica[4]:
                     st.markdown(f"**Pagto:** {c_pag_exib}", unsafe_allow_html=True)
                 with c_linha_unica[5]:
-                    if st.button("✏️", key=f"btn_edit_row_{v_id}_{mes}", use_container_width=True):
+                    st.markdown(f"**Tarifa Cartão:** R$ {c_tarifa_exib:,.2f}", unsafe_allow_html=True)
+                with c_linha_unica[6]:
+                    st.markdown(f"**Valor Recebido:** R$ {c_receb_exib:,.2f}", unsafe_allow_html=True)
+                with c_linha_unica[7]:
+                    if st.button("✏️️", key=f"btn_edit_row_{v_id}_{mes}", use_container_width=True):
                         st.session_state["editing_venda_id"] = v_id
                         st.rerun()
-                with c_linha_unica[6]:
+                with c_linha_unica[8]:
                     if st.button("🗑️", key=f"btn_del_row_{v_id}_{mes}", use_container_width=True):
                         cod_prod_e = row.get("codigo_bone") or row.get("codigo") or row.get("codigo_produto")
                         qtd_venda_e = int(row.get("qtd") or row.get("quantidade") or 1)
@@ -1412,7 +1418,7 @@ elif "Vendas" in menu:
                 if st.session_state.get("editing_venda_id") == v_id:
                     with st.form(key=f"form_edit_row_{v_id}_{mes}"):
                         st.markdown(f"##### ✏ Editar Venda ID {v_id}")
-                        e_col1, e_col2, e_col3 = st.columns(3)
+                        e_col1, e_col2, e_col3, e_col4 = st.columns(4)
                         with e_col1:
                             e_cliente = st.text_input("Cliente *", value=str(c_cli_exib))
                         with e_col2:
@@ -1421,13 +1427,18 @@ elif "Vendas" in menu:
                             opts_pag = ["PIX", "Cartão", "Dinheiro", "Brinde"]
                             idx_pag = opts_pag.index(c_pag_exib) if c_pag_exib in opts_pag else 0
                             e_forma_pagto = st.selectbox("Forma Pagto *", opts_pag, index=idx_pag)
+                        with e_col4:
+                            e_tarifa = st.number_input("Tarifa Cartão (R$)", min_value=0.0, value=float(c_tarifa_exib), format="%.2f")
 
                         btn_salvar_e, btn_cancel_e = st.columns(2)
                         with btn_salvar_e:
                             if st.form_submit_button("💾 Salvar Alterações", use_container_width=True, type="primary"):
+                                val_rec_calculado = max(0.0, float(e_valor) - float(e_tarifa))
                                 supabase.table("vendas").update({
                                     "cliente": e_cliente.strip(),
                                     "valor_venda": round(float(e_valor), 2),
+                                    "tarifa_cartao": round(float(e_tarifa), 2),
+                                    "valor_recebido": round(val_rec_calculado, 2),
                                     "forma_pagto": e_forma_pagto
                                 }).eq("id", v_id).execute()
                                 st.session_state["editing_venda_id"] = None
@@ -1705,14 +1716,32 @@ elif "Custos" in menu:
 
     elif "Financeiros" in sub_tab:
         st.markdown("##### 💳 Demonstrativo de Tarifas de Cartão")
-        if not df_vendas.empty and "tarifa_cartao" in df_vendas.columns:
-            df_v_tarifa = df_vendas[get_numeric_series(df_vendas, "tarifa_cartao") > 0].copy()
+        # ALTERADO (Imagem 2): Busca direta nos dados da tabela de vendas
+        if not df_vendas.empty:
+            col_d_v = "data_venda" if "data_venda" in df_vendas.columns else "data"
+            col_c_b = "codigo_bone" if "codigo_bone" in df_vendas.columns else "codigo"
+            col_cli = "cliente" if "cliente" in df_vendas.columns else "nome_cliente"
+            col_val = "valor_venda" if "valor_venda" in df_vendas.columns else "valor"
+            col_tar = "tarifa_cartao" if "tarifa_cartao" in df_vendas.columns else None
+
+            df_v_fin = df_vendas.copy()
+            if col_tar and col_tar in df_v_fin.columns:
+                df_v_fin["tarifa_cartao_num"] = get_numeric_series(df_v_fin, col_tar)
+            else:
+                df_v_fin["tarifa_cartao_num"] = 0.0
+
+            # Filtra vendas com tarifa de cartão > 0 ou realizadas via cartão
+            df_v_tarifa = df_v_fin[
+                (df_v_fin["tarifa_cartao_num"] > 0) | 
+                (df_v_fin.get("forma_pagto", pd.Series([""] * len(df_v_fin))).astype(str).str.lower().str.contains("cart", na=False))
+            ].copy()
+
             if not df_v_tarifa.empty:
-                df_v_tarifa["Data"] = df_v_tarifa["data"].apply(format_data_br)
-                df_v_tarifa["Código"] = df_v_tarifa.get("codigo_bone", df_v_tarifa.get("codigo", ""))
-                df_v_tarifa["Cliente"] = df_v_tarifa.get("cliente", "")
-                df_v_tarifa["Valor Venda"] = get_numeric_series(df_v_tarifa, "valor_venda")
-                df_v_tarifa["Tarifa Cartão"] = get_numeric_series(df_v_tarifa, "tarifa_cartao")
+                df_v_tarifa["Data"] = df_v_tarifa[col_d_v].apply(format_data_br)
+                df_v_tarifa["Código"] = df_v_tarifa.get(col_c_b, "")
+                df_v_tarifa["Cliente"] = df_v_tarifa.get(col_cli, "")
+                df_v_tarifa["Valor Venda"] = get_numeric_series(df_v_tarifa, col_val)
+                df_v_tarifa["Tarifa Cartão"] = df_v_tarifa["tarifa_cartao_num"]
                 
                 df_v_tarifa["% Taxa"] = df_v_tarifa.apply(
                     lambda r: f"{(r['Tarifa Cartão'] / r['Valor Venda'] * 100):.2f}%" if r["Valor Venda"] > 0 else "0.00%", axis=1
@@ -1726,7 +1755,7 @@ elif "Custos" in menu:
             else:
                 st.info("Nenhuma venda realizada por cartão com tarifa registrada.")
         else:
-            st.info("Nenhuma tarifa de cartão registrada no sistema.")
+            st.info("Nenhuma venda registrada no sistema.")
 
 elif "Caixa" in menu or "Fluxo" in menu:
     st.subheader("💰 Extrato Consolidado de Fluxo de Caixa")
