@@ -115,13 +115,18 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Cache em sessão para guardar despesas extras (estampa extra e matriz) por código
+# Cache em sessão para guardar despesas extras e baixas de estoque
 if "extra_costs_cache" not in st.session_state:
     st.session_state["extra_costs_cache"] = {}
 
-# Cache em sessão para gravações locais de custos avulsos
 if "custos_avulsos_local" not in st.session_state:
     st.session_state["custos_avulsos_local"] = []
+
+if "baixas_estoque_local" not in st.session_state:
+    st.session_state["baixas_estoque_local"] = []
+
+if "devolucoes_venda_local" not in st.session_state:
+    st.session_state["devolucoes_venda_local"] = []
 
 # Configurações do Banco de Pedidos (SQLite / PostgreSQL SDK)
 DB_NAME = "ordens_producao.db"
@@ -200,6 +205,31 @@ def init_db():
             valor_b64 TEXT
         )
     ''')
+    
+    # Tabela local de baixas de estoque
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS baixas_estoque (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT,
+            motivo TEXT,
+            observacao TEXT,
+            data_baixa TEXT
+        )
+    ''')
+    
+    # Tabela local de devoluções de vendas
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS devolucoes_vendas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            venda_id INTEGER,
+            codigo TEXT,
+            cliente TEXT,
+            valor_devolvido REAL,
+            data_devolucao TEXT,
+            motivo TEXT
+        )
+    ''')
+    
     conn.commit()
     conn.close()
 
@@ -272,11 +302,21 @@ def safe_insert(table_name: str, payload: dict):
         return True
     except Exception as err:
         err_str = str(err)
-        if "PGRST205" in err_str or "custos_avulsos" in err_str:
+        if "PGRST205" in err_str or "custos_avulsos" in err_str or "baixas_estoque" in err_str or "devolucoes_vendas" in err_str:
             if table_name == "custos_avulsos":
                 payload_copy = payload.copy()
                 payload_copy["id"] = len(st.session_state["custos_avulsos_local"]) + 1000
                 st.session_state["custos_avulsos_local"].append(payload_copy)
+                return True
+            elif table_name == "baixas_estoque":
+                payload_copy = payload.copy()
+                payload_copy["id"] = len(st.session_state["baixas_estoque_local"]) + 1000
+                st.session_state["baixas_estoque_local"].append(payload_copy)
+                return True
+            elif table_name == "devolucoes_vendas":
+                payload_copy = payload.copy()
+                payload_copy["id"] = len(st.session_state["devolucoes_venda_local"]) + 1000
+                st.session_state["devolucoes_venda_local"].append(payload_copy)
                 return True
         if "Could not find the '" in err_str and "' column" in err_str:
             col_err = err_str.split("Could not find the '")[1].split("' column")[0]
@@ -475,8 +515,8 @@ def get_df_compra_mercadorias():
 # Carregar tabelas do Supabase
 df_produtos = fetch_data("produtos")
 
-# Remover do estoque/produtos cadastrados os itens indicados (BL-0001, BL-0002, BL-0003 e Teste1)
-CODIGOS_REMOVER = ["BL-0001", "BL-0002", "BL-0003", "Teste1", "Teste 1"]
+# Remoção solicitada dos códigos legados/de teste (BL-0001, BL-0002, BL-0003, BL-0004 e Teste1)
+CODIGOS_REMOVER = ["BL-0001", "BL-0002", "BL-0003", "BL-0004", "Teste1", "Teste 1"]
 if not df_produtos.empty and "codigo" in df_produtos.columns:
     df_produtos = df_produtos[~df_produtos["codigo"].astype(str).str.strip().isin(CODIGOS_REMOVER)].reset_index(drop=True)
 
@@ -489,6 +529,8 @@ if not df_vendas.empty:
 df_caixa = fetch_data("caixa")
 df_aportes = fetch_data("aportes")
 df_custos = fetch_data("custos_avulsos")
+df_baixas = fetch_data("baixas_estoque")
+df_devolucoes = fetch_data("devolucoes_vendas")
 
 if not st.session_state["custos_avulsos_local"]:
     pass
@@ -503,12 +545,12 @@ if "flash_success" in st.session_state and st.session_state["flash_success"]:
 if "current_logo" not in st.session_state:
     st.session_state["current_logo"] = get_saved_logo()
 
-# 3. Sidebar (Barra Lateral)
+# 3. Sidebar (Barra Lateral) — Módulo "Importação" Removido conforme solicitado
 with st.sidebar:
     st.markdown("### 📌 Módulos do Sistema")
     menu = st.radio(
         "Navegue entre os módulos:",
-        ["📈 Dashboard", "📦 Pedidos", "🛍️️ Compra de Mercadorias", "📦 Estoque", "🛒 Vendas", "💵 Custos", "💰 Fluxo de Caixa", "🤝 Aportes dos Sócios", "📥 Importação", "💾 Gestão de Dados", "⚙️ Configuração"],
+        ["📈 Dashboard", "📦 Pedidos", "🛍 Compra de Mercadorias", "📦 Estoque", "🛒 Vendas", "💵 Custos", "💰 Fluxo de Caixa", "🤝 Aportes dos Sócios", "💾 Gestão de Dados", "⚙️ Configuração"],
         label_visibility="collapsed"
     )
 
@@ -564,7 +606,6 @@ if "Dashboard" in menu:
     col_v_val = "valor_venda" if "valor_venda" in df_vendas.columns else ("valor" if "valor" in df_vendas.columns else ("valor_total" if "valor_total" in df_vendas.columns else None))
     total_faturado = float(df_vendas[col_v_val].sum()) if not df_vendas.empty and col_v_val else 0.0
     
-    # CMV TOTAL: Busca a informação da coluna "Total Item" do menu "Compra de Mercadoria" assim que a mercadoria for vendida
     total_cmv = 0.0
     if not df_vendas.empty:
         df_cm_ref = get_df_compra_mercadorias()
@@ -652,10 +693,8 @@ elif "Compra de Mercadorias" in menu:
     if df_cm.empty:
         st.info("Nenhum pedido entregue disponível para o relatório de compra de mercadorias.")
     else:
-        df_cm["Mes_Ano"] = pd.to_datetime(df_cm["Data_Raw"], errors="coerce").dt.strftime("%Y-%m")
-        df_cm["Mes_Ano"] = df_cm["Mes_Ano"].fillna("Outros")
+        df_cm["Mes_Ano"] = pd.to_datetime(df_cm["Data_Raw"], errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
         
-        # Agrupamento por mês
         meses_unicos_cm = df_cm["Mes_Ano"].unique()
         for mes in sorted(meses_unicos_cm, reverse=True):
             df_mes_cm = df_cm[df_cm["Mes_Ano"] == mes].copy()
@@ -681,7 +720,6 @@ elif "Pedidos" in menu:
 
     df_todos_pedidos = carregar_dataframe("SELECT * FROM pedidos ORDER BY id DESC")
 
-    # Opção para Cadastro/Atualização/Exclusão Manual de Item no Pedido
     with st.expander("➕ Cadastrar Novo Item no Pedido (Manual)", expanded=False):
         opcoes_itens = ["➕ [NOVO] Cadastrar Novo Item"]
         if not df_todos_pedidos.empty:
@@ -690,7 +728,7 @@ elif "Pedidos" in menu:
                 lote_p = r.get("lote_id", "")
                 cor_p = r.get("cor_bone", "")
                 arte_p = r.get("frase_arte", "")
-                opcoes_itens.append(f"✏️ [ID #{id_p}] Pedido: {lote_p} | {cor_p} - {arte_p}")
+                opcoes_itens.append(f"✏️️ [ID #{id_p}] Pedido: {lote_p} | {cor_p} - {arte_p}")
 
         item_ped_sel = st.selectbox(
             "📌 Selecione uma opção para Cadastrar Novo ou Editar/Excluir um Item Existente:",
@@ -705,7 +743,7 @@ elif "Pedidos" in menu:
         if item_ped_sel and not item_ped_sel.startswith("➕"):
             is_edit_ped = True
             try:
-                id_ped_edit = int(item_ped_sel.split("]")[0].replace("✏️️ [ID #", "").strip())
+                id_ped_edit = int(item_ped_sel.split("]")[0].replace("✏ [ID #", "").strip())
                 match_p = df_todos_pedidos[df_todos_pedidos["id"] == id_ped_edit]
                 if not match_p.empty:
                     dados_p_edit = match_p.iloc[0].to_dict()
@@ -836,7 +874,6 @@ elif "Pedidos" in menu:
                     st.session_state["flash_success"] = f"🗑️ Item ID #{id_ped_edit} excluído com sucesso!"
                     st.rerun()
 
-    # Botão de Importação de Planilha de Pedidos
     with st.expander("📥 Importar Novo Pedido via Planilha (.xlsx / .csv)", expanded=False):
         uploaded_ped_file = st.file_uploader("Carregar planilha de pedido (ex: Pedido_#3.10-2026.xlsx)", type=["xlsx", "csv"], key="uploader_pedidos_excel")
         if uploaded_ped_file is not None:
@@ -909,7 +946,6 @@ elif "Pedidos" in menu:
         df_ped['total_item'] = df_ped['preco'] + df_ped['valor_estampa_extra'].fillna(0) + df_ped['valor_matriz'].fillna(0)
         df_ped["Mes_Ano"] = pd.to_datetime(df_ped["data_criacao"], errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
 
-        # Agrupamento por Mês no menu Pedidos
         meses_pedidos = sorted(df_ped["Mes_Ano"].unique(), reverse=True)
         for mes in meses_pedidos:
             df_ped_mes = df_ped[df_ped["Mes_Ano"] == mes]
@@ -970,14 +1006,11 @@ elif "Pedidos" in menu:
                         if st.button("🚚 Marcar como Entregue", key=f"btn_entregue_{lote}_{mes}", use_container_width=True, type="primary"):
                             row_alvo = df_lote[df_lote["id"] == id_entregue].iloc[0]
                             
-                            # Realiza a consulta do último item cadastrado na configuração
                             codigo_base_atual = get_ultimo_codigo_config()
-                            # Cria o próximo número sequencial
                             novo_codigo_gerado = gerar_proximo_codigo(codigo_base_atual)
 
                             dt_aquisicao_item = str(row_alvo.get("data_criacao", datetime.date.today().strftime("%Y-%m-%d")))
 
-                            # Transporta todas as informações exigidas no cadastro de novo produto no Estoque
                             novo_prod = {
                                 "codigo": novo_codigo_gerado,
                                 "cor": str(row_alvo.get("cor_bone", "")).strip(),
@@ -1013,7 +1046,6 @@ elif "Pedidos" in menu:
 elif "Estoque" in menu:
     st.subheader("📦 Estoque Atual")
     
-    # Preenchimento das colunas do Estoque Atual via menu "Compra de Mercadorias" (Pedidos Entregues)
     df_cm = get_df_compra_mercadorias()
     
     if not df_cm.empty:
@@ -1021,8 +1053,33 @@ elif "Estoque" in menu:
         df_est["Estoque"] = 1
         df_est["Status"] = "Disponível"
         
-        # Coluna "Custo Total": Somatório das colunas Custo Base, Estampa Extra e Matriz Bordado
         df_est["custo_total_num"] = df_est["preco_num"] + df_est["estampa_extra_num"] + df_est["matriz_num"]
+
+        # NOVO: Seção para dar baixa em mercadorias por perda, avaria ou brinde
+        with st.expander("🔻 Registrar Baixa no Estoque (Perda / Avaria / Brinde)", expanded=False):
+            with st.form("form_baixa_estoque"):
+                cb_c1, cb_c2, cb_c3 = st.columns(3)
+                with cb_c1:
+                    cods_disponiveis = df_est["Código"].tolist()
+                    cod_baixa = st.selectbox("Selecione a Mercadoria *", cods_disponiveis if cods_disponiveis else ["Sem itens"])
+                with cb_c2:
+                    motivo_baixa = st.selectbox("Motivo da Baixa *", ["Perda", "Avaria", "Brinde", "Outro"])
+                    dt_baixa = st.date_input("Data da Baixa *", datetime.date.today(), format="DD/MM/YYYY")
+                with cb_c3:
+                    obs_baixa = st.text_input("Observação / Justificativa")
+                
+                btn_confirmar_baixa = st.form_submit_button("🔻 Confirmar Baixa no Estoque", type="primary", use_container_width=True)
+                if btn_confirmar_baixa:
+                    if cod_baixa != "Sem itens":
+                        payload_baixa = {
+                            "codigo": cod_baixa,
+                            "motivo": motivo_baixa,
+                            "observacao": obs_baixa.strip(),
+                            "data_baixa": str(dt_baixa)
+                        }
+                        safe_insert("baixas_estoque", payload_baixa)
+                        st.session_state["flash_success"] = f"🔻 Baixa do item '{cod_baixa}' por '{motivo_baixa}' realizada com sucesso!"
+                        st.rerun()
 
         with st.expander("🔍 Consultar e Pesquisar no Estoque", expanded=True):
             c_f1, c_f2, c_f3 = st.columns(3)
@@ -1051,7 +1108,6 @@ elif "Estoque" in menu:
         df_est_filtrado["Matriz Bordado"] = df_est_filtrado["matriz_num"].apply(lambda v: f"R$ {float(v):,.2f}")
         df_est_filtrado["Custo Total"] = df_est_filtrado["custo_total_num"].apply(lambda v: f"R$ {float(v):,.2f}")
 
-        # Reorganização das colunas: Status como primeira coluna e Estoque após a coluna Produto
         cols_est = [
             "Status", "Código", "Cor do Boné", "Arte Estampada", "Cor da Estampa", 
             "Produto", "Estoque", "Custo Base", "Estampa Extra", "Matriz Bordado", "Custo Total"
@@ -1064,7 +1120,74 @@ elif "Estoque" in menu:
 elif "Vendas" in menu:
     st.subheader("🛒 Lançar Nova Venda")
     
-    # Busca de itens no estoque (garantindo remoção de BL-0001, BL-0002, BL-0003 e Teste1)
+    # NOVO: Importação por planilha no menu Vendas com colunas na ordem exata solicitada
+    with st.expander("📥 Importar Vendas via Planilha (.xlsx / .csv)", expanded=False):
+        st.markdown("##### 📌 Modelo de Planilha de Vendas:")
+        df_modelo_vendas = pd.DataFrame([{
+            "Código": "BL-0005",
+            "Quantidade": 1,
+            "Valor": 80.00,
+            "Data da Venda": "05/10/2026",
+            "Nome do Cliente": "João Silva",
+            "Forma de Pagto": "PIX",
+            "Data de Recebimento": "05/10/2026"
+        }])
+        st.dataframe(df_modelo_vendas, use_container_width=True, hide_index=True)
+        
+        output_v = io.BytesIO()
+        with pd.ExcelWriter(output_v, engine='openpyxl') as writer:
+            df_modelo_vendas.to_excel(writer, index=False, sheet_name="Modelo_Vendas")
+        
+        st.download_button(
+            "📥 Baixar Modelo de Planilha de Vendas (.xlsx)",
+            data=output_v.getvalue(),
+            file_name="Modelo_Importacao_Vendas_R2.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
+        uploaded_v_file = st.file_uploader("Enviar arquivo de vendas (.xlsx ou .csv)", type=["xlsx", "csv"], key="uploader_vendas_direct")
+        if uploaded_v_file is not None:
+            try:
+                df_imp_v = pd.read_csv(uploaded_v_file) if uploaded_v_file.name.endswith(".csv") else pd.read_excel(uploaded_v_file)
+                st.markdown("##### 🔍 Pré-visualização das Vendas a Importar:")
+                st.dataframe(df_imp_v, use_container_width=True)
+                
+                if st.button("🚀 Confirmar Importação de Vendas", type="primary", use_container_width=True):
+                    count_v_imp = 0
+                    for _, row in df_imp_v.iterrows():
+                        cod_v = str(row.get('Código', row.get('codigo', ''))).strip()
+                        qtd_v = int(pd.to_numeric(row.get('Quantidade', row.get('qtd', 1)), errors='coerce') or 1)
+                        val_v = parse_money(row.get('Valor', row.get('valor_venda', 0.0)))
+                        dt_v_str = parse_date_str(row.get('Data da Venda', row.get('data', datetime.date.today())))
+                        cli_v = str(row.get('Nome do Cliente', row.get('cliente', ''))).strip()
+                        pag_v = str(row.get('Forma de Pagto', row.get('forma_pagto', 'PIX'))).strip()
+                        dt_rec_v = row.get('Data de Recebimento', row.get('data_recebimento'))
+                        dt_rec_v_str = parse_date_str(dt_rec_v) if pd.notna(dt_rec_v) and str(dt_rec_v).strip() != "" else None
+                        
+                        payload_imp_v = {
+                            "codigo_bone": cod_v,
+                            "codigo": cod_v,
+                            "cliente": cli_v,
+                            "qtd": qtd_v,
+                            "valor_venda": val_v,
+                            "forma_pagto": pag_v,
+                            "data": dt_v_str,
+                            "data_venda": dt_v_str,
+                            "custo": val_v,
+                            "custo_unitario": val_v
+                        }
+                        if dt_rec_v_str:
+                            payload_imp_v["data_recebimento"] = dt_rec_v_str
+
+                        safe_insert("vendas", payload_imp_v)
+                        count_v_imp += 1
+
+                    st.session_state["flash_success"] = f"🎉 {count_v_imp} vendas importadas com sucesso!"
+                    st.rerun()
+            except Exception as ex_v:
+                st.error(f"Erro ao processar planilha de vendas: {ex_v}")
+
+    # Lançar Venda Manual
     df_cm_estoque = get_df_compra_mercadorias()
     if not df_cm_estoque.empty:
         df_cm_estoque = df_cm_estoque[~df_cm_estoque["Código"].isin(CODIGOS_REMOVER)]
@@ -1129,6 +1252,51 @@ elif "Vendas" in menu:
                         st.rerun()
     else:
         st.info("Nenhum produto cadastrado no banco de dados. Cadastre primeiro via entregas de pedidos.")
+
+    st.markdown("---")
+    
+    # NOVO: Rotina de devolução de mercadoria vendida
+    with st.expander("🔄 Registrar Devolução de Mercadoria (Devolução de Venda)", expanded=False):
+        if not df_vendas.empty:
+            opts_vendas_dev = [f"ID #{r['id']} | Código: {r.get('codigo_bone', r.get('codigo',''))} | Cliente: {r.get('cliente','')} (R$ {float(r.get('valor_venda', r.get('valor', 0.0))):,.2f})" for _, r in df_vendas.iterrows()]
+            venda_dev_sel = st.selectbox("Selecione a Venda a Devolver *", opts_vendas_dev)
+            
+            c_dev1, c_dev2 = st.columns(2)
+            with c_dev1:
+                dt_devolucao = st.date_input("Data da Devolução *", datetime.date.today(), format="DD/MM/YYYY")
+            with c_dev2:
+                motivo_devolucao = st.text_input("Motivo da Devolução", value="Cliente solicitou troca/devolução")
+
+            if st.button("🔄 Processar Devolução da Venda", type="primary", use_container_width=True):
+                v_id_dev = int(venda_dev_sel.split("|")[0].replace("ID #", "").strip())
+                match_v = df_vendas[df_vendas["id"] == v_id_dev]
+                if not match_v.empty:
+                    row_v = match_v.iloc[0]
+                    cod_p = str(row_v.get("codigo_bone", row_v.get("codigo", "")))
+                    val_v_dev = float(pd.to_numeric(row_v.get("valor_venda", row_v.get("valor", 0.0)), errors="coerce") or 0.0)
+                    cli_dev = str(row_v.get("cliente", ""))
+
+                    # Regra: dar entrada novamente, utilizando a data da devolução
+                    safe_insert("devolucoes_vendas", {
+                        "venda_id": v_id_dev,
+                        "codigo": cod_p,
+                        "cliente": cli_dev,
+                        "valor_devolvido": val_v_dev,
+                        "data_devolucao": str(dt_devolucao),
+                        "motivo": motivo_devolucao.strip()
+                    })
+
+                    # Regra: devolução da venda no fluxo de caixa como saída 🔴
+                    safe_insert("caixa", {
+                        "data": str(dt_devolucao),
+                        "desc": f"Devolução Venda {cod_p} - Cliente: {cli_dev}",
+                        "tipo": "Devolução de Venda",
+                        "valor": -abs(val_v_dev)
+                    })
+
+                    estornar_estoque(cod_p, int(row_v.get("qtd", 1)))
+                    st.session_state["flash_success"] = f"🎉 Devolução registrada! Produto '{cod_p}' retornado ao estoque e saída no caixa lançada para {format_data_br(dt_devolucao)}."
+                    st.rerun()
 
     st.markdown("---")
     st.subheader("⏳ Vendas Pendentes de Recebimento")
@@ -1216,43 +1384,43 @@ elif "Vendas" in menu:
 
         df_v_exib["Mes_Ano"] = pd.to_datetime(df_v_exib[col_d_v], errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
         
-        # Agrupamento por Mês no menu Vendas
         meses_vendas = sorted(df_v_exib["Mes_Ano"].unique(), reverse=True)
         for mes in meses_vendas:
             df_v_mes = df_v_exib[df_v_exib["Mes_Ano"] == mes]
             st.markdown(f"#### 📅 Mês: {mes}")
 
+            # REQUISITO DA IMAGEM 2: Manter todos os dados na mesma linha sem quebra
             for idx, row in df_v_mes.iterrows():
                 v_id = row["id"]
                 c_data_exib = format_data_br(row.get(col_d_v, ""))
-                c_cod_exib = row.get(col_c_b, "")
-                c_cli_exib = row.get(col_cli, "")
+                c_cod_exib = str(row.get(col_c_b, ""))
+                c_cli_exib = str(row.get(col_cli, ""))
                 c_val_exib = float(pd.to_numeric(row.get(col_val, 0.0), errors="coerce") or 0.0)
-                c_pag_exib = row.get(col_pag, "PIX")
+                c_pag_exib = str(row.get(col_pag, "PIX"))
 
-                c_dt, c_cod, c_cli, c_vlr, c_pg, c_act1, c_act2 = st.columns([2, 1.5, 2.5, 1.5, 2, 1, 1])
-                with c_dt:
-                    st.write(f"**Data:** {c_data_exib}")
-                with c_cod:
-                    st.write(f"**Código:** {c_cod_exib}")
-                with c_cli:
-                    st.write(f"**Cliente:** {c_cli_exib}")
-                with c_vlr:
-                    st.write(f"**Valor:** R$ {c_val_exib:,.2f}")
-                with c_pg:
-                    st.write(f"**Pagto:** {c_pag_exib}")
-                with c_act1:
-                    if st.button("✏ Alterar", key=f"btn_edit_row_{v_id}_{mes}", use_container_width=True):
+                c_linha_unica = st.columns([2, 1.8, 2.2, 1.5, 1.5, 1, 1])
+                with c_linha_unica[0]:
+                    st.markdown(f"**Data:** {c_data_exib}", unsafe_allow_html=True)
+                with c_linha_unica[1]:
+                    st.markdown(f"**Código:** {c_cod_exib}", unsafe_allow_html=True)
+                with c_linha_unica[2]:
+                    st.markdown(f"**Cliente:** {c_cli_exib}", unsafe_allow_html=True)
+                with c_linha_unica[3]:
+                    st.markdown(f"**Valor:** R$ {c_val_exib:,.2f}", unsafe_allow_html=True)
+                with c_linha_unica[4]:
+                    st.markdown(f"**Pagto:** {c_pag_exib}", unsafe_allow_html=True)
+                with c_linha_unica[5]:
+                    if st.button("✏️", key=f"btn_edit_row_{v_id}_{mes}", use_container_width=True):
                         st.session_state["editing_venda_id"] = v_id
                         st.rerun()
-                with c_act2:
-                    if st.button("🗑 Excluir", key=f"btn_del_row_{v_id}_{mes}", use_container_width=True):
+                with c_linha_unica[6]:
+                    if st.button("🗑️", key=f"btn_del_row_{v_id}_{mes}", use_container_width=True):
                         cod_prod_e = row.get("codigo_bone") or row.get("codigo") or row.get("codigo_produto")
                         qtd_venda_e = int(row.get("qtd") or row.get("quantidade") or 1)
                         estornar_estoque(cod_prod_e, qtd_venda_e)
 
                         supabase.table("vendas").delete().eq("id", v_id).execute()
-                        st.session_state["flash_success"] = f"🗑️ Venda ID {v_id} excluída com sucesso!"
+                        st.session_state["flash_success"] = f"🗑️️ Venda ID {v_id} excluída com sucesso!"
                         st.rerun()
 
                 if st.session_state.get("editing_venda_id") == v_id:
@@ -1290,7 +1458,6 @@ elif "Custos" in menu:
     sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷️ Custos de Venda", "🎪 Feiras"], horizontal=True)
 
     if "Mercadorias" in sub_tab:
-        # Transporte de dados do menu Compra de Mercadorias para o registro individual de compras
         df_cm = get_df_compra_mercadorias()
 
         if not df_cm.empty:
@@ -1298,7 +1465,6 @@ elif "Custos" in menu:
             df_m["qtd_num"] = 1
             df_m["Mes_Ano"] = pd.to_datetime(df_m["Data_Raw"], errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
 
-            # Agrupamento por Mês
             meses_custos_m = sorted(df_m["Mes_Ano"].unique(), reverse=True)
             for mes in meses_custos_m:
                 df_m_mes = df_m[df_m["Mes_Ano"] == mes]
@@ -1367,7 +1533,6 @@ elif "Custos" in menu:
                 df_cv_exib["Mes_Ano"] = pd.to_datetime(df_cv_exib["data"], errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
                 meses_cv = sorted(df_cv_exib["Mes_Ano"].unique(), reverse=True)
                 
-                # Agrupamento por Mês
                 for mes in meses_cv:
                     df_cv_mes = df_cv_exib[df_cv_exib["Mes_Ano"] == mes]
                     st.markdown(f"#### 📅 Mês: {mes}")
@@ -1448,7 +1613,6 @@ elif "Custos" in menu:
                 df_cf_exib["Mes_Ano"] = pd.to_datetime(df_cf_exib["data"], errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
                 meses_cf = sorted(df_cf_exib["Mes_Ano"].unique(), reverse=True)
                 
-                # Agrupamento por Mês
                 for mes in meses_cf:
                     df_cf_mes = df_cf_exib[df_cf_exib["Mes_Ano"] == mes]
                     st.markdown(f"#### 📅 Mês: {mes}")
@@ -1570,6 +1734,23 @@ elif "Caixa" in menu or "Fluxo" in menu:
                     "Valor_Num": -abs(val_ap) if is_devolucao else abs(val_ap)
                 })
 
+    # 5. NOVO: Lançamento automático de Devoluções de Vendas como Saída no caixa
+    if not df_devolucoes.empty:
+        for _, r in df_devolucoes.iterrows():
+            val_dev = float(pd.to_numeric(r.get("valor_devolvido", 0.0), errors="coerce") or 0.0)
+            cod_dev = r.get("codigo", "")
+            cli_dev = r.get("cliente", "")
+            dt_dev_raw = r.get("data_devolucao")
+            if val_dev > 0:
+                lista_movimentos.append({
+                    "Data_Val": str(dt_dev_raw),
+                    "Data": format_data_br(dt_dev_raw),
+                    "Origem": "🔄 Devolução de Venda",
+                    "Descrição": f"Devolução Venda {cod_dev} - Cliente: {cli_dev}",
+                    "Tipo": "Saída 🔴",
+                    "Valor_Num": -val_dev
+                })
+
     if lista_movimentos:
         df_extrato = pd.DataFrame(lista_movimentos)
         
@@ -1583,7 +1764,6 @@ elif "Caixa" in menu or "Fluxo" in menu:
         df_extrato["Valor (R$)"] = df_extrato["Valor_Num"].apply(lambda v: f"R$ {v:,.2f}")
         df_extrato["Saldo Acumulado (R$)"] = df_extrato["Saldo_Acumulado"].apply(lambda v: f"R$ {v:,.2f}")
 
-        # Agrupamento por Mês no Fluxo de Caixa
         meses_caixa = sorted(df_extrato["Mes_Ano"].unique(), reverse=True)
         for mes in meses_caixa:
             df_cx_mes = df_extrato[df_extrato["Mes_Ano"] == mes]
@@ -1697,7 +1877,6 @@ elif "Aportes" in menu:
 
         df_aportes["Mes_Ano"] = pd.to_datetime(df_aportes["data"], errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
         
-        # Agrupamento por Mês no Aporte dos Sócios
         meses_aportes = sorted(df_aportes["Mes_Ano"].unique(), reverse=True)
         for mes in meses_aportes:
             df_ap_mes = df_aportes[df_aportes["Mes_Ano"] == mes]
@@ -1768,86 +1947,6 @@ elif "Aportes" in menu:
     else:
         st.info("Nenhum aporte ou devolução registrado no momento.")
 
-elif "Importação" in menu or "Importar" in menu:
-    st.subheader("📥 Importação de Dados em Lote")
-    st.markdown("Selecione o tipo de dado que deseja importar e envie o arquivo Excel (.xlsx) ou CSV (.csv).")
-
-    tipo_import = st.selectbox("Escolha o destino dos dados *", ["🛍️ Compras (Produtos)", "🛒 Vendas"])
-
-    with st.expander("📌 Baixar Modelos de Planilha para Importação", expanded=True):
-        st.markdown("Utilize os modelos abaixo para garantir que os arquivos estejam com as colunas corretas antes do envio:")
-        c_mod1, c_mod2 = st.columns(2)
-        with c_mod1:
-            df_modelo_compras = pd.DataFrame([{
-                "codigo": "BL-0001",
-                "cor": "Preto",
-                "frase": "Vista o que voce pensa",
-                "cor_estampa": "Branco",
-                "categoria": "Básico",
-                "custo": 29.00,
-                "estampa_extra": 0.00,
-                "matriz_bordado": 0.00,
-                "qtd_estoque": 10,
-                "data_aquisicao": "2026-10-04"
-            }])
-            output_c = io.BytesIO()
-            with pd.ExcelWriter(output_c, engine='openpyxl') as writer:
-                df_modelo_compras.to_excel(writer, index=False, sheet_name="Modelo_Compras")
-            st.download_button(
-                "📥 Baixar Modelo de Compras (.xlsx)",
-                data=output_c.getvalue(),
-                file_name="Modelo_Importacao_Compras.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-
-        with c_mod2:
-            df_modelo_vendas = pd.DataFrame([{
-                "codigo_bone": "BL-0001",
-                "cliente": "João Silva",
-                "qtd": 2,
-                "valor_venda": 120.00,
-                "forma_pagto": "PIX",
-                "data": "2026-10-04",
-                "data_recebimento": "2026-10-04",
-                "custo": 58.00
-            }])
-            output_v = io.BytesIO()
-            with pd.ExcelWriter(output_v, engine='openpyxl') as writer:
-                df_modelo_vendas.to_excel(writer, index=False, sheet_name="Modelo_Vendas")
-            st.download_button(
-                "📥 Baixar Modelo de Vendas (.xlsx)",
-                data=output_v.getvalue(),
-                file_name="Modelo_Importacao_Vendas.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-
-    st.markdown("---")
-    file_imp = st.file_uploader("Carregar planilha (.xlsx ou .csv)", type=["xlsx", "csv"])
-
-    if file_imp is not None:
-        try:
-            if file_imp.name.endswith(".csv"):
-                df_imp = pd.read_csv(file_imp)
-            else:
-                df_imp = pd.read_excel(file_imp)
-
-            st.markdown("##### 🔍 Pré-visualização dos dados a serem importados:")
-            st.dataframe(df_imp.head(10), use_container_width=True)
-
-            if st.button("🚀 Confirmar e Importar para o Banco de Dados", type="primary", use_container_width=True):
-                registros = df_imp.to_dict(orient="records")
-                if tipo_import == "🛍 Compras (Produtos)":
-                    supabase.table("produtos").upsert(registros, on_conflict="codigo").execute()
-                else:
-                    supabase.table("vendas").insert(registros).execute()
-
-                st.success("🎉 Importação realizada com sucesso!")
-                st.rerun()
-        except Exception as e:
-            st.error(f"Erro ao processar o arquivo: {e}")
-
 elif "Gestão" in menu or "Dados" in menu:
     st.subheader("💾 Gestão de Dados & Backup")
     st.markdown("Gerencie o banco de dados, faça downloads de segurança e restaure backups do sistema.")
@@ -1889,11 +1988,11 @@ elif "Gestão" in menu or "Dados" in menu:
         )
 
     st.markdown("---")
-    st.markdown("#### ⚙️️ Operações de Banco Supabase")
+    st.markdown("#### ⚙ Operações de Banco Supabase")
     st.info("Seu banco de dados está sincronizado diretamente na nuvem do Supabase. Todos os cadastros e edições são mantidos permanentemente.")
 
     with st.expander("🔄 Restaurar / Recuperar Dados via Backup Planilha (.xlsx)"):
-        st.warning("⚠️ O envio de uma planilha de restauração substituirá ou atualizará os registros existentes correspondentes aos códigos e IDs.")
+        st.warning("⚠️️ O envio de uma planilha de restauração substituirá ou atualizará os registros existentes correspondentes aos códigos e IDs.")
         uploaded_backup = st.file_uploader("Carregar Arquivo de Backup para Restauração (.xlsx)", type=["xlsx"])
         
         if uploaded_backup is not None:
@@ -1922,7 +2021,7 @@ elif "Configuração" in menu or "Configuracao" in menu:
 
     ult_cod = get_ultimo_codigo_config()
 
-    st.markdown("#### 🏷️ Sequencial do Código do Boné")
+    st.markdown("#### 🏷️️ Sequencial do Código do Boné")
     st.info("Esta configuração determina qual foi o último código de boné registrado e serve de base para a criação automática de novos códigos quando um pedido for marcado como **Entregue**.")
 
     c_cfg1, c_cfg2 = st.columns(2)
