@@ -156,6 +156,12 @@ def safe_insert(table_name: str, payload: dict):
         supabase.table(table_name).insert(payload).execute()
         return True
     except Exception as err:
+        err_str = str(err)
+        if "Could not find the '" in err_str and "' column" in err_str:
+            col_err = err_str.split("Could not find the '")[1].split("' column")[0]
+            if col_err in payload:
+                del payload[col_err]
+                return safe_insert(table_name, payload)
         st.error(f"Erro ao gravar na tabela `{table_name}`: {err}")
         return False
 
@@ -166,6 +172,23 @@ def safe_upsert_produto(payload: dict):
         supabase.table("produtos").upsert(payload, on_conflict="codigo").execute()
         return True
     except Exception as err:
+        err_str = str(err)
+        # Trata ausência de colunas no schema cache do Supabase
+        if "Could not find the '" in err_str and "' column" in err_str:
+            col_err = err_str.split("Could not find the '")[1].split("' column")[0]
+            if col_err in payload:
+                del payload[col_err]
+                return safe_upsert_produto(payload)
+        elif "PGRST204" in err_str or "PGRST205" in err_str or "schema cache" in err_str:
+            for col_opt in ["estampa_extra", "matriz_bordado", "data_aquisicao", "qtd_comprada"]:
+                if col_opt in err_str and col_opt in payload:
+                    del payload[col_opt]
+            try:
+                supabase.table("produtos").upsert(payload, on_conflict="codigo").execute()
+                return True
+            except Exception as inner_err:
+                st.error(f"Erro ao salvar produto: {inner_err}")
+                return False
         st.error(f"Erro ao atualizar o produto `{payload.get('codigo')}`: {err}")
         return False
 
@@ -608,7 +631,6 @@ elif menu == "🛒 Vendas":
         c_qtd_p = "qtd_estoque" if "qtd_estoque" in df_produtos.columns else ("qtd" if "qtd" in df_produtos.columns else "estoque")
         qtds_p = get_numeric_series(df_produtos, c_qtd_p)
         
-        # Seleciona todos os produtos cadastrados para venda (permitindo seleção de código cadastrado)
         opts = [f"[{r['codigo']}] \"{r.get('frase','')}\" (Disponível: {int(pd.to_numeric(r.get(c_qtd_p, 0), errors='coerce') or 0)} un)" for _, r in df_produtos.iterrows()]
         
         if opts:
@@ -877,7 +899,7 @@ elif menu == "💵 Custos":
                 cols_ind = [c for c in ["codigo", "categoria", "Custo Base", "Estampa Extra", "Matriz Bordado", "Custo Unit. Total", "Custo Total", "Data_Formatada"] if c in df_m.columns]
                 st.dataframe(df_m[cols_ind], use_container_width=True, hide_index=True)
 
-    elif sub_tab == "🏷️️ Custos de Venda":
+    elif sub_tab == "🏷️ Custos de Venda":
         with st.form("form_cv"):
             c1, c2, c3 = st.columns(3)
             with c1:
@@ -1239,7 +1261,7 @@ elif menu == "💰 Fluxo de Caixa":
             val_c = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
             sub_c = str(r.get("subcategoria", "Custos"))
             desc_c = r.get("desc") or r.get("descricao") or "Despesa Avulsa"
-            origem_tag = "🏷️ Custos de Venda" if "venda" in sub_c.lower() else ("🎪 Custos de Feiras" if "feira" in sub_c.lower() else f"💵 Custos ({sub_c})")
+            origem_tag = "🏷️️ Custos de Venda" if "venda" in sub_c.lower() else ("🎪 Custos de Feiras" if "feira" in sub_c.lower() else f"💵 Custos ({sub_c})")
             if val_c > 0:
                 lista_movimentos.append({
                     "Data_Val": str(r.get("data")),
