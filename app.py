@@ -557,7 +557,7 @@ with st.sidebar:
     st.markdown("### 📌 Módulos do Sistema")
     menu = st.radio(
         "Navegue entre os módulos:",
-        ["📈 Dashboard", "📦 Pedidos", "🛍 Compra de Mercadorias", "📦 Estoque", "🛒 Vendas", "💵 Custos", "💰 Fluxo de Caixa", "🤝 Aportes dos Sócios", "💾 Gestão de Dados", "⚙️️ Configuração"],
+        ["📈 Dashboard", "📦 Pedidos", "🛍 Compra de Mercadorias", "📦 Estoque", "🛒 Vendas", "💵 Custos", "💰 Fluxo de Caixa", "🤝 Aportes dos Sócios", "💾 Gestão de Dados", "⚙ Configuração"],
         label_visibility="collapsed"
     )
 
@@ -1381,11 +1381,9 @@ elif "Vendas" in menu:
                 c_val_exib = float(pd.to_numeric(row.get(col_val, 0.0), errors="coerce") or 0.0)
                 c_pag_exib = str(row.get(col_pag, "PIX"))
                 
-                # ADICIONADO/CORRIGIDO (Imagem 2): Busca da tarifa do cartão e cálculo do valor recebido líquido
                 c_tarifa_exib = float(pd.to_numeric(row.get("tarifa_cartao", 0.0), errors="coerce") or 0.0)
                 c_receb_exib = float(pd.to_numeric(row.get("valor_recebido", c_val_exib - c_tarifa_exib), errors="coerce") or (c_val_exib - c_tarifa_exib))
 
-                # ADICIONADO/CORRIGIDO (Imagem 2): Disposição em linha única com botões usando emojis nativos (✏️️ e 🗑️)
                 c_linha_unica = st.columns([1.5, 1.3, 1.8, 1.5, 1.3, 1.5, 1.8, 0.6, 0.6])
                 with c_linha_unica[0]:
                     st.markdown(f"**Data:** {c_data_exib}", unsafe_allow_html=True)
@@ -1406,7 +1404,7 @@ elif "Vendas" in menu:
                         st.session_state["editing_venda_id"] = v_id
                         st.rerun()
                 with c_linha_unica[8]:
-                    if st.button("🗑️", key=f"btn_del_row_{v_id}_{mes}", use_container_width=True):
+                    if st.button("🗑️️", key=f"btn_del_row_{v_id}_{mes}", use_container_width=True):
                         cod_prod_e = row.get("codigo_bone") or row.get("codigo") or row.get("codigo_produto")
                         qtd_venda_e = int(row.get("qtd") or row.get("quantidade") or 1)
                         estornar_estoque(cod_prod_e, qtd_venda_e)
@@ -1716,7 +1714,6 @@ elif "Custos" in menu:
 
     elif "Financeiros" in sub_tab:
         st.markdown("##### 💳 Demonstrativo de Tarifas de Cartão")
-        # ADICIONADO/CORRIGIDO (Imagem 3): Transposição dos dados de Tarifa Cartão das Vendas
         if not df_vendas.empty:
             col_d_v = "data_venda" if "data_venda" in df_vendas.columns else "data"
             col_c_b = "codigo_bone" if "codigo_bone" in df_vendas.columns else "codigo"
@@ -1726,18 +1723,15 @@ elif "Custos" in menu:
 
             df_v_fin = df_vendas.copy()
             
-            # Garante extração numérica segura da tarifa do cartão
             if col_tar and col_tar in df_v_fin.columns:
                 df_v_fin["tarifa_cartao_num"] = get_numeric_series(df_v_fin, col_tar)
             else:
-                # Calcula a tarifa caso o campo de valor_recebido exista mas tarifa_cartao não esteja preenchida
                 val_tot_ser = get_numeric_series(df_v_fin, col_val)
                 val_rec_ser = get_numeric_series(df_v_fin, "valor_recebido", default_value=-1.0)
                 df_v_fin["tarifa_cartao_num"] = df_v_fin.apply(
                     lambda r: max(0.0, r[col_val] - r["valor_recebido"]) if "valor_recebido" in r and r["valor_recebido"] >= 0 else 0.0, axis=1
                 )
 
-            # Filtra vendas por Cartão ou com tarifa > 0
             df_v_tarifa = df_v_fin[
                 (df_v_fin["tarifa_cartao_num"] > 0) | 
                 (df_v_fin.get("forma_pagto", pd.Series([""] * len(df_v_fin))).astype(str).str.lower().str.contains("cart", na=False))
@@ -1793,22 +1787,27 @@ elif "Caixa" in menu or "Fluxo" in menu:
                     "Valor_Num": -tot_c
                 })
 
-    # 2. Recebimentos das Vendas
+    # 2. Recebimentos das Vendas (ALTERADO: Usa o valor recebido calculado -> valor_venda - tarifa_cartao)
     if not df_vendas.empty:
         col_dt_rec = "data_recebimento" if "data_recebimento" in df_vendas.columns else ("data_receb" if "data_receb" in df_vendas.columns else "data")
         for _, r in df_vendas.iterrows():
             dt_v = r.get(col_dt_rec) or r.get("data")
-            val_v = float(pd.to_numeric(r.get("valor_recebido") or r.get("valor_venda") or r.get("valor") or 0.0, errors="coerce") or 0.0)
+            
+            # Cálculo dinâmico do valor recebido líquido
+            v_venda = float(pd.to_numeric(r.get("valor_venda") or r.get("valor") or 0.0, errors="coerce") or 0.0)
+            v_tarifa = float(pd.to_numeric(r.get("tarifa_cartao", 0.0), errors="coerce") or 0.0)
+            val_v_calc = max(0.0, v_venda - v_tarifa)
+            
             cli = r.get("cliente") or r.get("nome_cliente") or ""
             cod = r.get("codigo_bone") or r.get("codigo") or ""
-            if val_v > 0:
+            if val_v_calc > 0:
                 lista_movimentos.append({
                     "Data_Val": str(dt_v),
                     "Data": format_data_br(dt_v),
                     "Origem": "🛒 Recebimento de Vendas",
                     "Descrição": f"Venda {cod} - Cliente: {cli}",
                     "Tipo": "Entrada 🟢",
-                    "Valor_Num": val_v
+                    "Valor_Num": val_v_calc
                 })
 
     # 3. Custos de Venda e Custos das Feiras
@@ -1990,7 +1989,6 @@ elif "Aportes" in menu:
         if "editing_aporte_id" not in st.session_state:
             st.session_state["editing_aporte_id"] = None
 
-        # CORRIGIDO (Imagem 1): Verificação defensiva para evitar KeyError caso 'data' esteja ausente ou o DF seja vazio
         col_dt_ap = "data" if "data" in df_aportes.columns else ("created_at" if "created_at" in df_aportes.columns else ("data_aporte" if "data_aporte" in df_aportes.columns else None))
         
         if col_dt_ap and not df_aportes.empty:
@@ -2028,7 +2026,7 @@ elif "Aportes" in menu:
                             st.session_state["editing_aporte_id"] = ap_id
                             st.rerun()
                     with c6:
-                        if st.button("🗑️️", key=f"del_ap_{ap_id}_{mes}", use_container_width=True):
+                        if st.button("🗑", key=f"del_ap_{ap_id}_{mes}", use_container_width=True):
                             supabase.table("aportes").delete().eq("id", ap_id).execute()
                             st.session_state["flash_success"] = f"Registro ID {ap_id} excluído com sucesso!"
                             st.rerun()
