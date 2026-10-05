@@ -693,7 +693,7 @@ if "Dashboard" in menu:
             st.info("Nenhuma venda registrada.")
 
 elif "Compra de Mercadorias" in menu:
-    st.subheader("🛍️️ Relatório de Compra de Mercadorias")
+    st.subheader("🛍 Relatório de Compra de Mercadorias")
     
     df_cm = get_df_compra_mercadorias()
 
@@ -1169,82 +1169,98 @@ elif "Vendas" in menu:
     st.subheader("🛒 Lançar Nova Venda")
     
     df_cm_estoque = get_df_compra_mercadorias()
+    opts = []
+    
     if not df_cm_estoque.empty:
         df_cm_estoque = df_cm_estoque[~df_cm_estoque["Código"].isin(CODIGOS_REMOVER)]
         opts = [f"[{r['Código']}] \"{r.get('Arte Estampada','')}\" - Cor: {r.get('Cor do Boné','')} (Disponível: 1 un)" for _, r in df_cm_estoque.iterrows()]
-        
-        if opts:
-            prod_sel = st.selectbox(
-                "🔍 Selecione/Pesquise o Boné no Estoque (digite o código, frase ou cor):",
-                opts,
-                index=0,
-                help="Campo expansível de pesquisa integrada para seleção rápida de bonés."
-            )
-            
-            codigo_sel = prod_sel.split("]")[0].replace("[", "").strip() if prod_sel else ""
+    
+    # Adicionar opção de inserção manual flexível
+    opts.insert(0, "✏ Digitar Código Manualmente / Outro")
 
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                qtd_venda = st.number_input("Quantidade *", min_value=1, max_value=1, value=1, step=1)
-                cliente = st.text_input("Nome do Cliente *")
-            with c2:
-                valor_venda = st.number_input("Valor de Venda (R$) *", min_value=0.0, value=60.0, step=5.0, format="%.2f")
-                forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
-            with c3:
-                data_venda = st.date_input("Data da Venda *", datetime.date.today(), format="DD/MM/YYYY")
-                data_receb = st.date_input("Data de Recebimento (Opcional)", value=None, format="DD/MM/YYYY")
+    col_sel_p, col_cod_m = st.columns([2, 1])
+    with col_sel_p:
+        prod_sel = st.selectbox(
+            "🔍 Selecione/Pesquise o Boné no Estoque (ou selecione para digitar):",
+            opts,
+            index=0,
+            help="Campo de pesquisa integrada para seleção de bonés do estoque ou digitação livre."
+        )
 
-            tarifa_cartao = 0.0
-            if forma_pagto == "Cartão":
-                tarifa_cartao = st.number_input("Tarifa Cartão (R$) *", min_value=0.0, value=0.0, step=0.5, format="%.2f")
-                valor_recebido = max(0.0, float(valor_venda) - float(tarifa_cartao))
-            else:
-                valor_recebido = float(valor_venda)
+    codigo_sel = ""
+    if prod_sel and not prod_sel.startswith("✏"):
+        codigo_sel = prod_sel.split("]")[0].replace("[", "").strip()
 
-            st.markdown(f"👉 **Valor Recebido Calculado:** `R$ {valor_recebido:,.2f}`")
+    with col_cod_m:
+        if prod_sel.startswith("✏"):
+            codigo_sel = st.text_input("Código do Produto / Boné *", value="BL-0001", help="Informe o código único do item vendido")
+        else:
+            st.text_input("Código Selecionado", value=codigo_sel, disabled=True)
 
-            if st.button("🚀 Finalizar Venda Individual", type="primary", use_container_width=True):
-                if not cliente.strip():
-                    st.error("Informe o nome do cliente!")
-                else:
-                    p_info = df_cm_estoque[df_cm_estoque["Código"] == codigo_sel].iloc[0]
-                    custo_total_cm = float(p_info.get("total_item_calc", 0.0))
-                    
-                    dt_receb_str = str(data_receb) if data_receb is not None else None
-                    val_venda_fmt = round(float(valor_venda), 2)
-                    val_receb_fmt = round(float(valor_recebido), 2)
-                    tarifa_fmt = round(float(tarifa_cartao), 2)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        qtd_venda = st.number_input("Quantidade *", min_value=1, value=1, step=1)
+        cliente = st.text_input("Nome do Cliente *")
+    with c2:
+        valor_venda = st.number_input("Valor de Venda (R$) *", min_value=0.0, value=60.0, step=5.0, format="%.2f")
+        forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
+    with c3:
+        data_venda = st.date_input("Data da Venda *", datetime.date.today(), format="DD/MM/YYYY")
+        data_receb = st.date_input("Data de Recebimento (Opcional)", value=None, format="DD/MM/YYYY")
 
-                    payload_venda = {
-                        "codigo_bone": codigo_sel,
-                        "codigo": codigo_sel,
-                        "cliente": cliente.strip(),
-                        "qtd": int(qtd_venda),
-                        "valor_venda": val_venda_fmt,
-                        "valor_recebido": val_receb_fmt,
-                        "tarifa_cartao": tarifa_fmt,
-                        "forma_pagto": forma_pagto,
-                        "data": str(data_venda),
-                        "data_venda": str(data_venda),
-                        "custo": custo_total_cm,
-                        "custo_unitario": custo_total_cm
-                    }
-                    if dt_receb_str:
-                        payload_venda["data_recebimento"] = dt_receb_str
-
-                    if safe_insert("vendas", payload_venda):
-                        if dt_receb_str and val_receb_fmt > 0:
-                            safe_insert("caixa", {
-                                "data": dt_receb_str,
-                                "desc": f"Venda {codigo_sel} ({qtd_venda}un) - {cliente.strip()}",
-                                "tipo": "Venda",
-                                "valor": val_receb_fmt
-                            })
-                            
-                        st.session_state["flash_success"] = f"🎉 Venda salva com sucesso! Valor Recebido: R$ {val_receb_fmt:,.2f}"
-                        st.rerun()
+    tarifa_cartao = 0.0
+    if forma_pagto == "Cartão":
+        tarifa_cartao = st.number_input("Tarifa Cartão (R$) *", min_value=0.0, value=0.0, step=0.5, format="%.2f")
+        valor_recebido = max(0.0, float(valor_venda) - float(tarifa_cartao))
     else:
-        st.info("Nenhum produto cadastrado no banco de dados. Cadastre primeiro via entregas de pedidos.")
+        valor_recebido = float(valor_venda)
+
+    st.markdown(f"👉 **Valor Recebido Calculado:** `R$ {valor_recebido:,.2f}`")
+
+    if st.button("🚀 Finalizar Venda Individual", type="primary", use_container_width=True):
+        if not cliente.strip():
+            st.error("Informe o nome do cliente!")
+        elif not codigo_sel.strip():
+            st.error("Informe um código de produto válido!")
+        else:
+            custo_total_cm = 0.0
+            if not df_cm_estoque.empty and codigo_sel in df_cm_estoque["Código"].values:
+                p_info = df_cm_estoque[df_cm_estoque["Código"] == codigo_sel].iloc[0]
+                custo_total_cm = float(p_info.get("total_item_calc", 0.0))
+            
+            dt_receb_str = str(data_receb) if data_receb is not None else None
+            val_venda_fmt = round(float(valor_venda), 2)
+            val_receb_fmt = round(float(valor_recebido), 2)
+            tarifa_fmt = round(float(tarifa_cartao), 2)
+
+            payload_venda = {
+                "codigo_bone": codigo_sel.strip(),
+                "codigo": codigo_sel.strip(),
+                "cliente": cliente.strip(),
+                "qtd": int(qtd_venda),
+                "valor_venda": val_venda_fmt,
+                "valor_recebido": val_receb_fmt,
+                "tarifa_cartao": tarifa_fmt,
+                "forma_pagto": forma_pagto,
+                "data": str(data_venda),
+                "data_venda": str(data_venda),
+                "custo": custo_total_cm,
+                "custo_unitario": custo_total_cm
+            }
+            if dt_receb_str:
+                payload_venda["data_recebimento"] = dt_receb_str
+
+            if safe_insert("vendas", payload_venda):
+                if dt_receb_str and val_receb_fmt > 0:
+                    safe_insert("caixa", {
+                        "data": dt_receb_str,
+                        "desc": f"Venda {codigo_sel.strip()} ({qtd_venda}un) - {cliente.strip()}",
+                        "tipo": "Venda",
+                        "valor": val_receb_fmt
+                    })
+                    
+                st.session_state["flash_success"] = f"🎉 Venda salva com sucesso! Valor Recebido: R$ {val_receb_fmt:,.2f}"
+                st.rerun()
 
     st.markdown("---")
     st.subheader("⏳ Vendas Pendentes de Recebimento")
@@ -1526,7 +1542,7 @@ elif "Vendas" in menu:
 
 elif "Custos" in menu:
     st.subheader("💵 Gerenciamento de Custos e Despesas")
-    sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷️️ Custos de Venda", "🎪 Feiras", "💳 Custos Financeiros"], horizontal=True)
+    sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷 Custos de Venda", "🎪 Feiras", "💳 Custos Financeiros"], horizontal=True)
 
     if "Mercadorias" in sub_tab:
         df_cm = get_df_compra_mercadorias()
