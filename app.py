@@ -174,7 +174,8 @@ def init_db():
             imagem_path TEXT,
             status TEXT,
             valor_estampa_extra REAL DEFAULT 0.0,
-            valor_matriz REAL DEFAULT 0.0
+            valor_matriz REAL DEFAULT 0.0,
+            codigo_produto TEXT
         )
     ''')
     c.execute("PRAGMA table_info(pedidos)")
@@ -183,6 +184,8 @@ def init_db():
         c.execute("ALTER TABLE pedidos ADD COLUMN valor_estampa_extra REAL DEFAULT 0.0")
     if "valor_matriz" not in colunas_pedidos:
         c.execute("ALTER TABLE pedidos ADD COLUMN valor_matriz REAL DEFAULT 0.0")
+    if "codigo_produto" not in colunas_pedidos:
+        c.execute("ALTER TABLE pedidos ADD COLUMN codigo_produto TEXT")
 
     c.execute("UPDATE pedidos SET tipo = 'Básico' WHERE tipo = 'Simples'")
     c.execute('''
@@ -483,7 +486,6 @@ def get_df_compra_mercadorias():
     if df_ped_ent.empty:
         return pd.DataFrame()
     
-    codigo_atual_config = get_ultimo_codigo_config()
     df_ped_ent["preco_num"] = get_numeric_series(df_ped_ent, "preco")
     df_ped_ent["estampa_extra_num"] = get_numeric_series(df_ped_ent, "valor_estampa_extra")
     df_ped_ent["matriz_num"] = get_numeric_series(df_ped_ent, "valor_matriz")
@@ -496,11 +498,17 @@ def get_df_compra_mercadorias():
     
     col_dt = "data_criacao" if "data_criacao" in df_ped_ent.columns else "data"
     
+    # Garantir código único por linha
+    if "codigo_produto" in df_ped_ent.columns:
+        codigos_col = df_ped_ent["codigo_produto"].fillna(get_ultimo_codigo_config())
+    else:
+        codigos_col = get_ultimo_codigo_config()
+
     df_cm = pd.DataFrame({
         "id": df_ped_ent.get("id"),
         "Data_Raw": df_ped_ent.get(col_dt, ""),
         "Data": df_ped_ent[col_dt].apply(format_data_br) if col_dt in df_ped_ent.columns else "",
-        "Código": codigo_atual_config,
+        "Código": codigos_col,
         "Cor do Boné": df_ped_ent.get("cor_bone", ""),
         "Arte Estampada": df_ped_ent.get("frase_arte", ""),
         "Cor da Estampa": df_ped_ent.get("cor_linha", ""),
@@ -936,7 +944,7 @@ elif "Pedidos" in menu:
 
     st.markdown("---")
 
-    df_ped = carregar_dataframe("SELECT id, lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes FROM pedidos ORDER BY id DESC")
+    df_ped = carregar_dataframe("SELECT id, lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes, codigo_produto FROM pedidos ORDER BY id DESC")
 
     if df_ped.empty:
         st.info("Nenhum pedido cadastrado no momento.")
@@ -996,71 +1004,86 @@ elif "Pedidos" in menu:
 
                     st.markdown("##### 🚚 Ações do Pedido (Entregas e Acompanhamento)")
                     
-                    # REQUISITO IMAGEM 1: "Entregue" e botão "Cancelar" lado a lado
+                    # REQUISITO IMAGEM 1 e 2: Seleção múltipla para "Entregue" ou "Cancelar" + Incremento correto de códigos únicos
                     col_e1, col_e2, col_e3 = st.columns([3, 1.5, 1.5])
                     with col_e1:
                         dict_itens_ped = {row["id"]: f"ID #{row['id']} | {row['cor_bone']} - {row['frase_arte']} (Status: {row['status']})" for _, row in df_lote.iterrows()}
-                        id_item_acao = st.selectbox("Selecione o item para alterar o status:", options=list(dict_itens_ped.keys()), format_func=lambda x: dict_itens_ped[x], key=f"sel_entregue_{lote}_{mes}")
+                        ids_itens_acao = st.multiselect(
+                            "Selecione um ou mais itens para alterar o status:", 
+                            options=list(dict_itens_ped.keys()), 
+                            format_func=lambda x: dict_itens_ped[x], 
+                            key=f"msel_entregue_{lote}_{mes}"
+                        )
                     
                     with col_e2:
                         st.markdown("<br>", unsafe_allow_html=True)
                         if st.button("🚚 Entregue", key=f"btn_entregue_{lote}_{mes}", use_container_width=True, type="primary"):
-                            row_alvo = df_lote[df_lote["id"] == id_item_acao].iloc[0]
-                            codigo_base_atual = get_ultimo_codigo_config()
-                            novo_codigo_gerado = gerar_proximo_codigo(codigo_base_atual)
-
-                            dt_aquisicao_item = str(row_alvo.get("data_criacao", datetime.date.today().strftime("%Y-%m-%d")))
-
-                            novo_prod = {
-                                "codigo": novo_codigo_gerado,
-                                "cor": str(row_alvo.get("cor_bone", "")).strip(),
-                                "frase": str(row_alvo.get("frase_arte", "")).strip(),
-                                "cor_estampa": str(row_alvo.get("cor_linha", "")).strip(),
-                                "categoria": str(row_alvo.get("tipo", "Básico")).strip(),
-                                "custo": float(row_alvo.get("preco", 29.0)),
-                                "estampa_extra": float(row_alvo.get("valor_estampa_extra", 0.0)),
-                                "matriz_bordado": float(row_alvo.get("valor_matriz", 0.0)),
-                                "qtd_estoque": 1,
-                                "qtd_comprada": 1,
-                                "data_aquisicao": dt_aquisicao_item
-                            }
-
-                            if safe_upsert_produto(novo_prod):
-                                set_ultimo_codigo_config(novo_codigo_gerado)
+                            if not ids_itens_acao:
+                                st.warning("Selecione ao menos um item!")
+                            else:
+                                codigo_base_atual = get_ultimo_codigo_config()
+                                codigos_gerados = []
                                 
                                 conn = sqlite3.connect(DB_NAME)
                                 c = conn.cursor()
-                                c.execute("UPDATE pedidos SET status = 'Entregue / Retirado' WHERE id = ?", (id_item_acao,))
+
+                                for item_id in ids_itens_acao:
+                                    row_alvo = df_lote[df_lote["id"] == item_id].iloc[0]
+                                    codigo_base_atual = gerar_proximo_codigo(codigo_base_atual)
+                                    codigos_gerados.append(codigo_base_atual)
+
+                                    dt_aquisicao_item = str(row_alvo.get("data_criacao", datetime.date.today().strftime("%Y-%m-%d")))
+
+                                    novo_prod = {
+                                        "codigo": codigo_base_atual,
+                                        "cor": str(row_alvo.get("cor_bone", "")).strip(),
+                                        "frase": str(row_alvo.get("frase_arte", "")).strip(),
+                                        "cor_estampa": str(row_alvo.get("cor_linha", "")).strip(),
+                                        "categoria": str(row_alvo.get("tipo", "Básico")).strip(),
+                                        "custo": float(row_alvo.get("preco", 29.0)),
+                                        "estampa_extra": float(row_alvo.get("valor_estampa_extra", 0.0)),
+                                        "matriz_bordado": float(row_alvo.get("valor_matriz", 0.0)),
+                                        "qtd_estoque": 1,
+                                        "qtd_comprada": 1,
+                                        "data_aquisicao": dt_aquisicao_item
+                                    }
+
+                                    if safe_upsert_produto(novo_prod):
+                                        c.execute("UPDATE pedidos SET status = 'Entregue / Retirado', codigo_produto = ? WHERE id = ?", (codigo_base_atual, item_id))
+                                        if supabase:
+                                            try:
+                                                supabase.table("pedidos").update({"status": "Entregue / Retirado", "codigo_produto": codigo_base_atual}).eq("id", item_id).execute()
+                                            except Exception:
+                                                pass
+
                                 conn.commit()
                                 conn.close()
+                                
+                                set_ultimo_codigo_config(codigo_base_atual)
 
-                                if supabase:
-                                    try:
-                                        supabase.table("pedidos").update({"status": "Entregue / Retirado"}).eq("id", id_item_acao).execute()
-                                    except Exception:
-                                        pass
-
-                                st.session_state["flash_success"] = f"🎉 Item entregue! Cadastrado no Estoque com o código '{novo_codigo_gerado}'!"
+                                st.session_state["flash_success"] = f"🎉 {len(codigos_gerados)} item(ns) entregue(s) com sucesso e cadastrado(s) no estoque (Códigos: {', '.join(codigos_gerados)})!"
                                 st.rerun()
 
                     with col_e3:
                         st.markdown("<br>", unsafe_allow_html=True)
                         if st.button("❌ Cancelar", key=f"btn_cancelar_{lote}_{mes}", use_container_width=True, type="secondary"):
-                            # Regra Imagem 1: Voltar para 'Em Produção' liberando para alteração ou exclusão
-                            conn = sqlite3.connect(DB_NAME)
-                            c = conn.cursor()
-                            c.execute("UPDATE pedidos SET status = 'Em Produção' WHERE id = ?", (id_item_acao,))
-                            conn.commit()
-                            conn.close()
+                            if not ids_itens_acao:
+                                st.warning("Selecione ao menos um item!")
+                            else:
+                                conn = sqlite3.connect(DB_NAME)
+                                c = conn.cursor()
+                                for item_id in ids_itens_acao:
+                                    c.execute("UPDATE pedidos SET status = 'Em Produção' WHERE id = ?", (item_id,))
+                                    if supabase:
+                                        try:
+                                            supabase.table("pedidos").update({"status": "Em Produção"}).eq("id", item_id).execute()
+                                        except Exception:
+                                            pass
+                                conn.commit()
+                                conn.close()
 
-                            if supabase:
-                                try:
-                                    supabase.table("pedidos").update({"status": "Em Produção"}).eq("id", id_item_acao).execute()
-                                except Exception:
-                                    pass
-
-                            st.session_state["flash_success"] = f"🔄 Entrega do item ID #{id_item_acao} cancelada. Item disponível novamente para alteração ou exclusão!"
-                            st.rerun()
+                                st.session_state["flash_success"] = f"🔄 {len(ids_itens_acao)} item(ns) cancelado(s) e retornado(s) para 'Em Produção'!"
+                                st.rerun()
 
 elif "Estoque" in menu:
     st.subheader("📦 Estoque Atual")
@@ -1074,7 +1097,6 @@ elif "Estoque" in menu:
         
         df_est["custo_total_num"] = df_est["preco_num"] + df_est["estampa_extra_num"] + df_est["matriz_num"]
 
-        # REQUISITO IMAGEM 2: Mostrar a quantidade Total em estoque
         qtd_total_estoque = int(df_est["Estoque"].sum())
         st.markdown(f"#### 📊 **Quantidade Total em Estoque:** `{qtd_total_estoque} un`")
 
@@ -1142,7 +1164,7 @@ elif "Estoque" in menu:
 elif "Vendas" in menu:
     st.subheader("🛒 Lançar Nova Venda")
     
-    # Lançar Venda Manual
+    # REQUISITO IMAGEM 3: Restaurado o formulário para realização de Vendas de Forma Individual
     df_cm_estoque = get_df_compra_mercadorias()
     if not df_cm_estoque.empty:
         df_cm_estoque = df_cm_estoque[~df_cm_estoque["Código"].isin(CODIGOS_REMOVER)]
@@ -1163,14 +1185,12 @@ elif "Vendas" in menu:
                 qtd_venda = st.number_input("Quantidade *", min_value=1, max_value=1, value=1, step=1)
                 cliente = st.text_input("Nome do Cliente *")
             with c2:
-                # REQUISITO IMAGEM 4: Renomear "Valor Total" para "Valor de Venda"
                 valor_venda = st.number_input("Valor de Venda (R$) *", min_value=0.0, value=60.0, step=5.0, format="%.2f")
                 forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
             with c3:
                 data_venda = st.date_input("Data da Venda *", datetime.date.today(), format="DD/MM/YYYY")
                 data_receb = st.date_input("Data de Recebimento (Opcional)", value=None, format="DD/MM/YYYY")
 
-            # REQUISITO IMAGEM 4: Campo "Tarifa Cartão" dinâmico e cálculo do "Valor Recebido"
             tarifa_cartao = 0.0
             if forma_pagto == "Cartão":
                 tarifa_cartao = st.number_input("Tarifa Cartão (R$) *", min_value=0.0, value=0.0, step=0.5, format="%.2f")
@@ -1180,7 +1200,7 @@ elif "Vendas" in menu:
 
             st.markdown(f"👉 **Valor Recebido Calculado:** `R$ {valor_recebido:,.2f}`")
 
-            if st.button("🚀 Finalizar Venda", type="primary", use_container_width=True):
+            if st.button("🚀 Finalizar Venda Individual", type="primary", use_container_width=True):
                 if not cliente.strip():
                     st.error("Informe o nome do cliente!")
                 else:
@@ -1210,7 +1230,6 @@ elif "Vendas" in menu:
                         payload_venda["data_recebimento"] = dt_receb_str
 
                     if safe_insert("vendas", payload_venda):
-                        # REQUISITO FLUXO DE CAIXA: Transportar o "Valor Recebido" para a movimentação
                         if dt_receb_str and val_receb_fmt > 0:
                             safe_insert("caixa", {
                                 "data": dt_receb_str,
@@ -1223,48 +1242,6 @@ elif "Vendas" in menu:
                         st.rerun()
     else:
         st.info("Nenhum produto cadastrado no banco de dados. Cadastre primeiro via entregas de pedidos.")
-
-    st.markdown("---")
-    
-    with st.expander("🔄 Registrar Devolução de Mercadoria (Devolução de Venda)", expanded=False):
-        if not df_vendas.empty:
-            opts_vendas_dev = [f"ID #{r['id']} | Código: {r.get('codigo_bone', r.get('codigo',''))} | Cliente: {r.get('cliente','')} (R$ {float(r.get('valor_venda', r.get('valor', 0.0))):,.2f})" for _, r in df_vendas.iterrows()]
-            venda_dev_sel = st.selectbox("Selecione a Venda a Devolver *", opts_vendas_dev)
-            
-            c_dev1, c_dev2 = st.columns(2)
-            with c_dev1:
-                dt_devolucao = st.date_input("Data da Devolução *", datetime.date.today(), format="DD/MM/YYYY")
-            with c_dev2:
-                motivo_devolucao = st.text_input("Motivo da Devolução", value="Cliente solicitou troca/devolução")
-
-            if st.button("🔄 Processar Devolução da Venda", type="primary", use_container_width=True):
-                v_id_dev = int(venda_dev_sel.split("|")[0].replace("ID #", "").strip())
-                match_v = df_vendas[df_vendas["id"] == v_id_dev]
-                if not match_v.empty:
-                    row_v = match_v.iloc[0]
-                    cod_p = str(row_v.get("codigo_bone", row_v.get("codigo", "")))
-                    val_v_dev = float(pd.to_numeric(row_v.get("valor_recebido") or row_v.get("valor_venda") or row_v.get("valor", 0.0), errors="coerce") or 0.0)
-                    cli_dev = str(row_v.get("cliente", ""))
-
-                    safe_insert("devolucoes_vendas", {
-                        "venda_id": v_id_dev,
-                        "codigo": cod_p,
-                        "cliente": cli_dev,
-                        "valor_devolvido": val_v_dev,
-                        "data_devolucao": str(dt_devolucao),
-                        "motivo": motivo_devolucao.strip()
-                    })
-
-                    safe_insert("caixa", {
-                        "data": str(dt_devolucao),
-                        "desc": f"Devolução Venda {cod_p} - Cliente: {cli_dev}",
-                        "tipo": "Devolução de Venda",
-                        "valor": -abs(val_v_dev)
-                    })
-
-                    estornar_estoque(cod_p, int(row_v.get("qtd", 1)))
-                    st.session_state["flash_success"] = f"🎉 Devolução registrada! Produto '{cod_p}' retornado ao estoque e saída no caixa lançada para {format_data_br(dt_devolucao)}."
-                    st.rerun()
 
     st.markdown("---")
     st.subheader("⏳ Vendas Pendentes de Recebimento")
@@ -1339,6 +1316,48 @@ elif "Vendas" in menu:
             st.info("Nenhuma venda pendente de recebimento no momento.")
     else:
         st.info("Nenhuma venda registrada.")
+
+    # REQUISITO IMAGEM 3: Reorganizado para ficar abaixo de "Vendas Pendentes de Recebimento"
+    st.markdown("---")
+    with st.expander("🔄 Registrar Devolução de Mercadoria (Devolução de Venda)", expanded=False):
+        if not df_vendas.empty:
+            opts_vendas_dev = [f"ID #{r['id']} | Código: {r.get('codigo_bone', r.get('codigo',''))} | Cliente: {r.get('cliente','')} (R$ {float(r.get('valor_venda', r.get('valor', 0.0))):,.2f})" for _, r in df_vendas.iterrows()]
+            venda_dev_sel = st.selectbox("Selecione a Venda a Devolver *", opts_vendas_dev)
+            
+            c_dev1, c_dev2 = st.columns(2)
+            with c_dev1:
+                dt_devolucao = st.date_input("Data da Devolução *", datetime.date.today(), format="DD/MM/YYYY")
+            with c_dev2:
+                motivo_devolucao = st.text_input("Motivo da Devolução", value="Cliente solicitou troca/devolução")
+
+            if st.button("🔄 Processar Devolução da Venda", type="primary", use_container_width=True):
+                v_id_dev = int(venda_dev_sel.split("|")[0].replace("ID #", "").strip())
+                match_v = df_vendas[df_vendas["id"] == v_id_dev]
+                if not match_v.empty:
+                    row_v = match_v.iloc[0]
+                    cod_p = str(row_v.get("codigo_bone", row_v.get("codigo", "")))
+                    val_v_dev = float(pd.to_numeric(row_v.get("valor_recebido") or row_v.get("valor_venda") or row_v.get("valor", 0.0), errors="coerce") or 0.0)
+                    cli_dev = str(row_v.get("cliente", ""))
+
+                    safe_insert("devolucoes_vendas", {
+                        "venda_id": v_id_dev,
+                        "codigo": cod_p,
+                        "cliente": cli_dev,
+                        "valor_devolvido": val_v_dev,
+                        "data_devolucao": str(dt_devolucao),
+                        "motivo": motivo_devolucao.strip()
+                    })
+
+                    safe_insert("caixa", {
+                        "data": str(dt_devolucao),
+                        "desc": f"Devolução Venda {cod_p} - Cliente: {cli_dev}",
+                        "tipo": "Devolução de Venda",
+                        "valor": -abs(val_v_dev)
+                    })
+
+                    estornar_estoque(cod_p, int(row_v.get("qtd", 1)))
+                    st.session_state["flash_success"] = f"🎉 Devolução registrada! Produto '{cod_p}' retornado ao estoque e saída no caixa lançada para {format_data_br(dt_devolucao)}."
+                    st.rerun()
 
     st.markdown("---")
     st.subheader("📋 Histórico Detalhado de Vendas")
@@ -1420,7 +1439,6 @@ elif "Vendas" in menu:
                                 st.rerun()
                 st.markdown("<hr style='margin: 4px 0;'>", unsafe_allow_html=True)
 
-    # REQUISITO IMAGEM 3: Realinhar o campo "Importar Vendas", colocar no final da página do menu Vendas
     st.markdown("---")
     with st.expander("📥 Importar Vendas via Planilha (.xlsx / .csv)", expanded=False):
         st.markdown("##### 📌 Modelo de Planilha de Vendas:")
@@ -1491,7 +1509,6 @@ elif "Vendas" in menu:
 
 elif "Custos" in menu:
     st.subheader("💵 Gerenciamento de Custos e Despesas")
-    # REQUISITO IMAGEM 5: Sub-aba chamada Custos Financeiros
     sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷️ Custos de Venda", "🎪 Feiras", "💳 Custos Financeiros"], horizontal=True)
 
     if "Mercadorias" in sub_tab:
@@ -1682,12 +1699,11 @@ elif "Custos" in menu:
                                 st.rerun()
                         st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
             else:
-                st.info("Nenum custo de feira registrado até o momento.")
+                st.info("Nenhum custo de feira registrado até o momento.")
         else:
             st.info("Nenhum custo registrado.")
 
     elif "Financeiros" in sub_tab:
-        # REQUISITO IMAGEM 5: Demonstrativo de Custos Financeiros (Tarifa Cartão trazida do menu Vendas)
         st.markdown("##### 💳 Demonstrativo de Tarifas de Cartão")
         if not df_vendas.empty and "tarifa_cartao" in df_vendas.columns:
             df_v_tarifa = df_vendas[get_numeric_series(df_vendas, "tarifa_cartao") > 0].copy()
@@ -1698,7 +1714,6 @@ elif "Custos" in menu:
                 df_v_tarifa["Valor Venda"] = get_numeric_series(df_v_tarifa, "valor_venda")
                 df_v_tarifa["Tarifa Cartão"] = get_numeric_series(df_v_tarifa, "tarifa_cartao")
                 
-                # Percentual da taxa em função do valor da venda
                 df_v_tarifa["% Taxa"] = df_v_tarifa.apply(
                     lambda r: f"{(r['Tarifa Cartão'] / r['Valor Venda'] * 100):.2f}%" if r["Valor Venda"] > 0 else "0.00%", axis=1
                 )
@@ -1742,7 +1757,7 @@ elif "Caixa" in menu or "Fluxo" in menu:
                     "Valor_Num": -tot_c
                 })
 
-    # 2. Recebimentos das Vendas - REQUISITO FLUXO DE CAIXA: Transportar o campo "Valor Recebido"
+    # 2. Recebimentos das Vendas
     if not df_vendas.empty:
         col_dt_rec = "data_recebimento" if "data_recebimento" in df_vendas.columns else ("data_receb" if "data_receb" in df_vendas.columns else "data")
         for _, r in df_vendas.iterrows():
@@ -2085,7 +2100,7 @@ elif "Configuração" in menu or "Configuracao" in menu:
 
     ult_cod = get_ultimo_codigo_config()
 
-    st.markdown("#### 🏷️️ Sequencial do Código do Boné")
+    st.markdown("#### 🏷 Sequencial do Código do Boné")
     st.info("Esta configuração determina qual foi o último código de boné registrado e serve de base para a criação automática de novos códigos quando um pedido for marcado como **Entregue**.")
 
     c_cfg1, c_cfg2 = st.columns(2)
