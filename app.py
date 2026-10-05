@@ -303,14 +303,14 @@ else:
 st.markdown("<br>", unsafe_allow_html=True)
 
 # 5. Módulos
-# Correção Imagem 1: Cálculo correto do CMV com base nas peças faturadas
+
+# Imagem 2: Renomeado "CMV TOTAL (ITENS VENDIDOS)" para "CMV TOTAL"
 if menu == "📈 Dashboard":
     st.subheader("📈 Dashboard Executivo")
     
     col_v_val = "valor_venda" if "valor_venda" in df_vendas.columns else ("valor" if "valor" in df_vendas.columns else ("valor_total" if "valor_total" in df_vendas.columns else None))
     total_faturado = float(df_vendas[col_v_val].sum()) if not df_vendas.empty and col_v_val else 0.0
     
-    # CMV Total (Soma do custo total das mercadorias efetivamente vendidas)
     total_cmv = 0.0
     if not df_vendas.empty:
         if "custo" in df_vendas.columns:
@@ -338,7 +338,8 @@ if menu == "📈 Dashboard":
     with k1:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
     with k2:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV Total (Itens Vendidos) <span class="tooltip-icon" title="Custo das mercadorias vendidas referente aos itens faturados">ℹ️️</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
+        # Correção Imagem 2: Renomeado para CMV TOTAL
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV TOTAL <span class="tooltip-icon" title="Custo das mercadorias vendidas referente aos itens faturados">ℹ</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
     with k3:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
     with k4:
@@ -622,9 +623,10 @@ elif menu == "🛒 Vendas":
                             st.rerun()
             st.markdown("<hr style='margin: 4px 0;'>", unsafe_allow_html=True)
 
-# Correção Imagem 2: Ajuste na edição de produtos para substituir em vez de somar a quantidade
+# Imagem 1: Bloqueio de exclusão de produtos vendidos
+# Imagem 3: Exibição de Estampa Extra, Matriz Bordado e Custo Total
 elif menu == "🛍️ Compras":
-    st.subheader("🛍️️ Cadastrar Nova Compra de Mercadoria")
+    st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
     
     opcoes_prod = ["➕ [NOVO] Cadastrar Novo Produto"]
     if not df_produtos.empty and "codigo" in df_produtos.columns:
@@ -696,9 +698,8 @@ elif menu == "🛍️ Compras":
                 st.error("Informe o código do produto!")
             else:
                 custo_prod_fmt = round(float(custo_c), 2)
-                valor_compra_total = round(custo_prod_fmt * int(qtd_comprada), 2)
+                valor_compra_total = round((custo_prod_fmt + float(estampa_extra) + float(matriz_bordado)) * int(qtd_comprada), 2)
                 
-                # Correção Imagem 2: Na edição, substitui o valor direto em vez de somar ao estoque anterior
                 novo_estoque_calculado = int(qtd_comprada)
                 qtd_hist_comprada = int(qtd_comprada)
 
@@ -732,12 +733,23 @@ elif menu == "🛍️ Compras":
             if not is_edicao:
                 st.error("Selecione um produto existente para excluir!")
             else:
-                try:
-                    supabase.table("produtos").delete().eq("codigo", cod_c.strip()).execute()
-                    st.session_state["flash_success"] = f"🗑️ Produto {cod_c} excluído com sucesso!"
-                    st.rerun()
-                except Exception as err_del:
-                    st.error(f"Erro ao excluir o produto: {err_del}")
+                # Correção Imagem 1: Bloqueio de exclusão caso haja vendas vinculadas
+                codigo_alvo = cod_c.strip()
+                vendas_relacionadas = False
+                if not df_vendas.empty:
+                    col_c_venda = "codigo_bone" if "codigo_bone" in df_vendas.columns else ("codigo" if "codigo" in df_vendas.columns else "codigo_produto")
+                    if col_c_venda in df_vendas.columns:
+                        vendas_relacionadas = not df_vendas[df_vendas[col_c_venda].astype(str) == codigo_alvo].empty
+
+                if vendas_relacionadas:
+                    st.error(f"⛔ Operação Bloqueada! O produto '{codigo_alvo}' possui vendas registradas no sistema e não pode ser excluído.")
+                else:
+                    try:
+                        supabase.table("produtos").delete().eq("codigo", codigo_alvo).execute()
+                        st.session_state["flash_success"] = f"🗑️ Produto {codigo_alvo} excluído com sucesso!"
+                        st.rerun()
+                    except Exception as err_del:
+                        st.error(f"Erro ao excluir o produto: {err_del}")
 
     st.markdown("---")
     st.subheader("📋 Histórico Permanente de Aquisições")
@@ -745,16 +757,21 @@ elif menu == "🛍️ Compras":
     if not df_produtos.empty:
         df_exib_compras = df_produtos.copy()
         
-        if "custo" in df_exib_compras.columns:
-            df_exib_compras["custo"] = df_exib_compras["custo"].apply(lambda v: f"R$ {float(v):,.2f}")
+        # Correção Imagem 3: Garantir presença e conversão numérica de Custo, Estampa Extra, Matriz Bordado e Custo Total
+        df_exib_compras["custo_num"] = pd.to_numeric(df_exib_compras.get("custo", 0.0), errors="coerce").fillna(0.0)
+        df_exib_compras["estampa_extra_num"] = pd.to_numeric(df_exib_compras.get("estampa_extra", 0.0), errors="coerce").fillna(0.0)
+        df_exib_compras["matriz_bordado_num"] = pd.to_numeric(df_exib_compras.get("matriz_bordado", 0.0), errors="coerce").fillna(0.0)
+        
+        df_exib_compras["custo_total_comp"] = (
+            df_exib_compras["custo_num"] + 
+            df_exib_compras["estampa_extra_num"] + 
+            df_exib_compras["matriz_bordado_num"]
+        )
 
-        has_estampa_ext = "estampa_extra" in df_exib_compras.columns and pd.to_numeric(df_exib_compras["estampa_extra"], errors="coerce").fillna(0).sum() > 0
-        has_matriz_bord = "matriz_bordado" in df_exib_compras.columns and pd.to_numeric(df_exib_compras["matriz_bordado"], errors="coerce").fillna(0).sum() > 0
-
-        if has_estampa_ext:
-            df_exib_compras["Estampa Extra"] = pd.to_numeric(df_exib_compras["estampa_extra"], errors="coerce").fillna(0).apply(lambda v: f"R$ {float(v):,.2f}")
-        if has_matriz_bord:
-            df_exib_compras["Matriz Bordado"] = pd.to_numeric(df_exib_compras["matriz_bordado"], errors="coerce").fillna(0).apply(lambda v: f"R$ {float(v):,.2f}")
+        df_exib_compras["Custo Unitário"] = df_exib_compras["custo_num"].apply(lambda v: f"R$ {float(v):,.2f}")
+        df_exib_compras["Estampa Extra"] = df_exib_compras["estampa_extra_num"].apply(lambda v: f"R$ {float(v):,.2f}")
+        df_exib_compras["Matriz Bordado"] = df_exib_compras["matriz_bordado_num"].apply(lambda v: f"R$ {float(v):,.2f}")
+        df_exib_compras["Custo Total"] = df_exib_compras["custo_total_comp"].apply(lambda v: f"R$ {float(v):,.2f}")
 
         mapa_colunas_compras = {
             "codigo": "Código",
@@ -762,18 +779,19 @@ elif menu == "🛍️ Compras":
             "frase": "Arte Estampada",
             "cor_estampa": "Cor Estampada",
             "categoria": "Produto",
-            "custo": "Custo Unitário",
+            "Custo Unitário": "Custo Unitário",
             "Estampa Extra": "Estampa Extra",
-            "Matriz Bordado": "Matriz Bordado"
+            "Matriz Bordado": "Matriz Bordado",
+            "Custo Total": "Custo Total"
         }
         
-        cols_compras = [col for col in [
-            "codigo", "cor", "frase", "cor_estampa", "categoria", "custo",
-            "Estampa Extra" if has_estampa_ext else None,
-            "Matriz Bordado" if has_matriz_bord else None
-        ] if col is not None and col in df_exib_compras.columns]
+        cols_compras = [
+            "codigo", "cor", "frase", "cor_estampa", "categoria", 
+            "Custo Unitário", "Estampa Extra", "Matriz Bordado", "Custo Total"
+        ]
+        cols_compras_existentes = [c for c in cols_compras if c in df_exib_compras.columns]
         
-        st.dataframe(df_exib_compras[cols_compras].rename(columns=mapa_colunas_compras), use_container_width=True, hide_index=True)
+        st.dataframe(df_exib_compras[cols_compras_existentes].rename(columns=mapa_colunas_compras), use_container_width=True, hide_index=True)
 
 elif menu == "📦 Estoque":
     st.subheader("📦 Estoque Atual")
@@ -845,6 +863,7 @@ elif menu == "📦 Estoque":
     else:
         st.info("Estoque vazio no momento.")
 
+# Imagens 4, 5, 6 e 7: Tabelas e demonstrativos adicionados em Custos de Venda e Feiras
 elif menu == "💵 Custos":
     st.subheader("💵 Gerenciamento de Custos e Despesas")
     sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷️ Custos de Venda", "🎪 Feiras"], horizontal=True)
@@ -919,6 +938,39 @@ elif menu == "💵 Custos":
                 st.session_state["flash_success"] = "Custo de Venda registrado com sucesso!"
                 st.rerun()
 
+        # Correção Imagens 4 e 5: Demonstrativo de Custos de Venda
+        st.markdown("---")
+        st.markdown("##### 📋 Demonstrativo de Custos de Venda Lançados")
+        if not df_custos.empty:
+            df_cv_exib = df_custos[df_custos["subcategoria"].astype(str).str.contains("Venda", case=False, na=False)].copy() if "subcategoria" in df_custos.columns else df_custos.copy()
+            if not df_cv_exib.empty:
+                for idx, row in df_cv_exib.iterrows():
+                    c_id = row.get("id")
+                    c_dt = format_data_br(row.get("data"))
+                    c_tp = row.get("tipo", "")
+                    c_desc = row.get("desc") or row.get("descricao") or ""
+                    c_vl = float(pd.to_numeric(row.get("valor", 0), errors="coerce"))
+
+                    col1, col2, col3, col4, col5 = st.columns([2, 2, 3, 2, 1])
+                    with col1:
+                        st.write(f"**Data:** {c_dt}")
+                    with col2:
+                        st.write(f"**Tipo:** {c_tp}")
+                    with col3:
+                        st.write(f"**Descrição:** {c_desc}")
+                    with col4:
+                        st.write(f"**Valor:** R$ {c_vl:,.2f}")
+                    with col5:
+                        if st.button("🗑 Excluir", key=f"del_cv_{c_id}", use_container_width=True):
+                            supabase.table("custos_avulsos").delete().eq("id", c_id).execute()
+                            st.session_state["flash_success"] = "Custo de venda excluído!"
+                            st.rerun()
+                    st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
+            else:
+                st.info("Nenhum custo de venda registrado até o momento.")
+        else:
+            st.info("Nenhum custo registrado.")
+
     elif sub_tab == "🎪 Feiras":
         with st.form("form_cf"):
             c1, c2, c3 = st.columns(3)
@@ -952,7 +1004,40 @@ elif menu == "💵 Custos":
                 st.session_state["flash_success"] = "Custo de Feira registrado com sucesso!"
                 st.rerun()
 
-# Correção Imagem 4: Devolução de aporte é lançada e calculada como valor negativo (saída)
+        # Correção Imagens 6 e 7: Demonstrativo de Custos de Feiras
+        st.markdown("---")
+        st.markdown("##### 📋 Demonstrativo de Custos de Feiras Lançados")
+        if not df_custos.empty:
+            df_cf_exib = df_custos[df_custos["subcategoria"].astype(str).str.contains("Feira", case=False, na=False)].copy() if "subcategoria" in df_custos.columns else pd.DataFrame()
+            if not df_cf_exib.empty:
+                for idx, row in df_cf_exib.iterrows():
+                    f_id = row.get("id")
+                    f_dt = format_data_br(row.get("data"))
+                    f_tp = row.get("tipo", "")
+                    f_desc = row.get("desc") or row.get("descricao") or ""
+                    f_vl = float(pd.to_numeric(row.get("valor", 0), errors="coerce"))
+
+                    col1, col2, col3, col4, col5 = st.columns([2, 2, 3, 2, 1])
+                    with col1:
+                        st.write(f"**Data:** {f_dt}")
+                    with col2:
+                        st.write(f"**Tipo:** {f_tp}")
+                    with col3:
+                        st.write(f"**Descrição:** {f_desc}")
+                    with col4:
+                        st.write(f"**Valor:** R$ {f_vl:,.2f}")
+                    with col5:
+                        if st.button("🗑 Excluir", key=f"del_cf_{f_id}", use_container_width=True):
+                            supabase.table("custos_avulsos").delete().eq("id", f_id).execute()
+                            st.session_state["flash_success"] = "Custo de feira excluído!"
+                            st.rerun()
+                    st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
+            else:
+                st.info("Nenhum custo de feira registrado até o momento.")
+        else:
+            st.info("Nenhum custo registrado.")
+
+# Imagem 9: Opção de alterar e excluir nos aportes dos sócios
 elif menu == "🤝 Aportes dos Sócios":
     st.subheader("🤝 Registro de Aportes e Devoluções")
     c1, c2, c3 = st.columns(3)
@@ -986,7 +1071,6 @@ elif menu == "🤝 Aportes dos Sócios":
     with col_btn2:
         if st.button("🔄 Devolução de Aporte", use_container_width=True):
             val_ap_fmt = round(float(val_ap), 2)
-            # Correção Imagem 4: Valor registrado como negativo na Devolução
             payload_dev = {
                 "data": str(dt_ap),
                 "socio": socio_ap,
@@ -1041,24 +1125,71 @@ elif menu == "🤝 Aportes dos Sócios":
         st.dataframe(pd.DataFrame(resumo_socios), use_container_width=True, hide_index=True)
 
         st.markdown("##### 📋 Relatório Detalhado de Movimentações de Aportes")
-        df_ap_exib = df_aportes.copy()
         
-        col_dt_ap = "data" if "data" in df_ap_exib.columns else "created_at"
-        df_ap_exib["Data_Formatada"] = df_ap_exib[col_dt_ap].apply(format_data_br) if col_dt_ap in df_ap_exib.columns else ""
-        df_ap_exib["Valor (R$)"] = pd.to_numeric(df_ap_exib.get("valor", 0), errors="coerce").fillna(0.0).apply(lambda v: f"R$ {v:,.2f}")
-        
-        mapa_ap = {
-            "Data_Formatada": "Data",
-            "socio": "Sócio",
-            "tipo": "Operação / Forma",
-            "Valor (R$)": "Valor (R$)"
-        }
-        cols_ap_show = [c for c in ["Data_Formatada", "socio", "tipo", "Valor (R$)"] if c in df_ap_exib.columns]
-        st.dataframe(df_ap_exib[cols_ap_show].rename(columns=mapa_ap), use_container_width=True, hide_index=True)
+        # Correção Imagem 9: Gerenciamento com opções de alterar e excluir nos aportes
+        if "editing_aporte_id" not in st.session_state:
+            st.session_state["editing_aporte_id"] = None
+
+        for idx, row in df_aportes.iterrows():
+            ap_id = row.get("id")
+            ap_dt = format_data_br(row.get("data") or row.get("created_at"))
+            ap_socio = row.get("socio", "")
+            ap_tipo = row.get("tipo", "Aporte")
+            ap_val = float(pd.to_numeric(row.get("valor", 0), errors="coerce"))
+
+            c1, c2, c3, c4, c5, c6 = st.columns([2, 2, 2, 2, 1, 1])
+            with c1:
+                st.write(f"**Data:** {ap_dt}")
+            with c2:
+                st.write(f"**Sócio:** {ap_socio}")
+            with c3:
+                st.write(f"**Operação:** {ap_tipo}")
+            with c4:
+                st.write(f"**Valor:** R$ {abs(ap_val):,.2f}")
+            with c5:
+                if st.button("✏ Alterar", key=f"edit_ap_{ap_id}", use_container_width=True):
+                    st.session_state["editing_aporte_id"] = ap_id
+                    st.rerun()
+            with c6:
+                if st.button("🗑 Excluir", key=f"del_ap_{ap_id}", use_container_width=True):
+                    supabase.table("aportes").delete().eq("id", ap_id).execute()
+                    st.session_state["flash_success"] = f"Aporte/Devolução ID {ap_id} excluído com sucesso!"
+                    st.rerun()
+
+            if st.session_state.get("editing_aporte_id") == ap_id:
+                with st.form(key=f"form_edit_ap_{ap_id}"):
+                    st.markdown(f"##### ✏ Editar Registro ID {ap_id}")
+                    e_col1, e_col2, e_col3 = st.columns(3)
+                    with e_col1:
+                        idx_s = 0 if ap_socio == "Renan" else 1
+                        novo_socio = st.selectbox("Sócio", ["Renan", "Ronald"], index=idx_s)
+                    with e_col2:
+                        idx_t = 0 if "Aporte" in ap_tipo else 1
+                        novo_tipo = st.selectbox("Tipo", ["Aporte", "Devolução"], index=idx_t)
+                    with e_col3:
+                        novo_val = st.number_input("Valor (R$)", min_value=1.0, value=abs(ap_val), format="%.2f")
+
+                    btn_s_ap, btn_c_ap = st.columns(2)
+                    with btn_s_ap:
+                        if st.form_submit_button("💾 Salvar Alterações", use_container_width=True, type="primary"):
+                            val_final = float(novo_val) if novo_tipo == "Aporte" else -float(novo_val)
+                            supabase.table("aportes").update({
+                                "socio": novo_socio,
+                                "tipo": novo_tipo,
+                                "valor": val_final
+                            }).eq("id", ap_id).execute()
+                            st.session_state["editing_aporte_id"] = None
+                            st.session_state["flash_success"] = "Registro de aporte atualizado!"
+                            st.rerun()
+                    with btn_c_ap:
+                        if st.form_submit_button("❌ Cancelar", use_container_width=True):
+                            st.session_state["editing_aporte_id"] = None
+                            st.rerun()
+            st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
     else:
         st.info("Nenhum aporte ou devolução registrado no momento.")
 
-# Correção Imagem 3: Reescrever o menu Fluxo de Caixa trazendo apenas compras agrupadas por dia e com totais
+# Imagem 8: Corrigido e garantido que a data do Aporte apareça corretamente no Fluxo de Caixa
 elif menu == "💰 Fluxo de Caixa":
     st.subheader("💰 Extrato Consolidado de Fluxo de Caixa")
     
@@ -1132,17 +1263,18 @@ elif menu == "💰 Fluxo de Caixa":
                     "Valor_Num": -val_c
                 })
 
-    # 4. Aporte e Devoluções de Sócios
+    # 4. Aporte e Devoluções de Sócios (Correção Imagem 8: Mapeamento rigoroso de data)
     if not df_aportes.empty:
         for _, r in df_aportes.iterrows():
             val_ap = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce"))
             tipo_ap = str(r.get("tipo", "Aporte"))
             socio = r.get("socio", "")
+            dt_ap_raw = r.get("data") or r.get("created_at") or r.get("data_aporte")
             if val_ap != 0:
                 is_entrada = val_ap > 0
                 lista_movimentos.append({
-                    "Data_Val": str(r.get("data")),
-                    "Data": format_data_br(r.get("data")),
+                    "Data_Val": str(dt_ap_raw),
+                    "Data": format_data_br(dt_ap_raw),
                     "Origem": "🤝 Aporte dos Sócios",
                     "Descrição": f"{tipo_ap} ({socio})",
                     "Tipo": "Entrada 🟢" if is_entrada else "Saída 🔴",
@@ -1152,7 +1284,6 @@ elif menu == "💰 Fluxo de Caixa":
     if lista_movimentos:
         df_extrato = pd.DataFrame(lista_movimentos)
         
-        # Conversão estrita e sanitização para ordenação correta das datas sem falhar no Pandas
         df_extrato["Data_Raw"] = pd.to_datetime(df_extrato["Data_Val"], errors="coerce")
         df_extrato["Data_Raw"] = df_extrato["Data_Raw"].fillna(pd.Timestamp("1970-01-01"))
         
@@ -1167,11 +1298,64 @@ elif menu == "💰 Fluxo de Caixa":
     else:
         st.info("Nenhuma movimentação registrada no fluxo de caixa.")
 
+# Imagem 10: Adicionados modelos de planilhas de importação de Compras e Vendas
 elif menu == "📥 Importação":
     st.subheader("📥 Importação de Dados em Lote")
     st.markdown("Selecione o tipo de dado que deseja importar e envie o arquivo Excel (.xlsx) ou CSV (.csv).")
 
     tipo_import = st.selectbox("Escolha o destino dos dados *", ["🛍️ Compras (Produtos)", "🛒 Vendas"])
+
+    # Correção Imagem 10: Modelos demonstrativos para download das estruturas aceitas
+    with st.expander("📌 Baixar Modelos de Planilha para Importação", expanded=True):
+        st.markdown("Utilize os modelos abaixo para garantir que os arquivos estejam com as colunas corretas antes do envio:")
+        c_mod1, c_mod2 = st.columns(2)
+        with c_mod1:
+            df_modelo_compras = pd.DataFrame([{
+                "codigo": "BL-0001",
+                "cor": "Preto",
+                "frase": "Vista o que voce pensa",
+                "cor_estampa": "Branco",
+                "categoria": "Básico",
+                "custo": 29.00,
+                "estampa_extra": 0.00,
+                "matriz_bordado": 0.00,
+                "qtd_estoque": 10,
+                "data_aquisicao": "2026-10-04"
+            }])
+            output_c = io.BytesIO()
+            with pd.ExcelWriter(output_c, engine='openpyxl') as writer:
+                df_modelo_compras.to_excel(writer, index=False, sheet_name="Modelo_Compras")
+            st.download_button(
+                "📥 Baixar Modelo de Compras (.xlsx)",
+                data=output_c.getvalue(),
+                file_name="Modelo_Importacao_Compras.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+        with c_mod2:
+            df_modelo_vendas = pd.DataFrame([{
+                "codigo_bone": "BL-0001",
+                "cliente": "João Silva",
+                "qtd": 2,
+                "valor_venda": 120.00,
+                "forma_pagto": "PIX",
+                "data": "2026-10-04",
+                "data_recebimento": "2026-10-04",
+                "custo": 58.00
+            }])
+            output_v = io.BytesIO()
+            with pd.ExcelWriter(output_v, engine='openpyxl') as writer:
+                df_modelo_vendas.to_excel(writer, index=False, sheet_name="Modelo_Vendas")
+            st.download_button(
+                "📥 Baixar Modelo de Vendas (.xlsx)",
+                data=output_v.getvalue(),
+                file_name="Modelo_Importacao_Vendas.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+    st.markdown("---")
     file_imp = st.file_uploader("Carregar planilha (.xlsx ou .csv)", type=["xlsx", "csv"])
 
     if file_imp is not None:
@@ -1186,7 +1370,7 @@ elif menu == "📥 Importação":
 
             if st.button("🚀 Confirmar e Importar para o Banco de Dados", type="primary", use_container_width=True):
                 registros = df_imp.to_dict(orient="records")
-                if tipo_import == "🛍️️ Compras (Produtos)":
+                if tipo_import == "🛍️ Compras (Produtos)":
                     supabase.table("produtos").upsert(registros, on_conflict="codigo").execute()
                 else:
                     supabase.table("vendas").insert(registros).execute()
