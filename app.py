@@ -1268,7 +1268,11 @@ elif "Vendas" in menu:
                     supabase.table("vendas").update({col_dt_rec: str(dt_confirmada)}).eq("id", venda_id).execute()
                     
                     c_cod = "codigo_bone" if "codigo_bone" in row_v else ("codigo" if "codigo" in row_v else "codigo_produto")
-                    val_rec_fmt = round(float(row_v.get("valor_recebido") or row_v.get(c_val_p, 0.0)), 2)
+                    
+                    # CORREÇÃO: Garante o cálculo do valor líquido (valor_venda - tarifa_cartao)
+                    val_bruto = float(pd.to_numeric(row_v.get(c_val_p, 0.0), errors="coerce") or 0.0)
+                    tarifa_val = float(pd.to_numeric(row_v.get("tarifa_cartao", 0.0), errors="coerce") or 0.0)
+                    val_rec_fmt = round(max(0.0, val_bruto - tarifa_val), 2)
                     
                     if val_rec_fmt > 0:
                         safe_insert("caixa", {
@@ -1404,7 +1408,7 @@ elif "Vendas" in menu:
                         st.session_state["editing_venda_id"] = v_id
                         st.rerun()
                 with c_linha_unica[8]:
-                    if st.button("🗑️️", key=f"btn_del_row_{v_id}_{mes}", use_container_width=True):
+                    if st.button("🗑", key=f"btn_del_row_{v_id}_{mes}", use_container_width=True):
                         cod_prod_e = row.get("codigo_bone") or row.get("codigo") or row.get("codigo_produto")
                         qtd_venda_e = int(row.get("qtd") or row.get("quantidade") or 1)
                         estornar_estoque(cod_prod_e, qtd_venda_e)
@@ -1787,17 +1791,23 @@ elif "Caixa" in menu or "Fluxo" in menu:
                     "Valor_Num": -tot_c
                 })
 
-    # 2. Recebimentos das Vendas (ALTERADO: Usa o valor recebido calculado -> valor_venda - tarifa_cartao)
+    # 2. Recebimentos das Vendas (CORRIGIDO: Cálculo explícito e forçado do valor líquido recebido)
     if not df_vendas.empty:
         col_dt_rec = "data_recebimento" if "data_recebimento" in df_vendas.columns else ("data_receb" if "data_receb" in df_vendas.columns else "data")
         for _, r in df_vendas.iterrows():
             dt_v = r.get(col_dt_rec) or r.get("data")
             
-            # Cálculo dinâmico do valor recebido líquido
-            v_venda = float(pd.to_numeric(r.get("valor_venda") or r.get("valor") or 0.0, errors="coerce") or 0.0)
-            v_tarifa = float(pd.to_numeric(r.get("tarifa_cartao", 0.0), errors="coerce") or 0.0)
-            val_v_calc = max(0.0, v_venda - v_tarifa)
+            # Obtém valor de venda e tarifa com tratamento seguro para string/float
+            val_venda_num = parse_money(r.get("valor_venda") or r.get("valor") or 0.0)
+            tarifa_num = parse_money(r.get("tarifa_cartao", 0.0))
             
+            # Tenta pegar valor_recebido preexistente caso válido; do contrário calcula na hora
+            val_rec_bd = r.get("valor_recebido")
+            if val_rec_bd is not None and str(val_rec_bd).strip() not in ["", "None", "nan"]:
+                val_v_calc = parse_money(val_rec_bd)
+            else:
+                val_v_calc = max(0.0, val_venda_num - tarifa_num)
+
             cli = r.get("cliente") or r.get("nome_cliente") or ""
             cod = r.get("codigo_bone") or r.get("codigo") or ""
             if val_v_calc > 0:
