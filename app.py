@@ -192,6 +192,14 @@ def init_db():
         )
     ''')
     c.execute("UPDATE pedidos SET status = 'Em Produção' WHERE status = 'Pendente'")
+    
+    # Tabela local de configurações caso não haja Supabase
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS configuracoes (
+            chave TEXT PRIMARY KEY,
+            valor_b64 TEXT
+        )
+    ''')
     conn.commit()
     conn.close()
 
@@ -366,39 +374,64 @@ def delete_logo_from_db():
     except Exception as e:
         st.error(f"Erro ao remover logo: {e}")
 
-# Auxiliares de Configuração de Código do Boné
+# Auxiliares de Configuração do "Último Item Cadastrado no Estoque"
 def get_ultimo_codigo_config():
-    if not supabase:
-        return "BL-0001"
+    if supabase:
+        try:
+            res = supabase.table("configuracoes").select("valor_b64").eq("chave", "ultimo_codigo_bone").execute()
+            if res.data and len(res.data) > 0:
+                val = res.data[0].get("valor_b64")
+                if val:
+                    return str(val).strip()
+        except Exception:
+            pass
     try:
-        res = supabase.table("configuracoes").select("valor_b64").eq("chave", "ultimo_codigo_bone").execute()
-        if res.data and len(res.data) > 0:
-            return res.data[0].get("valor_b64") or "BL-0001"
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("SELECT valor_b64 FROM configuracoes WHERE chave = 'ultimo_codigo_bone'")
+        row = c.fetchone()
+        conn.close()
+        if row and row[0]:
+            return str(row[0]).strip()
     except Exception:
         pass
     return "BL-0001"
 
 def set_ultimo_codigo_config(novo_codigo):
-    if not supabase:
-        return False
+    novo_codigo = str(novo_codigo).strip()
+    if supabase:
+        try:
+            supabase.table("configuracoes").upsert(
+                {"chave": "ultimo_codigo_bone", "valor_b64": novo_codigo},
+                on_conflict="chave"
+            ).execute()
+        except Exception as e:
+            st.error(f"Erro ao salvar configuração do código no Supabase: {e}")
     try:
-        supabase.table("configuracoes").upsert(
-            {"chave": "ultimo_codigo_bone", "valor_b64": novo_codigo},
-            on_conflict="chave"
-        ).execute()
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO configuracoes (chave, valor_b64) VALUES ('ultimo_codigo_bone', ?)", (novo_codigo,))
+        conn.commit()
+        conn.close()
         return True
     except Exception as e:
-        st.error(f"Erro ao salvar configuração do código: {e}")
+        st.error(f"Erro ao salvar configuração do código localmente: {e}")
         return False
 
 def gerar_proximo_codigo(codigo_atual):
+    codigo_atual = str(codigo_atual).strip()
+    import re
     try:
-        if "-" in codigo_atual:
-            prefixo, num_str = codigo_atual.split("-", 1)
+        match = re.search(r'^(.*?)[-_]?(\d+)$', codigo_atual)
+        if match:
+            prefixo = match.group(1)
+            num_str = match.group(2)
             proximo_num = int(num_str) + 1
-            return f"{prefixo}-{proximo_num:04d}"
+            tam_num = len(num_str)
+            sep = "-" if "-" in codigo_atual else ("_" if "_" in codigo_atual else "")
+            return f"{prefixo}{sep}{proximo_num:0{tam_num}d}" if sep else f"{prefixo}{proximo_num:0{tam_num}d}"
         else:
-            return f"BL-{int(codigo_atual)+1:04d}"
+            return f"{codigo_atual}-0001"
     except Exception:
         return "BL-0002"
 
@@ -427,7 +460,7 @@ with st.sidebar:
     st.markdown("### 📌 Módulos do Sistema")
     menu = st.radio(
         "Navegue entre os módulos:",
-        ["📈 Dashboard", "📦 Pedidos", "🛍️ Compras", "📦 Estoque", "🛒 Vendas", "💵 Custos", "💰 Fluxo de Caixa", "🤝 Aportes dos Sócios", "📥 Importação", "💾 Gestão de Dados", "⚙️ Configuração"],
+        ["📈 Dashboard", "📦 Pedidos", "🛍️️ Compras", "📦 Estoque", "🛒 Vendas", "💵 Custos", "💰 Fluxo de Caixa", "🤝 Aportes dos Sócios", "📥 Importação", "💾 Gestão de Dados", "⚙️ Configuração"],
         label_visibility="collapsed"
     )
 
@@ -564,7 +597,7 @@ if menu == "📈 Dashboard":
 elif menu == "📦 Pedidos":
     st.subheader("📦 Gerenciamento de Pedidos e Encomendas")
 
-    # --- NOVO: Botão de Importação de Planilha de Pedidos ---
+    # Botão de Importação de Planilha de Pedidos
     with st.expander("📥 Importar Novo Pedido via Planilha (.xlsx / .csv)", expanded=False):
         uploaded_ped_file = st.file_uploader("Carregar planilha de pedido (ex: Pedido_#3.10-2026.xlsx)", type=["xlsx", "csv"], key="uploader_pedidos_excel")
         if uploaded_ped_file is not None:
@@ -642,7 +675,6 @@ elif menu == "📦 Pedidos":
             total_qtd = len(df_lote)
             total_valor = df_lote['total_item'].sum()
             
-            # Formatação da data para utilizar como agrupador no título do pedido
             data_lote_raw = df_lote['data_criacao'].iloc[0] if not df_lote.empty else ""
             data_lote_fmt = format_data_br(data_lote_raw)
             
@@ -690,15 +722,19 @@ elif menu == "📦 Pedidos":
                     st.markdown("<br>", unsafe_allow_html=True)
                     if st.button("🚚 Marcar como Entregue", key=f"btn_entregue_{lote}", use_container_width=True, type="primary"):
                         row_alvo = df_lote[df_lote["id"] == id_entregue].iloc[0]
+                        
+                        # Realiza a consulta do último item cadastrado na configuração
                         codigo_base_atual = get_ultimo_codigo_config()
+                        # Cria o próximo número sequencial
                         novo_codigo_gerado = gerar_proximo_codigo(codigo_base_atual)
 
+                        # Transporta todas as informações exigidas no cadastro de novo produto em Compras/Estoque
                         novo_prod = {
                             "codigo": novo_codigo_gerado,
-                            "cor": str(row_alvo.get("cor_bone", "")),
-                            "frase": str(row_alvo.get("frase_arte", "")),
-                            "cor_estampa": str(row_alvo.get("cor_linha", "")),
-                            "categoria": str(row_alvo.get("tipo", "Básico")),
+                            "cor": str(row_alvo.get("cor_bone", "")).strip(),
+                            "frase": str(row_alvo.get("frase_arte", "")).strip(),
+                            "cor_estampa": str(row_alvo.get("cor_linha", "")).strip(),
+                            "categoria": str(row_alvo.get("tipo", "Básico")).strip(),
                             "custo": float(row_alvo.get("preco", 29.0)),
                             "estampa_extra": float(row_alvo.get("valor_estampa_extra", 0.0)),
                             "matriz_bordado": float(row_alvo.get("valor_matriz", 0.0)),
@@ -708,14 +744,23 @@ elif menu == "📦 Pedidos":
                         }
 
                         if safe_upsert_produto(novo_prod):
+                            # Atualiza a configuração para o novo código gerado
                             set_ultimo_codigo_config(novo_codigo_gerado)
+                            
+                            # Atualiza o status do pedido
                             conn = sqlite3.connect(DB_NAME)
                             c = conn.cursor()
                             c.execute("UPDATE pedidos SET status = 'Entregue / Retirado' WHERE id = ?", (id_entregue,))
                             conn.commit()
                             conn.close()
 
-                            st.session_state["flash_success"] = f"🎉 Item entregue! Produto cadastrado no estoque com o código '{novo_codigo_gerado}'!"
+                            if supabase:
+                                try:
+                                    supabase.table("pedidos").update({"status": "Entregue / Retirado"}).eq("id", id_entregue).execute()
+                                except Exception:
+                                    pass
+
+                            st.session_state["flash_success"] = f"🎉 Item entregue! Produto cadastrado em Compras/Estoque com o novo código '{novo_codigo_gerado}'!"
                             st.rerun()
 
 elif menu in ["🛍️ Compras", "🛍 Compras"]:
@@ -1314,7 +1359,7 @@ elif menu == "💵 Custos":
                             st.rerun()
                     st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
             else:
-                st.info("Nenum custo de venda registrado até o momento.")
+                st.info("Nenhum custo de venda registrado até o momento.")
         else:
             st.info("Nenhum custo registrado.")
 
@@ -1599,7 +1644,7 @@ elif menu == "💰 Fluxo de Caixa":
                 lista_movimentos.append({
                     "Data_Val": dt_c,
                     "Data": format_data_br(dt_c),
-                    "Origem": "🛍️️ Módulo Compras",
+                    "Origem": "🛍️ Módulo Compras",
                     "Descrição": f"Compra Agrupada ({tot_qtd} itens adquiridos)",
                     "Tipo": "Saída 🔴",
                     "Valor_Num": -tot_c
@@ -1629,7 +1674,7 @@ elif menu == "💰 Fluxo de Caixa":
             val_c = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
             sub_c = str(r.get("subcategoria", "Custos"))
             desc_c = r.get("desc") or r.get("descricao") or "Despesa Avulsa"
-            origem_tag = "🏷️ Custos de Venda" if "venda" in sub_c.lower() else ("🎪 Custos de Feiras" if "feira" in sub_c.lower() else f"💵 Custos ({sub_c})")
+            origem_tag = "🏷️️ Custos de Venda" if "venda" in sub_c.lower() else ("🎪 Custos de Feiras" if "feira" in sub_c.lower() else f"💵 Custos ({sub_c})")
             if val_c > 0:
                 lista_movimentos.append({
                     "Data_Val": str(r.get("data")),
@@ -1837,7 +1882,11 @@ elif menu == "⚙ Configuração":
 
     c_cfg1, c_cfg2 = st.columns(2)
     with c_cfg1:
-        novo_cod_input = st.text_input("Último Código Cadastrado *", value=ult_cod, help="Exemplo de formato padrão: BL-0001, BL-0002")
+        novo_cod_input = st.text_input(
+            "Último Item Cadastrado no Estoque *", 
+            value=ult_cod, 
+            help="Campo alfanumérico com o formato do último produto (exemplo: BL-0001)"
+        )
     
     with c_cfg2:
         prox_sugerido = gerar_proximo_codigo(novo_cod_input.strip())
@@ -1846,8 +1895,8 @@ elif menu == "⚙ Configuração":
 
     if st.button("💾 Salvar Parâmetros de Configuração", type="primary", use_container_width=True):
         if not novo_cod_input.strip():
-            st.error("Informe um código válido!")
+            st.error("Informe um código alfanumérico válido!")
         else:
             set_ultimo_codigo_config(novo_cod_input.strip())
-            st.session_state["flash_success"] = f"🎉 Configuração atualizada! O último código definido é '{novo_cod_input.strip()}'."
+            st.session_state["flash_success"] = f"🎉 Configuração atualizada! O 'Último Item Cadastrado no Estoque' é '{novo_cod_input.strip()}'."
             st.rerun()
