@@ -109,6 +109,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Cache em sessão para guardar despesas extras (estampa extra e matriz) por código
+if "extra_costs_cache" not in st.session_state:
+    st.session_state["extra_costs_cache"] = {}
+
+# Cache em sessão para gravações locais de custos avulsos quando a tabela não existir no Supabase
+if "custos_avulsos_local" not in st.session_state:
+    st.session_state["custos_avulsos_local"] = []
+
 # Função auxiliar para formatar datas no padrão brasileiro DD/MM/AAAA
 def format_data_br(val):
     if not val or pd.isna(val) or str(val).strip().lower() in ["none", "nat", "nan", ""]:
@@ -157,6 +165,13 @@ def safe_insert(table_name: str, payload: dict):
         return True
     except Exception as err:
         err_str = str(err)
+        # Se a tabela custos_avulsos não existir no schema do Supabase, guarda fallback em memória/caixa
+        if "PGRST205" in err_str or "custos_avulsos" in err_str:
+            if table_name == "custos_avulsos":
+                payload_copy = payload.copy()
+                payload_copy["id"] = len(st.session_state["custos_avulsos_local"]) + 1000
+                st.session_state["custos_avulsos_local"].append(payload_copy)
+                return True
         if "Could not find the '" in err_str and "' column" in err_str:
             col_err = err_str.split("Could not find the '")[1].split("' column")[0]
             if col_err in payload:
@@ -168,23 +183,33 @@ def safe_insert(table_name: str, payload: dict):
 def safe_upsert_produto(payload: dict):
     if not supabase:
         return False
+
+    cod = payload.get("codigo")
+    if cod:
+        st.session_state["extra_costs_cache"][cod] = {
+            "estampa_extra": payload.get("estampa_extra", 0.0),
+            "matriz_bordado": payload.get("matriz_bordado", 0.0),
+            "data_aquisicao": payload.get("data_aquisicao", "")
+        }
+
+    payload_db = payload.copy()
+    
     try:
-        supabase.table("produtos").upsert(payload, on_conflict="codigo").execute()
+        supabase.table("produtos").upsert(payload_db, on_conflict="codigo").execute()
         return True
     except Exception as err:
         err_str = str(err)
-        # Trata ausência de colunas no schema cache do Supabase
         if "Could not find the '" in err_str and "' column" in err_str:
             col_err = err_str.split("Could not find the '")[1].split("' column")[0]
-            if col_err in payload:
-                del payload[col_err]
-                return safe_upsert_produto(payload)
+            if col_err in payload_db:
+                del payload_db[col_err]
+                return safe_upsert_produto(payload_db)
         elif "PGRST204" in err_str or "PGRST205" in err_str or "schema cache" in err_str:
             for col_opt in ["estampa_extra", "matriz_bordado", "data_aquisicao", "qtd_comprada"]:
-                if col_opt in err_str and col_opt in payload:
-                    del payload[col_opt]
+                if col_opt in payload_db:
+                    del payload_db[col_opt]
             try:
-                supabase.table("produtos").upsert(payload, on_conflict="codigo").execute()
+                supabase.table("produtos").upsert(payload_db, on_conflict="codigo").execute()
                 return True
             except Exception as inner_err:
                 st.error(f"Erro ao salvar produto: {inner_err}")
@@ -250,6 +275,13 @@ df_caixa = fetch_data("caixa")
 df_aportes = fetch_data("aportes")
 df_custos = fetch_data("custos_avulsos")
 
+# Mescla custos_avulsos do banco com salvamento local se houver
+if not st.session_state["custos_avulsos_local"]:
+    pass
+else:
+    df_custos_loc = pd.DataFrame(st.session_state["custos_avulsos_local"])
+    df_custos = pd.concat([df_custos, df_custos_loc], ignore_index=True) if not df_custos.empty else df_custos_loc
+
 if "flash_success" in st.session_state and st.session_state["flash_success"]:
     st.success(st.session_state["flash_success"])
     st.session_state["flash_success"] = None
@@ -262,7 +294,7 @@ with st.sidebar:
     st.markdown("### 📌 Módulos do Sistema")
     menu = st.radio(
         "Navegue entre os módulos:",
-        ["📈 Dashboard", "🛍️ Compras", "📦 Estoque", "🛒 Vendas", "💵 Custos", "💰 Fluxo de Caixa", "🤝 Aportes dos Sócios", "📥 Importação", "💾 Gestão de Dados"],
+        ["📈 Dashboard", "🛍️️ Compras", "📦 Estoque", "🛒 Vendas", "💵 Custos", "💰 Fluxo de Caixa", "🤝 Aportes dos Sócios", "📥 Importação", "💾 Gestão de Dados"],
         label_visibility="collapsed"
     )
 
@@ -426,10 +458,16 @@ elif menu in ["🛍️ Compras", "🛍 Compras"]:
     col_qtd_nome = "qtd_estoque" if "qtd_estoque" in df_produtos.columns else ("qtd" if "qtd" in df_produtos.columns else "estoque")
     qtd_atual_item = int(pd.to_numeric(dados_item.get(col_qtd_nome, 1), errors="coerce") or 1) if is_edicao else 1
 
+    cod_cur = str(dados_item.get("codigo", ""))
+    cache_extras = st.session_state["extra_costs_cache"].get(cod_cur, {})
+
+    val_e_extra_init = float(dados_item.get("estampa_extra") or cache_extras.get("estampa_extra", 0.0))
+    val_m_bord_init = float(dados_item.get("matriz_bordado") or cache_extras.get("matriz_bordado", 0.0))
+
     with st.form("form_compra"):
         c1, c2, c3 = st.columns(3)
         with c1:
-            cod_c = st.text_input("Código (ex: BL-0001) *", value=str(dados_item.get("codigo", "")), disabled=is_edicao)
+            cod_c = st.text_input("Código (ex: BL-0001) *", value=cod_cur, disabled=is_edicao)
             cor_c = st.text_input("Cor do Boné *", value=str(dados_item.get("cor", "")))
         with c2:
             frase_c = st.text_input("Arte Estampada *", value=str(dados_item.get("frase", "")))
@@ -443,9 +481,9 @@ elif menu in ["🛍️ Compras", "🛍 Compras"]:
 
         c_extra1, c_extra2 = st.columns(2)
         with c_extra1:
-            estampa_extra = st.number_input("Estampa Extra (R$)", min_value=0.0, value=float(dados_item.get("estampa_extra", 0.0)), format="%.2f")
+            estampa_extra = st.number_input("Estampa Extra (R$)", min_value=0.0, value=val_e_extra_init, format="%.2f")
         with c_extra2:
-            matriz_bordado = st.number_input("Matriz Bordado (R$)", min_value=0.0, value=float(dados_item.get("matriz_bordado", 0.0)), format="%.2f")
+            matriz_bordado = st.number_input("Matriz Bordado (R$)", min_value=0.0, value=val_m_bord_init, format="%.2f")
 
         c4_1, c4_2 = st.columns(2)
         with c4_1:
@@ -529,8 +567,14 @@ elif menu in ["🛍️ Compras", "🛍 Compras"]:
         df_exib_compras = df_produtos.copy()
         
         df_exib_compras["custo_num"] = get_numeric_series(df_exib_compras, "custo")
-        df_exib_compras["estampa_extra_num"] = get_numeric_series(df_exib_compras, "estampa_extra")
-        df_exib_compras["matriz_bordado_num"] = get_numeric_series(df_exib_compras, "matriz_bordado")
+        
+        # Garante a recuperação dos custos de estampa_extra e matriz_bordado localmente se omitidos no DB
+        df_exib_compras["estampa_extra_num"] = df_exib_compras.apply(
+            lambda r: float(r.get("estampa_extra") or st.session_state["extra_costs_cache"].get(str(r.get("codigo")), {}).get("estampa_extra", 0.0)), axis=1
+        )
+        df_exib_compras["matriz_bordado_num"] = df_exib_compras.apply(
+            lambda r: float(r.get("matriz_bordado") or st.session_state["extra_costs_cache"].get(str(r.get("codigo")), {}).get("matriz_bordado", 0.0)), axis=1
+        )
         
         col_q_compra = "qtd_comprada" if "qtd_comprada" in df_exib_compras.columns else ("qtd_estoque" if "qtd_estoque" in df_exib_compras.columns else "qtd")
         df_exib_compras["qtd_num"] = get_numeric_series(df_exib_compras, col_q_compra, 1.0)
@@ -664,8 +708,10 @@ elif menu == "🛒 Vendas":
                     else:
                         p_info = df_produtos[df_produtos["codigo"] == codigo_sel].iloc[0]
                         custo_base = float(pd.to_numeric(p_info.get("custo", 0.0), errors="coerce") or 0.0)
-                        estampa_ex = float(pd.to_numeric(p_info.get("estampa_extra", 0.0), errors="coerce") or 0.0)
-                        matriz_b = float(pd.to_numeric(p_info.get("matriz_bordado", 0.0), errors="coerce") or 0.0)
+                        
+                        cache_ex = st.session_state["extra_costs_cache"].get(codigo_sel, {})
+                        estampa_ex = float(p_info.get("estampa_extra") or cache_ex.get("estampa_extra", 0.0))
+                        matriz_b = float(p_info.get("matriz_bordado") or cache_ex.get("matriz_bordado", 0.0))
                         
                         custo_unit_composto = custo_base + estampa_ex + matriz_b
                         dt_receb_str = str(data_receb) if data_receb is not None else None
@@ -870,8 +916,12 @@ elif menu == "💵 Custos":
             col_data_aq = "data_aquisicao" if "data_aquisicao" in df_m.columns else "created_at"
 
             df_m["custo_num"] = get_numeric_series(df_m, col_custo)
-            df_m["estampa_extra_num"] = get_numeric_series(df_m, "estampa_extra")
-            df_m["matriz_bordado_num"] = get_numeric_series(df_m, "matriz_bordado")
+            df_m["estampa_extra_num"] = df_m.apply(
+                lambda r: float(r.get("estampa_extra") or st.session_state["extra_costs_cache"].get(str(r.get("codigo")), {}).get("estampa_extra", 0.0)), axis=1
+            )
+            df_m["matriz_bordado_num"] = df_m.apply(
+                lambda r: float(r.get("matriz_bordado") or st.session_state["extra_costs_cache"].get(str(r.get("codigo")), {}).get("matriz_bordado", 0.0)), axis=1
+            )
             
             col_qtd_ref = "qtd_comprada" if "qtd_comprada" in df_m.columns else ("qtd_estoque" if "qtd_estoque" in df_m.columns else "qtd")
             df_m["qtd_num"] = get_numeric_series(df_m, col_qtd_ref, 1.0)
@@ -934,11 +984,9 @@ elif menu == "💵 Custos":
         st.markdown("---")
         st.markdown("##### 📋 Demonstrativo de Custos de Venda Lançados")
         
-        df_custos_atual = fetch_data("custos_avulsos")
-        
-        if not df_custos_atual.empty:
-            subcat_col = df_custos_atual.get("subcategoria", pd.Series([""] * len(df_custos_atual))).fillna("").astype(str)
-            df_cv_exib = df_custos_atual[subcat_col.str.contains("venda", case=False, na=False)].copy()
+        if not df_custos.empty:
+            subcat_col = df_custos.get("subcategoria", pd.Series([""] * len(df_custos))).fillna("").astype(str)
+            df_cv_exib = df_custos[subcat_col.str.contains("venda", case=False, na=False)].copy()
             
             if not df_cv_exib.empty:
                 for idx, row in df_cv_exib.iterrows():
@@ -959,7 +1007,12 @@ elif menu == "💵 Custos":
                         st.write(f"**Valor:** R$ {c_vl:,.2f}")
                     with col5:
                         if st.button("🗑 Excluir", key=f"del_cv_{c_id}", use_container_width=True):
-                            supabase.table("custos_avulsos").delete().eq("id", c_id).execute()
+                            if supabase:
+                                try:
+                                    supabase.table("custos_avulsos").delete().eq("id", c_id).execute()
+                                except Exception:
+                                    pass
+                            st.session_state["custos_avulsos_local"] = [item for item in st.session_state["custos_avulsos_local"] if item.get("id") != c_id]
                             st.session_state["flash_success"] = "Custo de venda excluído!"
                             st.rerun()
                     st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
@@ -1004,11 +1057,9 @@ elif menu == "💵 Custos":
         st.markdown("---")
         st.markdown("##### 📋 Demonstrativo de Custos de Feiras Lançados")
         
-        df_custos_atual = fetch_data("custos_avulsos")
-        
-        if not df_custos_atual.empty:
-            subcat_col = df_custos_atual.get("subcategoria", pd.Series([""] * len(df_custos_atual))).fillna("").astype(str)
-            df_cf_exib = df_custos_atual[subcat_col.str.contains("feira", case=False, na=False)].copy()
+        if not df_custos.empty:
+            subcat_col = df_custos.get("subcategoria", pd.Series([""] * len(df_custos))).fillna("").astype(str)
+            df_cf_exib = df_custos[subcat_col.str.contains("feira", case=False, na=False)].copy()
             
             if not df_cf_exib.empty:
                 for idx, row in df_cf_exib.iterrows():
@@ -1029,12 +1080,17 @@ elif menu == "💵 Custos":
                         st.write(f"**Valor:** R$ {f_vl:,.2f}")
                     with col5:
                         if st.button("🗑 Excluir", key=f"del_cf_{f_id}", use_container_width=True):
-                            supabase.table("custos_avulsos").delete().eq("id", f_id).execute()
+                            if supabase:
+                                try:
+                                    supabase.table("custos_avulsos").delete().eq("id", f_id).execute()
+                                except Exception:
+                                    pass
+                            st.session_state["custos_avulsos_local"] = [item for item in st.session_state["custos_avulsos_local"] if item.get("id") != f_id]
                             st.session_state["flash_success"] = "Custo de feira excluído!"
                             st.rerun()
                     st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
             else:
-                st.info("Nenhum custo de feira registrado até o momento.")
+                st.info("Nenum custo de feira registrado até o momento.")
         else:
             st.info("Nenhum custo registrado.")
 
@@ -1207,8 +1263,13 @@ elif menu == "💰 Fluxo de Caixa":
         df_p_compra["data_str"] = df_p_compra[col_dt_compra].astype(str).str.slice(0, 10) if col_dt_compra in df_p_compra.columns else ""
         
         custo_b = get_numeric_series(df_p_compra, "custo")
-        est_ex = get_numeric_series(df_p_compra, "estampa_extra")
-        mat_bd = get_numeric_series(df_p_compra, "matriz_bordado")
+        
+        est_ex = df_p_compra.apply(
+            lambda r: float(r.get("estampa_extra") or st.session_state["extra_costs_cache"].get(str(r.get("codigo")), {}).get("estampa_extra", 0.0)), axis=1
+        )
+        mat_bd = df_p_compra.apply(
+            lambda r: float(r.get("matriz_bordado") or st.session_state["extra_costs_cache"].get(str(r.get("codigo")), {}).get("matriz_bordado", 0.0)), axis=1
+        )
         
         df_p_compra["custo_composto_unit"] = custo_b + est_ex + mat_bd
         
@@ -1261,7 +1322,7 @@ elif menu == "💰 Fluxo de Caixa":
             val_c = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
             sub_c = str(r.get("subcategoria", "Custos"))
             desc_c = r.get("desc") or r.get("descricao") or "Despesa Avulsa"
-            origem_tag = "🏷️️ Custos de Venda" if "venda" in sub_c.lower() else ("🎪 Custos de Feiras" if "feira" in sub_c.lower() else f"💵 Custos ({sub_c})")
+            origem_tag = "🏷️ Custos de Venda" if "venda" in sub_c.lower() else ("🎪 Custos de Feiras" if "feira" in sub_c.lower() else f"💵 Custos ({sub_c})")
             if val_c > 0:
                 lista_movimentos.append({
                     "Data_Val": str(r.get("data")),
