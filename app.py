@@ -435,6 +435,43 @@ def gerar_proximo_codigo(codigo_atual):
     except Exception:
         return "BL-0002"
 
+# Função auxiliar para centralizar os dados do menu Compra de Mercadorias (Pedidos Entregues)
+def get_df_compra_mercadorias():
+    df_ped_ent = carregar_dataframe(
+        "SELECT * FROM pedidos WHERE status LIKE '%Entregue%' ORDER BY id DESC"
+    )
+    if df_ped_ent.empty:
+        return pd.DataFrame()
+    
+    codigo_atual_config = get_ultimo_codigo_config()
+    df_ped_ent["preco_num"] = get_numeric_series(df_ped_ent, "preco")
+    df_ped_ent["estampa_extra_num"] = get_numeric_series(df_ped_ent, "valor_estampa_extra")
+    df_ped_ent["matriz_num"] = get_numeric_series(df_ped_ent, "valor_matriz")
+    
+    df_ped_ent["total_item_calc"] = (
+        df_ped_ent["preco_num"] +
+        df_ped_ent["estampa_extra_num"] +
+        df_ped_ent["matriz_num"]
+    )
+    
+    col_dt = "data_criacao" if "data_criacao" in df_ped_ent.columns else "data"
+    
+    df_cm = pd.DataFrame({
+        "id": df_ped_ent.get("id"),
+        "Data_Raw": df_ped_ent.get(col_dt, ""),
+        "Data": df_ped_ent[col_dt].apply(format_data_br) if col_dt in df_ped_ent.columns else "",
+        "Código": codigo_atual_config,
+        "Cor do Boné": df_ped_ent.get("cor_bone", ""),
+        "Arte Estampada": df_ped_ent.get("frase_arte", ""),
+        "Cor da Estampa": df_ped_ent.get("cor_linha", ""),
+        "Produto": df_ped_ent.get("tipo", ""),
+        "preco_num": df_ped_ent["preco_num"],
+        "estampa_extra_num": df_ped_ent["estampa_extra_num"],
+        "matriz_num": df_ped_ent["matriz_num"],
+        "total_item_calc": df_ped_ent["total_item_calc"]
+    })
+    return df_cm
+
 # Carregar tabelas do Supabase
 df_produtos = fetch_data("produtos")
 df_vendas = fetch_data("vendas")
@@ -460,7 +497,7 @@ with st.sidebar:
     st.markdown("### 📌 Módulos do Sistema")
     menu = st.radio(
         "Navegue entre os módulos:",
-        ["📈 Dashboard", "📦 Pedidos", "🛍️ Compra de Mercadorias", "🛍️ Compras", "📦 Estoque", "🛒 Vendas", "💵 Custos", "💰 Fluxo de Caixa", "🤝 Aportes dos Sócios", "📥 Importação", "💾 Gestão de Dados", "⚙️ Configuração"],
+        ["📈 Dashboard", "📦 Pedidos", "🛍️ Compra de Mercadorias", "📦 Estoque", "🛒 Vendas", "💵 Custos", "💰 Fluxo de Caixa", "🤝 Aportes dos Sócios", "📥 Importação", "💾 Gestão de Dados", "⚙️ Configuração"],
         label_visibility="collapsed"
     )
 
@@ -597,35 +634,22 @@ if "Dashboard" in menu:
 elif "Compra de Mercadorias" in menu:
     st.subheader("🛍️ Relatório de Compra de Mercadorias")
     
-    df_pedidos_entregues = carregar_dataframe(
-        "SELECT * FROM pedidos WHERE status LIKE '%Entregue%' ORDER BY id DESC"
-    )
+    df_cm = get_df_compra_mercadorias()
 
-    if df_pedidos_entregues.empty:
+    if df_cm.empty:
         st.info("Nenhum pedido entregue disponível para o relatório de compra de mercadorias.")
     else:
-        codigo_atual_config = get_ultimo_codigo_config()
-        
-        df_pedidos_entregues["preco_num"] = get_numeric_series(df_pedidos_entregues, "preco")
-        df_pedidos_entregues["estampa_extra_num"] = get_numeric_series(df_pedidos_entregues, "valor_estampa_extra")
-        df_pedidos_entregues["matriz_num"] = get_numeric_series(df_pedidos_entregues, "valor_matriz")
-        
-        df_pedidos_entregues["total_item_calc"] = (
-            df_pedidos_entregues["preco_num"] +
-            df_pedidos_entregues["estampa_extra_num"] +
-            df_pedidos_entregues["matriz_num"]
-        )
-
         df_relatorio = pd.DataFrame({
-            "Código": codigo_atual_config,
-            "Cor do Boné": df_pedidos_entregues.get("cor_bone", ""),
-            "Arte Estampada": df_pedidos_entregues.get("frase_arte", ""),
-            "Cor da Estampa": df_pedidos_entregues.get("cor_linha", ""),
-            "Produto": df_pedidos_entregues.get("tipo", ""),
-            "Preço Base": df_pedidos_entregues["preco_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
-            "Estampa Extra": df_pedidos_entregues["estampa_extra_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
-            "Matriz Bordado": df_pedidos_entregues["matriz_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
-            "Total Item": df_pedidos_entregues["total_item_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
+            "Data": df_cm["Data"],
+            "Código": df_cm["Código"],
+            "Cor do Boné": df_cm["Cor do Boné"],
+            "Arte Estampada": df_cm["Arte Estampada"],
+            "Cor da Estampa": df_cm["Cor da Estampa"],
+            "Produto": df_cm["Produto"],
+            "Preço Base": df_cm["preco_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
+            "Estampa Extra": df_cm["estampa_extra_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
+            "Matriz Bordado": df_cm["matriz_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
+            "Total Item": df_cm["total_item_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
         })
 
         st.dataframe(df_relatorio, use_container_width=True, hide_index=True)
@@ -659,7 +683,7 @@ elif "Pedidos" in menu:
         if item_ped_sel and not item_ped_sel.startswith("➕"):
             is_edit_ped = True
             try:
-                id_ped_edit = int(item_ped_sel.split("]")[0].replace("✏️ [ID #", "").strip())
+                id_ped_edit = int(item_ped_sel.split("]")[0].replace("✏️️ [ID #", "").strip())
                 match_p = df_todos_pedidos[df_todos_pedidos["id"] == id_ped_edit]
                 if not match_p.empty:
                     dados_p_edit = match_p.iloc[0].to_dict()
@@ -921,7 +945,9 @@ elif "Pedidos" in menu:
                         # Cria o próximo número sequencial
                         novo_codigo_gerado = gerar_proximo_codigo(codigo_base_atual)
 
-                        # Transporta todas as informações exigidas no cadastro de novo produto em Compras/Estoque
+                        dt_aquisicao_item = str(row_alvo.get("data_criacao", datetime.date.today().strftime("%Y-%m-%d")))
+
+                        # Transporta todas as informações exigidas no cadastro de novo produto no Estoque
                         novo_prod = {
                             "codigo": novo_codigo_gerado,
                             "cor": str(row_alvo.get("cor_bone", "")).strip(),
@@ -933,7 +959,7 @@ elif "Pedidos" in menu:
                             "matriz_bordado": float(row_alvo.get("valor_matriz", 0.0)),
                             "qtd_estoque": 1,
                             "qtd_comprada": 1,
-                            "data_aquisicao": datetime.date.today().strftime("%Y-%m-%d")
+                            "data_aquisicao": dt_aquisicao_item
                         }
 
                         if safe_upsert_produto(novo_prod):
@@ -953,124 +979,63 @@ elif "Pedidos" in menu:
                                 except Exception:
                                     pass
 
-                            st.session_state["flash_success"] = f"🎉 Item entregue! Produto cadastrado em Compras/Estoque com o novo código '{novo_codigo_gerado}'!"
+                            st.session_state["flash_success"] = f"🎉 Item entregue! Produto cadastrado no Estoque com o novo código '{novo_codigo_gerado}'!"
                             st.rerun()
-
-elif "Compras" in menu:
-    st.subheader("🛍 Aquisições de Mercadorias")
-    
-    if not df_produtos.empty:
-        df_exib_compras = df_produtos.copy()
-        
-        df_exib_compras["custo_num"] = get_numeric_series(df_exib_compras, "custo")
-        df_exib_compras["estampa_extra_num"] = df_exib_compras.apply(
-            lambda r: float(r.get("estampa_extra") or st.session_state["extra_costs_cache"].get(str(r.get("codigo")), {}).get("estampa_extra", 0.0)), axis=1
-        )
-        df_exib_compras["matriz_bordado_num"] = df_exib_compras.apply(
-            lambda r: float(r.get("matriz_bordado") or st.session_state["extra_costs_cache"].get(str(r.get("codigo")), {}).get("matriz_bordado", 0.0)), axis=1
-        )
-        
-        col_q_compra = "qtd_comprada" if "qtd_comprada" in df_exib_compras.columns else ("qtd_estoque" if "qtd_estoque" in df_exib_compras.columns else "qtd")
-        df_exib_compras["qtd_num"] = get_numeric_series(df_exib_compras, col_q_compra, 1.0)
-        
-        df_exib_compras["custo_unitario_composto"] = (
-            df_exib_compras["custo_num"] + 
-            df_exib_compras["estampa_extra_num"] + 
-            df_exib_compras["matriz_bordado_num"]
-        )
-        df_exib_compras["custo_total_comp"] = df_exib_compras["custo_unitario_composto"] * df_exib_compras["qtd_num"]
-
-        df_exib_compras["Custo Base"] = df_exib_compras["custo_num"].apply(lambda v: f"R$ {float(v):,.2f}")
-        df_exib_compras["Estampa Extra"] = df_exib_compras["estampa_extra_num"].apply(lambda v: f"R$ {float(v):,.2f}")
-        df_exib_compras["Matriz Bordado"] = df_exib_compras["matriz_bordado_num"].apply(lambda v: f"R$ {float(v):,.2f}")
-        df_exib_compras["Custo Unitario Total"] = df_exib_compras["custo_unitario_composto"].apply(lambda v: f"R$ {float(v):,.2f}")
-        df_exib_compras["Custo Total Compra"] = df_exib_compras["custo_total_comp"].apply(lambda v: f"R$ {float(v):,.2f}")
-
-        mapa_colunas_compras = {
-            "codigo": "Código",
-            "cor": "Cor do Boné",
-            "frase": "Arte Estampada",
-            "cor_estampa": "Cor Estampada",
-            "categoria": "Produto",
-            "Custo Base": "Custo Base",
-            "Estampa Extra": "Estampa Extra",
-            "Matriz Bordado": "Matriz Bordado",
-            "Custo Unitario Total": "Custo Unit. Total",
-            "Custo Total Compra": "Custo Total Lote"
-        }
-        
-        cols_compras = [
-            "codigo", "cor", "frase", "cor_estampa", "categoria", 
-            "Custo Base", "Estampa Extra", "Matriz Bordado", "Custo Unitario Total", "Custo Total Compra"
-        ]
-        cols_compras_existentes = [c for c in cols_compras if c in df_exib_compras.columns]
-        
-        st.dataframe(df_exib_compras[cols_compras_existentes].rename(columns=mapa_colunas_compras), use_container_width=True, hide_index=True)
-    else:
-        st.info("Nenhuma aquisição de mercadoria registrada até o momento.")
 
 elif "Estoque" in menu:
     st.subheader("📦 Estoque Atual")
     
-    if not df_produtos.empty:
-        df_est = df_produtos.copy()
-        col_qtd_est = "qtd_estoque" if "qtd_estoque" in df_est.columns else ("qtd" if "qtd" in df_est.columns else "estoque")
-        
-        qtds_est_num = get_numeric_series(df_est, col_qtd_est)
-        df_est["Status"] = qtds_est_num.apply(lambda val: "Disponível" if val > 0 else "Esgotado")
+    # Preenchimento das colunas do Estoque Atual via menu "Compra de Mercadorias" (Pedidos Entregues)
+    df_cm = get_df_compra_mercadorias()
+    
+    if not df_cm.empty:
+        df_est = df_cm.copy()
+        df_est["Estoque"] = 1
+        df_est["Status"] = "Disponível"
         
         with st.expander("🔍 Consultar e Pesquisar no Estoque", expanded=True):
             c_f1, c_f2, c_f3 = st.columns(3)
             with c_f1:
                 busca_texto = st.text_input("Pesquisar por Código ou Arte:")
             with c_f2:
-                cat_unicas = ["Todas"] + sorted(list(df_est["categoria"].dropna().unique())) if "categoria" in df_est.columns else ["Todas"]
+                cat_unicas = ["Todas"] + sorted(list(df_est["Produto"].dropna().unique()))
                 filtro_cat = st.selectbox("Filtrar por Produto/Categoria:", cat_unicas)
             with c_f3:
-                cor_unicas = ["Todas"] + sorted(list(df_est["cor"].dropna().unique())) if "cor" in df_est.columns else ["Todas"]
+                cor_unicas = ["Todas"] + sorted(list(df_est["Cor do Boné"].dropna().unique()))
                 filtro_cor = st.selectbox("Filtrar por Cor do Boné:", cor_unicas)
 
             df_est_filtrado = df_est.copy()
             if busca_texto:
                 df_est_filtrado = df_est_filtrado[
-                    df_est_filtrado["codigo"].astype(str).str.contains(busca_texto, case=False, na=False) |
-                    df_est_filtrado.get("frase", pd.Series([""]*len(df_est_filtrado))).astype(str).str.contains(busca_texto, case=False, na=False)
+                    df_est_filtrado["Código"].astype(str).str.contains(busca_texto, case=False, na=False) |
+                    df_est_filtrado["Arte Estampada"].astype(str).str.contains(busca_texto, case=False, na=False)
                 ]
-            if filtro_cat != "Todas" and "categoria" in df_est_filtrado.columns:
-                df_est_filtrado = df_est_filtrado[df_est_filtrado["categoria"] == filtro_cat]
-            if filtro_cor != "Todas" and "cor" in df_est_filtrado.columns:
-                df_est_filtrado = df_est_filtrado[df_est_filtrado["cor"] == filtro_cor]
+            if filtro_cat != "Todas":
+                df_est_filtrado = df_est_filtrado[df_est_filtrado["Produto"] == filtro_cat]
+            if filtro_cor != "Todas":
+                df_est_filtrado = df_est_filtrado[df_est_filtrado["Cor do Boné"] == filtro_cor]
 
-        df_est_filtrado["estampa_extra_num"] = df_est_filtrado.apply(
-            lambda r: float(r.get("estampa_extra") or st.session_state["extra_costs_cache"].get(str(r.get("codigo")), {}).get("estampa_extra", 0.0)), axis=1
-        )
-        df_est_filtrado["matriz_bordado_num"] = df_est_filtrado.apply(
-            lambda r: float(r.get("matriz_bordado") or st.session_state["extra_costs_cache"].get(str(r.get("codigo")), {}).get("matriz_bordado", 0.0)), axis=1
-        )
-
-        if "custo" in df_est_filtrado.columns:
-            df_est_filtrado["custo"] = get_numeric_series(df_est_filtrado, "custo").apply(lambda v: f"R$ {float(v):,.2f}")
-
+        df_est_filtrado["Custo Base"] = df_est_filtrado["preco_num"].apply(lambda v: f"R$ {float(v):,.2f}")
         df_est_filtrado["Estampa Extra"] = df_est_filtrado["estampa_extra_num"].apply(lambda v: f"R$ {float(v):,.2f}")
-        df_est_filtrado["Matriz Bordado"] = df_est_filtrado["matriz_bordado_num"].apply(lambda v: f"R$ {float(v):,.2f}")
+        df_est_filtrado["Matriz Bordado"] = df_est_filtrado["matriz_num"].apply(lambda v: f"R$ {float(v):,.2f}")
 
         mapa_colunas_est = {
-            "codigo": "Código",
-            "cor": "Cor do Boné",
-            "frase": "Arte Estampada",
-            "cor_estampa": "Cor Estampada",
-            "categoria": "Produto",
-            "custo": "Custo Base",
+            "Código": "Código",
+            "Cor do Boné": "Cor do Boné",
+            "Arte Estampada": "Arte Estampada",
+            "Cor da Estampa": "Cor Estampada",
+            "Produto": "Produto",
+            "Custo Base": "Custo Base",
             "Estampa Extra": "Estampa Extra",
             "Matriz Bordado": "Matriz Bordado",
-            col_qtd_est: "Estoque",
+            "Estoque": "Estoque",
             "Status": "Status"
         }
         
-        cols_est = [col for col in [
-            "codigo", "cor", "frase", "cor_estampa", "categoria", "custo", 
-            "Estampa Extra", "Matriz Bordado", col_qtd_est, "Status"
-        ] if col in df_est_filtrado.columns]
+        cols_est = [
+            "Código", "Cor do Boné", "Arte Estampada", "Cor da Estampa", "Produto", 
+            "Custo Base", "Estampa Extra", "Matriz Bordado", "Estoque", "Status"
+        ]
 
         st.dataframe(df_est_filtrado[cols_est].rename(columns=mapa_colunas_est), use_container_width=True, hide_index=True)
     else:
@@ -1242,7 +1207,7 @@ elif "Vendas" in menu:
         col_val = "valor_venda" if "valor_venda" in df_v_exib.columns else "valor"
         col_pag = "forma_pagto" if "forma_pagto" in df_v_exib.columns else "pagto"
 
-        st.markdown("##### ⚙️️ Vendas Cadastradas")
+        st.markdown("##### ⚙ Vendas Cadastradas")
         
         if "editing_venda_id" not in st.session_state:
             st.session_state["editing_venda_id"] = None
@@ -1315,44 +1280,33 @@ elif "Custos" in menu:
     sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷️ Custos de Venda", "🎪 Feiras"], horizontal=True)
 
     if "Mercadorias" in sub_tab:
-        if not df_produtos.empty:
-            df_m = df_produtos.copy()
-            col_custo = "custo" if "custo" in df_m.columns else "custo_unitario"
-            col_data_aq = "data_aquisicao" if "data_aquisicao" in df_m.columns else "created_at"
+        # Transporte de dados do menu Compra de Mercadorias para o registro individual de compras
+        df_cm = get_df_compra_mercadorias()
 
-            df_m["custo_num"] = get_numeric_series(df_m, col_custo)
-            df_m["estampa_extra_num"] = df_m.apply(
-                lambda r: float(r.get("estampa_extra") or st.session_state["extra_costs_cache"].get(str(r.get("codigo")), {}).get("estampa_extra", 0.0)), axis=1
-            )
-            df_m["matriz_bordado_num"] = df_m.apply(
-                lambda r: float(r.get("matriz_bordado") or st.session_state["extra_costs_cache"].get(str(r.get("codigo")), {}).get("matriz_bordado", 0.0)), axis=1
-            )
-            
-            col_qtd_ref = "qtd_comprada" if "qtd_comprada" in df_m.columns else ("qtd_estoque" if "qtd_estoque" in df_m.columns else "qtd")
-            df_m["qtd_num"] = get_numeric_series(df_m, col_qtd_ref, 1.0)
-            
-            df_m["custo_composto_unitario"] = df_m["custo_num"] + df_m["estampa_extra_num"] + df_m["matriz_bordado_num"]
-            df_m["Custo Total Calc"] = df_m["custo_composto_unitario"] * df_m["qtd_num"]
-            df_m["Data_Formatada"] = df_m[col_data_aq].apply(format_data_br) if col_data_aq in df_m.columns else ""
+        if not df_cm.empty:
+            df_m = df_cm.copy()
+            df_m["qtd_num"] = 1
 
             st.markdown("##### 📊 Resumo Agrupado por Data da Aquisição")
-            agrup_data = df_m.groupby("Data_Formatada").agg({
+            agrup_data = df_m.groupby("Data").agg({
                 "qtd_num": "sum",
-                "Custo Total Calc": "sum"
-            }).reset_index().rename(columns={"Data_Formatada": "Data da Aquisição", "qtd_num": "Quantidade Comprada"})
+                "total_item_calc": "sum"
+            }).reset_index().rename(columns={"Data": "Data da Aquisição", "qtd_num": "Quantidade Comprada"})
 
-            agrup_data["Custo Total"] = agrup_data["Custo Total Calc"].apply(lambda v: f"R$ {float(v):,.2f}")
+            agrup_data["Custo Total"] = agrup_data["total_item_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
             st.dataframe(agrup_data[["Data da Aquisição", "Quantidade Comprada", "Custo Total"]], use_container_width=True, hide_index=True)
 
             with st.expander("🔍 Visualizar Registros Individuais de Compras", expanded=False):
-                df_m["Custo Base"] = df_m["custo_num"].apply(lambda v: f"R$ {float(v):,.2f}")
+                df_m["Custo Base"] = df_m["preco_num"].apply(lambda v: f"R$ {float(v):,.2f}")
                 df_m["Estampa Extra"] = df_m["estampa_extra_num"].apply(lambda v: f"R$ {float(v):,.2f}")
-                df_m["Matriz Bordado"] = df_m["matriz_bordado_num"].apply(lambda v: f"R$ {float(v):,.2f}")
-                df_m["Custo Unit. Total"] = df_m["custo_composto_unitario"].apply(lambda v: f"R$ {float(v):,.2f}")
-                df_m["Custo Total"] = df_m["Custo Total Calc"].apply(lambda v: f"R$ {float(v):,.2f}")
+                df_m["Matriz Bordado"] = df_m["matriz_num"].apply(lambda v: f"R$ {float(v):,.2f}")
+                df_m["Custo Unit. Total"] = df_m["total_item_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
+                df_m["Custo Total"] = df_m["total_item_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
                 
-                cols_ind = [c for c in ["codigo", "categoria", "Custo Base", "Estampa Extra", "Matriz Bordado", "Custo Unit. Total", "Custo Total", "Data_Formatada"] if c in df_m.columns]
+                cols_ind = ["Código", "Produto", "Custo Base", "Estampa Extra", "Matriz Bordado", "Custo Unit. Total", "Custo Total", "Data"]
                 st.dataframe(df_m[cols_ind], use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhuma aquisição de mercadoria registrada no momento.")
 
     elif "Venda" in sub_tab:
         with st.form("form_cv"):
@@ -1504,36 +1458,17 @@ elif "Caixa" in menu or "Fluxo" in menu:
     
     lista_movimentos = []
 
-    # 1. Compras do Módulo de Compras
-    if not df_produtos.empty:
-        df_p_compra = df_produtos.copy()
-        col_dt_compra = "data_aquisicao" if "data_aquisicao" in df_p_compra.columns else "created_at"
+    # 1. Compras do Módulo Compra de Mercadorias (Agrupadas por dia conforme a data do item)
+    df_cm = get_df_compra_mercadorias()
+    if not df_cm.empty:
+        df_cm["data_str"] = df_cm["Data_Raw"].astype(str).str.slice(0, 10)
         
-        df_p_compra["data_str"] = df_p_compra[col_dt_compra].astype(str).str.slice(0, 10) if col_dt_compra in df_p_compra.columns else ""
-        
-        custo_b = get_numeric_series(df_p_compra, "custo")
-        
-        est_ex = df_p_compra.apply(
-            lambda r: float(r.get("estampa_extra") or st.session_state["extra_costs_cache"].get(str(r.get("codigo")), {}).get("estampa_extra", 0.0)), axis=1
-        )
-        mat_bd = df_p_compra.apply(
-            lambda r: float(r.get("matriz_bordado") or st.session_state["extra_costs_cache"].get(str(r.get("codigo")), {}).get("matriz_bordado", 0.0)), axis=1
-        )
-        
-        df_p_compra["custo_composto_unit"] = custo_b + est_ex + mat_bd
-        
-        col_q = "qtd_comprada" if "qtd_comprada" in df_p_compra.columns else ("qtd_estoque" if "qtd_estoque" in df_p_compra.columns else "qtd")
-        df_p_compra["qtd_num"] = get_numeric_series(df_p_compra, col_q, 1.0)
-        df_p_compra["qtd_num"] = df_p_compra["qtd_num"].apply(lambda v: max(1, int(v)))
-        
-        df_p_compra["custo_total_item"] = df_p_compra["custo_composto_unit"] * df_p_compra["qtd_num"]
-        
-        agrup_compras = df_p_compra.groupby("data_str").agg(
-            total_custo=("custo_total_item", "sum"),
-            total_qtd=("qtd_num", "sum")
+        agrup_cm = df_cm.groupby("data_str").agg(
+            total_custo=("total_item_calc", "sum"),
+            total_qtd=("id", "count")
         ).reset_index()
         
-        for _, r in agrup_compras.iterrows():
+        for _, r in agrup_cm.iterrows():
             dt_c = r["data_str"]
             tot_c = float(r["total_custo"])
             tot_qtd = int(r["total_qtd"])
@@ -1541,7 +1476,7 @@ elif "Caixa" in menu or "Fluxo" in menu:
                 lista_movimentos.append({
                     "Data_Val": dt_c,
                     "Data": format_data_br(dt_c),
-                    "Origem": "🛍️ Módulo Compras",
+                    "Origem": "🛍️ Compra de Mercadorias",
                     "Descrição": f"Compra Agrupada ({tot_qtd} itens adquiridos)",
                     "Tipo": "Saída 🔴",
                     "Valor_Num": -tot_c
@@ -1940,7 +1875,7 @@ elif "Configuração" in menu or "Configuracao" in menu:
 
     ult_cod = get_ultimo_codigo_config()
 
-    st.markdown("#### 🏷️️ Sequencial do Código do Boné")
+    st.markdown("#### 🏷️ Sequencial do Código do Boné")
     st.info("Esta configuração determina qual foi o último código de boné registrado e serve de base para a criação automática de novos códigos quando um pedido for marcado como **Entregue**.")
 
     c_cfg1, c_cfg2 = st.columns(2)
