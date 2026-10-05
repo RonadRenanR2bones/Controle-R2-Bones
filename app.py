@@ -275,11 +275,11 @@ with st.sidebar:
                 
                 if save_logo_to_db(data_url):
                     st.session_state["current_logo"] = data_url
-                    st.success("Logo fixa salva e applied!")
+                    st.success("Logo fixa salva e aplicada!")
                     st.rerun()
 
         if st.session_state.get("current_logo") is not None:
-            if st.button("🗑️️ Excluir Logo Atual", use_container_width=True, type="secondary"):
+            if st.button("🗑 Excluir Logo Atual", use_container_width=True, type="secondary"):
                 delete_logo_from_db()
                 st.session_state["current_logo"] = None
                 st.success("Logo removida permanentemente!")
@@ -388,8 +388,7 @@ if menu == "📈 Dashboard":
         else:
             st.info("Nenhuma venda registrada.")
 
-# Módulo de Compras (Tratado com compatibilidade exata de nome de menu "🛍️ Compras")
-elif menu == "🛍️️ Compras":
+elif menu in ["🛍️ Compras", "🛍 Compras"]:
     st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
     
     opcoes_prod = ["➕ [NOVO] Cadastrar Novo Produto"]
