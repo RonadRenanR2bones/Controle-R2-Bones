@@ -8,7 +8,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from supabase import Client, create_client
-from sqlalchemy import create_engine, text
 
 # 1. Configuração da Página do Streamlit
 st.set_page_config(
@@ -124,7 +123,7 @@ if "extra_costs_cache" not in st.session_state:
 if "custos_avulsos_local" not in st.session_state:
     st.session_state["custos_avulsos_local"] = []
 
-# Configurações do Banco de Pedidos (SQLite / PostgreSQL)
+# Configurações do Banco de Pedidos (SQLite / PostgreSQL SDK)
 DB_NAME = "ordens_producao.db"
 UPLOADS_DIR = "uploads"
 COMPROVANTES_DIR = "comprovantes"
@@ -135,100 +134,66 @@ if not os.path.exists(UPLOADS_DIR):
 if not os.path.exists(COMPROVANTES_DIR):
     os.makedirs(COMPROVANTES_DIR)
 
-# Conexão híbrida: Supabase (PostgreSQL) via Secrets ou SQLite local
+# 2. Inicialização do Cliente Supabase
 @st.cache_resource
-def get_db_engine():
-    if "postgres" in st.secrets and "url" in st.secrets["postgres"]:
-        db_url = st.secrets["postgres"]["url"]
-        return create_engine(db_url), "postgres"
-    else:
-        return None, "sqlite"
+def init_supabase() -> Client:
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_KEY"]
+        return create_client(url, key)
+    except Exception:
+        return None
 
-engine, db_type = get_db_engine()
+supabase = init_supabase()
 
 def carregar_dataframe(query, params=None):
-    if db_type == "postgres":
-        with engine.connect() as conn:
-            return pd.read_sql_query(text(query), conn, params=params)
-    else:
-        conn = sqlite3.connect(DB_NAME)
-        df = pd.read_sql_query(query, conn, params=params)
-        conn.close()
-        return df
+    conn = sqlite3.connect(DB_NAME)
+    df = pd.read_sql_query(query, conn, params=params)
+    conn.close()
+    return df
 
 def init_db():
-    if db_type == "postgres":
-        with engine.begin() as conn:
-            conn.execute(text('''
-                CREATE TABLE IF NOT EXISTS pedidos (
-                    id SERIAL PRIMARY KEY,
-                    lote_id TEXT,
-                    data_criacao TEXT,
-                    cor_bone TEXT,
-                    frase_arte TEXT,
-                    cor_linha TEXT,
-                    tipo TEXT,
-                    preco REAL,
-                    observacoes TEXT,
-                    imagem_path TEXT,
-                    status TEXT,
-                    valor_estampa_extra REAL DEFAULT 0.0,
-                    valor_matriz REAL DEFAULT 0.0
-                );
-            '''))
-            conn.execute(text('''
-                CREATE TABLE IF NOT EXISTS pagamentos (
-                    id SERIAL PRIMARY KEY,
-                    lote_id TEXT,
-                    data_pagamento TEXT,
-                    valor_pago REAL,
-                    forma_pagamento TEXT,
-                    observacoes TEXT,
-                    comprovante_path TEXT
-                );
-            '''))
-    else:
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS pedidos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                lote_id TEXT,
-                data_criacao TEXT,
-                cor_bone TEXT,
-                frase_arte TEXT,
-                cor_linha TEXT,
-                tipo TEXT,
-                preco REAL,
-                observacoes TEXT,
-                imagem_path TEXT,
-                status TEXT,
-                valor_estampa_extra REAL DEFAULT 0.0,
-                valor_matriz REAL DEFAULT 0.0
-            )
-        ''')
-        c.execute("PRAGMA table_info(pedidos)")
-        colunas_pedidos = [column[1] for column in c.fetchall()]
-        if "valor_estampa_extra" not in colunas_pedidos:
-            c.execute("ALTER TABLE pedidos ADD COLUMN valor_estampa_extra REAL DEFAULT 0.0")
-        if "valor_matriz" not in colunas_pedidos:
-            c.execute("ALTER TABLE pedidos ADD COLUMN valor_matriz REAL DEFAULT 0.0")
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS pedidos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lote_id TEXT,
+            data_criacao TEXT,
+            cor_bone TEXT,
+            frase_arte TEXT,
+            cor_linha TEXT,
+            tipo TEXT,
+            preco REAL,
+            observacoes TEXT,
+            imagem_path TEXT,
+            status TEXT,
+            valor_estampa_extra REAL DEFAULT 0.0,
+            valor_matriz REAL DEFAULT 0.0
+        )
+    ''')
+    c.execute("PRAGMA table_info(pedidos)")
+    colunas_pedidos = [column[1] for column in c.fetchall()]
+    if "valor_estampa_extra" not in colunas_pedidos:
+        c.execute("ALTER TABLE pedidos ADD COLUMN valor_estampa_extra REAL DEFAULT 0.0")
+    if "valor_matriz" not in colunas_pedidos:
+        c.execute("ALTER TABLE pedidos ADD COLUMN valor_matriz REAL DEFAULT 0.0")
 
-        c.execute("UPDATE pedidos SET tipo = 'Básico' WHERE tipo = 'Simples'")
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS pagamentos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                lote_id TEXT,
-                data_pagamento TEXT,
-                valor_pago REAL,
-                forma_pagamento TEXT,
-                observacoes TEXT,
-                comprovante_path TEXT
-            )
-        ''')
-        c.execute("UPDATE pedidos SET status = 'Em Produção' WHERE status = 'Pendente'")
-        conn.commit()
-        conn.close()
+    c.execute("UPDATE pedidos SET tipo = 'Básico' WHERE tipo = 'Simples'")
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS pagamentos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lote_id TEXT,
+            data_pagamento TEXT,
+            valor_pago REAL,
+            forma_pagamento TEXT,
+            observacoes TEXT,
+            comprovante_path TEXT
+        )
+    ''')
+    c.execute("UPDATE pedidos SET status = 'Em Produção' WHERE status = 'Pendente'")
+    conn.commit()
+    conn.close()
 
 init_db()
 
@@ -247,18 +212,6 @@ def get_numeric_series(df: pd.DataFrame, col_name: str, default_value: float = 0
     if df.empty or col_name not in df.columns:
         return pd.Series([default_value] * len(df), index=df.index, dtype=float)
     return pd.to_numeric(df[col_name], errors="coerce").fillna(default_value)
-
-# 2. Inicialização do Cliente Supabase
-@st.cache_resource
-def init_supabase() -> Client:
-    try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_KEY"]
-        return create_client(url, key)
-    except Exception:
-        return None
-
-supabase = init_supabase()
 
 def fetch_data(table_name: str) -> pd.DataFrame:
     if not supabase:
@@ -656,21 +609,17 @@ elif menu == "📦 Pedidos":
 
                         if safe_upsert_produto(novo_prod):
                             set_ultimo_codigo_config(novo_codigo_gerado)
-                            if db_type == "postgres":
-                                with engine.begin() as conn:
-                                    conn.execute(text("UPDATE pedidos SET status = 'Entregue / Retirado' WHERE id = :id"), {"id": id_entregue})
-                            else:
-                                conn = sqlite3.connect(DB_NAME)
-                                c = conn.cursor()
-                                c.execute("UPDATE pedidos SET status = 'Entregue / Retirado' WHERE id = ?", (id_entregue,))
-                                conn.commit()
-                                conn.close()
+                            conn = sqlite3.connect(DB_NAME)
+                            c = conn.cursor()
+                            c.execute("UPDATE pedidos SET status = 'Entregue / Retirado' WHERE id = ?", (id_entregue,))
+                            conn.commit()
+                            conn.close()
 
                             st.session_state["flash_success"] = f"🎉 Item entregue! Produto cadastrado no estoque com o código '{novo_codigo_gerado}'!"
                             st.rerun()
 
 elif menu in ["🛍️ Compras", "🛍 Compras"]:
-    st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
+    st.subheader("🛍️️ Cadastrar Nova Compra de Mercadoria")
     
     opcoes_prod = ["➕ [NOVO] Cadastrar Novo Produto"]
     if not df_produtos.empty and "codigo" in df_produtos.columns:
@@ -999,7 +948,7 @@ elif menu == "🛒 Vendas":
                         st.session_state["flash_success"] = f"🎉 Venda salva e estoque atualizado com sucesso!"
                         st.rerun()
     else:
-        st.info("Nenhum produto cadastrado no banco de dados. Cadastre primeiro em Compras.")
+        st.info("Nenum produto cadastrado no banco de dados. Cadastre primeiro em Compras.")
 
     st.markdown("---")
     st.subheader("⏳ Vendas Pendentes de Recebimento")
@@ -1777,14 +1726,14 @@ elif menu == "💾 Gestão de Dados":
                 except Exception as ex:
                     st.error(f"Erro durante a restauração do backup: {ex}")
 
-elif menu == "⚙️️ Configuração":
+elif menu == "⚙ Configuração":
     st.subheader("⚙️ Configurações Gerais do Sistema")
     st.markdown("Gerencie variáveis de sistema, sequenciais de código e parâmetros operacionais.")
 
     ult_cod = get_ultimo_codigo_config()
 
     st.markdown("#### 🏷️ Sequencial do Código do Boné")
-    st.info("Esta configuração determina qual foi o último código de boné registado e serve de base para a criação automática de novos códigos quando um pedido for marcado como **Entregue**.")
+    st.info("Esta configuração determina qual foi o último código de boné registrado e serve de base para a criação automática de novos códigos quando um pedido for marcado como **Entregue**.")
 
     c_cfg1, c_cfg2 = st.columns(2)
     with c_cfg1:
