@@ -693,7 +693,7 @@ if "Dashboard" in menu:
             st.info("Nenhuma venda registrada.")
 
 elif "Compra de Mercadorias" in menu:
-    st.subheader("🛍️ Relatório de Compra de Mercadorias")
+    st.subheader("🛍️️ Relatório de Compra de Mercadorias")
     
     df_cm = get_df_compra_mercadorias()
 
@@ -1072,16 +1072,21 @@ elif "Pedidos" in menu:
                                 conn = sqlite3.connect(DB_NAME)
                                 c = conn.cursor()
                                 for item_id in ids_itens_acao:
-                                    c.execute("UPDATE pedidos SET status = 'Em Produção' WHERE id = ?", (item_id,))
+                                    row_alvo = df_lote[df_lote["id"] == item_id].iloc[0]
+                                    cod_prod = row_alvo.get("codigo_produto")
+                                    if cod_prod and str(cod_prod).strip() != "" and str(cod_prod).strip().lower() != "none":
+                                        estornar_estoque(cod_prod, 1)
+
+                                    c.execute("DELETE FROM pedidos WHERE id = ?", (item_id,))
                                     if supabase:
                                         try:
-                                            supabase.table("pedidos").update({"status": "Em Produção"}).eq("id", item_id).execute()
+                                            supabase.table("pedidos").delete().eq("id", item_id).execute()
                                         except Exception:
                                             pass
                                 conn.commit()
                                 conn.close()
 
-                                st.session_state["flash_success"] = f"🔄 {len(ids_itens_acao)} item(ns) cancelado(s) e retornado(s) para 'Em Produção'!"
+                                st.session_state["flash_success"] = f"🗑️ {len(ids_itens_acao)} item(ns) cancelado(s) e excluído(s) com sucesso!"
                                 st.rerun()
 
 elif "Estoque" in menu:
@@ -1269,7 +1274,6 @@ elif "Vendas" in menu:
                     
                     c_cod = "codigo_bone" if "codigo_bone" in row_v else ("codigo" if "codigo" in row_v else "codigo_produto")
                     
-                    # CORREÇÃO: Garante o cálculo do valor líquido (valor_venda - tarifa_cartao)
                     val_bruto = float(pd.to_numeric(row_v.get(c_val_p, 0.0), errors="coerce") or 0.0)
                     tarifa_val = float(pd.to_numeric(row_v.get("tarifa_cartao", 0.0), errors="coerce") or 0.0)
                     val_rec_fmt = round(max(0.0, val_bruto - tarifa_val), 2)
@@ -1522,7 +1526,7 @@ elif "Vendas" in menu:
 
 elif "Custos" in menu:
     st.subheader("💵 Gerenciamento de Custos e Despesas")
-    sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷️ Custos de Venda", "🎪 Feiras", "💳 Custos Financeiros"], horizontal=True)
+    sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷️️ Custos de Venda", "🎪 Feiras", "💳 Custos Financeiros"], horizontal=True)
 
     if "Mercadorias" in sub_tab:
         df_cm = get_df_compra_mercadorias()
@@ -1791,17 +1795,15 @@ elif "Caixa" in menu or "Fluxo" in menu:
                     "Valor_Num": -tot_c
                 })
 
-    # 2. Recebimentos das Vendas (CORRIGIDO: Cálculo explícito e forçado do valor líquido recebido)
+    # 2. Recebimentos das Vendas
     if not df_vendas.empty:
         col_dt_rec = "data_recebimento" if "data_recebimento" in df_vendas.columns else ("data_receb" if "data_receb" in df_vendas.columns else "data")
         for _, r in df_vendas.iterrows():
             dt_v = r.get(col_dt_rec) or r.get("data")
             
-            # Obtém valor de venda e tarifa com tratamento seguro para string/float
             val_venda_num = parse_money(r.get("valor_venda") or r.get("valor") or 0.0)
             tarifa_num = parse_money(r.get("tarifa_cartao", 0.0))
             
-            # Tenta pegar valor_recebido preexistente caso válido; do contrário calcula na hora
             val_rec_bd = r.get("valor_recebido")
             if val_rec_bd is not None and str(val_rec_bd).strip() not in ["", "None", "nan"]:
                 val_v_calc = parse_money(val_rec_bd)
