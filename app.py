@@ -460,7 +460,7 @@ with st.sidebar:
     st.markdown("### 📌 Módulos do Sistema")
     menu = st.radio(
         "Navegue entre os módulos:",
-        ["📈 Dashboard", "📦 Pedidos", "🛍️ Compras", "📦 Estoque", "🛒 Vendas", "💵 Custos", "💰 Fluxo de Caixa", "🤝 Aportes dos Sócios", "📥 Importação", "💾 Gestão de Dados", "⚙️ Configuração"],
+        ["📈 Dashboard", "📦 Pedidos", "🛍️ Compra de Mercadorias", "🛍️ Compras", "📦 Estoque", "🛒 Vendas", "💵 Custos", "💰 Fluxo de Caixa", "🤝 Aportes dos Sócios", "📥 Importação", "💾 Gestão de Dados", "⚙️ Configuração"],
         label_visibility="collapsed"
     )
 
@@ -594,6 +594,42 @@ if "Dashboard" in menu:
         else:
             st.info("Nenhuma venda registrada.")
 
+elif "Compra de Mercadorias" in menu:
+    st.subheader("🛍️ Relatório de Compra de Mercadorias")
+    
+    df_pedidos_entregues = carregar_dataframe(
+        "SELECT * FROM pedidos WHERE status LIKE '%Entregue%' ORDER BY id DESC"
+    )
+
+    if df_pedidos_entregues.empty:
+        st.info("Nenhum pedido entregue disponível para o relatório de compra de mercadorias.")
+    else:
+        codigo_atual_config = get_ultimo_codigo_config()
+        
+        df_pedidos_entregues["preco_num"] = get_numeric_series(df_pedidos_entregues, "preco")
+        df_pedidos_entregues["estampa_extra_num"] = get_numeric_series(df_pedidos_entregues, "valor_estampa_extra")
+        df_pedidos_entregues["matriz_num"] = get_numeric_series(df_pedidos_entregues, "valor_matriz")
+        
+        df_pedidos_entregues["total_item_calc"] = (
+            df_pedidos_entregues["preco_num"] +
+            df_pedidos_entregues["estampa_extra_num"] +
+            df_pedidos_entregues["matriz_num"]
+        )
+
+        df_relatorio = pd.DataFrame({
+            "Código": codigo_atual_config,
+            "Cor do Boné": df_pedidos_entregues.get("cor_bone", ""),
+            "Arte Estampada": df_pedidos_entregues.get("frase_arte", ""),
+            "Cor da Estampa": df_pedidos_entregues.get("cor_linha", ""),
+            "Produto": df_pedidos_entregues.get("tipo", ""),
+            "Preço Base": df_pedidos_entregues["preco_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
+            "Estampa Extra": df_pedidos_entregues["estampa_extra_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
+            "Matriz Bordado": df_pedidos_entregues["matriz_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
+            "Total Item": df_pedidos_entregues["total_item_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
+        })
+
+        st.dataframe(df_relatorio, use_container_width=True, hide_index=True)
+
 elif "Pedidos" in menu:
     st.subheader("📦 Gerenciamento de Pedidos e Encomendas")
 
@@ -665,7 +701,7 @@ elif "Pedidos" in menu:
             with col_b1:
                 btn_cadastrar_p = st.form_submit_button("💾 Cadastrar Item", use_container_width=True, type="primary")
             with col_b2:
-                btn_atualizar_p = st.form_submit_button("✏️️ Atualizar Item", use_container_width=True)
+                btn_atualizar_p = st.form_submit_button("✏ Atualizar Item", use_container_width=True)
             with col_b3:
                 btn_excluir_p = st.form_submit_button("🗑 Excluir Item", use_container_width=True)
 
@@ -1206,7 +1242,7 @@ elif "Vendas" in menu:
         col_val = "valor_venda" if "valor_venda" in df_v_exib.columns else "valor"
         col_pag = "forma_pagto" if "forma_pagto" in df_v_exib.columns else "pagto"
 
-        st.markdown("##### ⚙️ Vendas Cadastradas")
+        st.markdown("##### ⚙️️ Vendas Cadastradas")
         
         if "editing_venda_id" not in st.session_state:
             st.session_state["editing_venda_id"] = None
@@ -1820,7 +1856,7 @@ elif "Importação" in menu or "Importar" in menu:
 
             if st.button("🚀 Confirmar e Importar para o Banco de Dados", type="primary", use_container_width=True):
                 registros = df_imp.to_dict(orient="records")
-                if tipo_import == "🛍️️ Compras (Produtos)":
+                if tipo_import == "🛍 Compras (Produtos)":
                     supabase.table("produtos").upsert(registros, on_conflict="codigo").execute()
                 else:
                     supabase.table("vendas").insert(registros).execute()
@@ -1904,7 +1940,7 @@ elif "Configuração" in menu or "Configuracao" in menu:
 
     ult_cod = get_ultimo_codigo_config()
 
-    st.markdown("#### 🏷️ Sequencial do Código do Boné")
+    st.markdown("#### 🏷️️ Sequencial do Código do Boné")
     st.info("Esta configuração determina qual foi o último código de boné registrado e serve de base para a criação automática de novos códigos quando um pedido for marcado como **Entregue**.")
 
     c_cfg1, c_cfg2 = st.columns(2)
