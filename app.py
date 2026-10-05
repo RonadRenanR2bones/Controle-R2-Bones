@@ -275,11 +275,11 @@ with st.sidebar:
                 
                 if save_logo_to_db(data_url):
                     st.session_state["current_logo"] = data_url
-                    st.success("Logo fixa salva e aplicada!")
+                    st.success("Logo fixa salva e applied!")
                     st.rerun()
 
         if st.session_state.get("current_logo") is not None:
-            if st.button("🗑️ Excluir Logo Atual", use_container_width=True, type="secondary"):
+            if st.button("🗑️️ Excluir Logo Atual", use_container_width=True, type="secondary"):
                 delete_logo_from_db()
                 st.session_state["current_logo"] = None
                 st.success("Logo removida permanentemente!")
@@ -341,7 +341,7 @@ if menu == "📈 Dashboard":
     with k3:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
     with k4:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Quantidade Vendida <span class="tooltip-icon" title="Quantidade total de peças/bonés faturados nas vendas">ℹ️️</span></div><div class="kpi-value">{total_qtd_vendida} un</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Quantidade Vendida <span class="tooltip-icon" title="Quantidade total de peças/bonés faturados nas vendas">ℹ</span></div><div class="kpi-value">{total_qtd_vendida} un</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -388,7 +388,7 @@ if menu == "📈 Dashboard":
         else:
             st.info("Nenhuma venda registrada.")
 
-# Correção Imagem 1: Tratamento seguro de colunas inexistentes no histórico de compras
+# Módulo de Compras (Tratado com compatibilidade exata de nome de menu "🛍️ Compras")
 elif menu == "🛍️️ Compras":
     st.subheader("🛍️ Cadastrar Nova Compra de Mercadoria")
     
@@ -520,7 +520,6 @@ elif menu == "🛍️️ Compras":
     if not df_produtos.empty:
         df_exib_compras = df_produtos.copy()
         
-        # Correção Imagem 1: Tratamento seguro sem chamar .fillna() em tipo primitivo float
         df_exib_compras["custo_num"] = pd.to_numeric(df_exib_compras["custo"], errors="coerce").fillna(0.0) if "custo" in df_exib_compras.columns else 0.0
         df_exib_compras["estampa_extra_num"] = pd.to_numeric(df_exib_compras["estampa_extra"], errors="coerce").fillna(0.0) if "estampa_extra" in df_exib_compras.columns else 0.0
         df_exib_compras["matriz_bordado_num"] = pd.to_numeric(df_exib_compras["matriz_bordado"], errors="coerce").fillna(0.0) if "matriz_bordado" in df_exib_compras.columns else 0.0
@@ -933,7 +932,6 @@ elif menu == "💵 Custos":
                 st.session_state["flash_success"] = "Custo de Venda registrado com sucesso!"
                 st.rerun()
 
-        # Tabela demonstrativo de Custos de Venda
         st.markdown("---")
         st.markdown("##### 📋 Demonstrativo de Custos de Venda Lançados")
         if not df_custos.empty:
@@ -999,7 +997,6 @@ elif menu == "💵 Custos":
                 st.session_state["flash_success"] = "Custo de Feira registrado com sucesso!"
                 st.rerun()
 
-        # Tabela demonstrativo de Custos de Feira
         st.markdown("---")
         st.markdown("##### 📋 Demonstrativo de Custos de Feiras Lançados")
         if not df_custos.empty:
@@ -1032,7 +1029,6 @@ elif menu == "💵 Custos":
         else:
             st.info("Nenhum custo registrado.")
 
-# Correção Imagem 2: Relatório Detalhado com distinção correta entre Aporte e Devolução
 elif menu == "🤝 Aportes dos Sócios":
     st.subheader("🤝 Registro de Aportes e Devoluções")
     c1, c2, c3 = st.columns(3)
@@ -1131,7 +1127,6 @@ elif menu == "🤝 Aportes dos Sócios":
             
             ap_val = float(pd.to_numeric(row.get("valor", 0), errors="coerce"))
             
-            # Correção Imagem 2: Determinar o tipo da operação corretamente
             tipo_raw = str(row.get("tipo", ""))
             if "devoluc" in tipo_raw.lower() or ap_val < 0:
                 ap_tipo_exib = "Devolução"
@@ -1190,7 +1185,6 @@ elif menu == "🤝 Aportes dos Sócios":
     else:
         st.info("Nenhum aporte ou devolução registrado no momento.")
 
-# Correção Imagem 2: Mapeamento de "Devolução" no Fluxo de Caixa
 elif menu == "💰 Fluxo de Caixa":
     st.subheader("💰 Extrato Consolidado de Fluxo de Caixa")
     
@@ -1273,7 +1267,6 @@ elif menu == "💰 Fluxo de Caixa":
             dt_ap_raw = r.get("data") or r.get("created_at") or r.get("data_aporte")
             
             if val_ap != 0:
-                # Correção Imagem 2: Mapear "Devolução" caso o valor seja negativo ou o tipo seja Devolução
                 is_devolucao = "devoluc" in tipo_ap.lower() or val_ap < 0
                 nome_op = "Devolução" if is_devolucao else "Aporte"
                 
