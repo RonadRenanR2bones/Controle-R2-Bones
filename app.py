@@ -557,7 +557,7 @@ with st.sidebar:
     st.markdown("### 📌 Módulos do Sistema")
     menu = st.radio(
         "Navegue entre os módulos:",
-        ["📈 Dashboard", "📦 Pedidos", "🛍 Compra de Mercadorias", "📦 Estoque", "🛒 Vendas", "💵 Custos", "💰 Fluxo de Caixa", "🤝 Aportes dos Sócios", "💾 Gestão de Dados", "⚙️ Configuração"],
+        ["📈 Dashboard", "📦 Pedidos", "🛍 Compra de Mercadorias", "📦 Estoque", "🛒 Vendas", "💵 Custos", "💰 Fluxo de Caixa", "🤝 Aportes dos Sócios", "💾 Gestão de Dados", "⚙️️ Configuração"],
         label_visibility="collapsed"
     )
 
@@ -1381,12 +1381,12 @@ elif "Vendas" in menu:
                 c_val_exib = float(pd.to_numeric(row.get(col_val, 0.0), errors="coerce") or 0.0)
                 c_pag_exib = str(row.get(col_pag, "PIX"))
                 
-                # ADICIONADO (Imagem 1): Busca de tarifa cartão e valor recebido
+                # ADICIONADO/CORRIGIDO (Imagem 2): Busca da tarifa do cartão e cálculo do valor recebido líquido
                 c_tarifa_exib = float(pd.to_numeric(row.get("tarifa_cartao", 0.0), errors="coerce") or 0.0)
                 c_receb_exib = float(pd.to_numeric(row.get("valor_recebido", c_val_exib - c_tarifa_exib), errors="coerce") or (c_val_exib - c_tarifa_exib))
 
-                # ADICIONADO (Imagem 1): Manter todas as informações na mesma linha divididas em colunas do Streamlit
-                c_linha_unica = st.columns([1.6, 1.4, 1.8, 1.5, 1.5, 1.6, 1.6, 0.5, 0.5])
+                # ADICIONADO/CORRIGIDO (Imagem 2): Disposição em linha única com botões usando emojis nativos (✏️️ e 🗑️)
+                c_linha_unica = st.columns([1.5, 1.3, 1.8, 1.5, 1.3, 1.5, 1.8, 0.6, 0.6])
                 with c_linha_unica[0]:
                     st.markdown(f"**Data:** {c_data_exib}", unsafe_allow_html=True)
                 with c_linha_unica[1]:
@@ -1402,7 +1402,7 @@ elif "Vendas" in menu:
                 with c_linha_unica[6]:
                     st.markdown(f"**Valor Recebido:** R$ {c_receb_exib:,.2f}", unsafe_allow_html=True)
                 with c_linha_unica[7]:
-                    if st.button("✏️️", key=f"btn_edit_row_{v_id}_{mes}", use_container_width=True):
+                    if st.button("✏️", key=f"btn_edit_row_{v_id}_{mes}", use_container_width=True):
                         st.session_state["editing_venda_id"] = v_id
                         st.rerun()
                 with c_linha_unica[8]:
@@ -1630,7 +1630,7 @@ elif "Custos" in menu:
                                 st.rerun()
                         st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
             else:
-                st.info("Nenhum custo de venda registrado até o momento.")
+                st.info("Nenum custo de venda registrado até o momento.")
         else:
             st.info("Nenhum custo registrado.")
 
@@ -1716,7 +1716,7 @@ elif "Custos" in menu:
 
     elif "Financeiros" in sub_tab:
         st.markdown("##### 💳 Demonstrativo de Tarifas de Cartão")
-        # ALTERADO (Imagem 2): Busca direta nos dados da tabela de vendas
+        # ADICIONADO/CORRIGIDO (Imagem 3): Transposição dos dados de Tarifa Cartão das Vendas
         if not df_vendas.empty:
             col_d_v = "data_venda" if "data_venda" in df_vendas.columns else "data"
             col_c_b = "codigo_bone" if "codigo_bone" in df_vendas.columns else "codigo"
@@ -1725,12 +1725,19 @@ elif "Custos" in menu:
             col_tar = "tarifa_cartao" if "tarifa_cartao" in df_vendas.columns else None
 
             df_v_fin = df_vendas.copy()
+            
+            # Garante extração numérica segura da tarifa do cartão
             if col_tar and col_tar in df_v_fin.columns:
                 df_v_fin["tarifa_cartao_num"] = get_numeric_series(df_v_fin, col_tar)
             else:
-                df_v_fin["tarifa_cartao_num"] = 0.0
+                # Calcula a tarifa caso o campo de valor_recebido exista mas tarifa_cartao não esteja preenchida
+                val_tot_ser = get_numeric_series(df_v_fin, col_val)
+                val_rec_ser = get_numeric_series(df_v_fin, "valor_recebido", default_value=-1.0)
+                df_v_fin["tarifa_cartao_num"] = df_v_fin.apply(
+                    lambda r: max(0.0, r[col_val] - r["valor_recebido"]) if "valor_recebido" in r and r["valor_recebido"] >= 0 else 0.0, axis=1
+                )
 
-            # Filtra vendas com tarifa de cartão > 0 ou realizadas via cartão
+            # Filtra vendas por Cartão ou com tarifa > 0
             df_v_tarifa = df_v_fin[
                 (df_v_fin["tarifa_cartao_num"] > 0) | 
                 (df_v_fin.get("forma_pagto", pd.Series([""] * len(df_v_fin))).astype(str).str.lower().str.contains("cart", na=False))
@@ -1755,7 +1762,7 @@ elif "Custos" in menu:
             else:
                 st.info("Nenhuma venda realizada por cartão com tarifa registrada.")
         else:
-            st.info("Nenhuma venda registrada no sistema.")
+            st.info("Nenhuma tarifa de cartão registrada no sistema.")
 
 elif "Caixa" in menu or "Fluxo" in menu:
     st.subheader("💰 Extrato Consolidado de Fluxo de Caixa")
@@ -1983,75 +1990,81 @@ elif "Aportes" in menu:
         if "editing_aporte_id" not in st.session_state:
             st.session_state["editing_aporte_id"] = None
 
-        df_aportes["Mes_Ano"] = pd.to_datetime(df_aportes["data"], errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
+        # CORRIGIDO (Imagem 1): Verificação defensiva para evitar KeyError caso 'data' esteja ausente ou o DF seja vazio
+        col_dt_ap = "data" if "data" in df_aportes.columns else ("created_at" if "created_at" in df_aportes.columns else ("data_aporte" if "data_aporte" in df_aportes.columns else None))
         
-        meses_aportes = sorted(df_aportes["Mes_Ano"].unique(), reverse=True)
-        for mes in meses_aportes:
-            df_ap_mes = df_aportes[df_aportes["Mes_Ano"] == mes]
-            st.markdown(f"#### 📅 Mês: {mes}")
+        if col_dt_ap and not df_aportes.empty:
+            df_aportes["Mes_Ano"] = pd.to_datetime(df_aportes[col_dt_ap], errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
+            
+            meses_aportes = sorted(df_aportes["Mes_Ano"].unique(), reverse=True)
+            for mes in meses_aportes:
+                df_ap_mes = df_aportes[df_aportes["Mes_Ano"] == mes]
+                st.markdown(f"#### 📅 Mês: {mes}")
 
-            for idx, row in df_ap_mes.iterrows():
-                ap_id = row.get("id")
-                ap_dt = format_data_br(row.get("data") or row.get("created_at"))
-                ap_socio = row.get("socio", "")
-                
-                ap_val = float(pd.to_numeric(row.get("valor", 0), errors="coerce") or 0.0)
-                
-                tipo_raw = str(row.get("tipo", ""))
-                if "devoluc" in tipo_raw.lower() or ap_val < 0:
-                    ap_tipo_exib = "Devolução"
-                else:
-                    ap_tipo_exib = "Aporte"
+                for idx, row in df_ap_mes.iterrows():
+                    ap_id = row.get("id")
+                    ap_dt = format_data_br(row.get(col_dt_ap))
+                    ap_socio = row.get("socio", "")
+                    
+                    ap_val = float(pd.to_numeric(row.get("valor", 0), errors="coerce") or 0.0)
+                    
+                    tipo_raw = str(row.get("tipo", ""))
+                    if "devoluc" in tipo_raw.lower() or ap_val < 0:
+                        ap_tipo_exib = "Devolução"
+                    else:
+                        ap_tipo_exib = "Aporte"
 
-                c1, c2, c3, c4, c5, c6 = st.columns([2, 2, 2, 2, 1, 1])
-                with c1:
-                    st.write(f"**Data:** {ap_dt}")
-                with c2:
-                    st.write(f"**Sócio:** {ap_socio}")
-                with c3:
-                    st.write(f"**Operação:** {ap_tipo_exib}")
-                with c4:
-                    st.write(f"**Valor:** R$ {abs(ap_val):,.2f}")
-                with c5:
-                    if st.button("✏ Alterar", key=f"edit_ap_{ap_id}_{mes}", use_container_width=True):
-                        st.session_state["editing_aporte_id"] = ap_id
-                        st.rerun()
-                with c6:
-                    if st.button("🗑 Excluir", key=f"del_ap_{ap_id}_{mes}", use_container_width=True):
-                        supabase.table("aportes").delete().eq("id", ap_id).execute()
-                        st.session_state["flash_success"] = f"Registro ID {ap_id} excluído com sucesso!"
-                        st.rerun()
+                    c1, c2, c3, c4, c5, c6 = st.columns([2, 2, 2, 2, 1, 1])
+                    with c1:
+                        st.write(f"**Data:** {ap_dt}")
+                    with c2:
+                        st.write(f"**Sócio:** {ap_socio}")
+                    with c3:
+                        st.write(f"**Operação:** {ap_tipo_exib}")
+                    with c4:
+                        st.write(f"**Valor:** R$ {abs(ap_val):,.2f}")
+                    with c5:
+                        if st.button("✏️", key=f"edit_ap_{ap_id}_{mes}", use_container_width=True):
+                            st.session_state["editing_aporte_id"] = ap_id
+                            st.rerun()
+                    with c6:
+                        if st.button("🗑️️", key=f"del_ap_{ap_id}_{mes}", use_container_width=True):
+                            supabase.table("aportes").delete().eq("id", ap_id).execute()
+                            st.session_state["flash_success"] = f"Registro ID {ap_id} excluído com sucesso!"
+                            st.rerun()
 
-                if st.session_state.get("editing_aporte_id") == ap_id:
-                    with st.form(key=f"form_edit_ap_{ap_id}_{mes}"):
-                        st.markdown(f"##### ✏ Editar Registro ID {ap_id}")
-                        e_col1, e_col2, e_col3 = st.columns(3)
-                        with e_col1:
-                            idx_s = 0 if ap_socio == "Renan" else 1
-                            novo_socio = st.selectbox("Sócio", ["Renan", "Ronald"], index=idx_s)
-                        with e_col2:
-                            idx_t = 0 if ap_tipo_exib == "Aporte" else 1
-                            novo_tipo = st.selectbox("Tipo", ["Aporte", "Devolução"], index=idx_t)
-                        with e_col3:
-                            novo_val = st.number_input("Valor (R$)", min_value=1.0, value=abs(ap_val), format="%.2f")
+                    if st.session_state.get("editing_aporte_id") == ap_id:
+                        with st.form(key=f"form_edit_ap_{ap_id}_{mes}"):
+                            st.markdown(f"##### ✏ Editar Registro ID {ap_id}")
+                            e_col1, e_col2, e_col3 = st.columns(3)
+                            with e_col1:
+                                idx_s = 0 if ap_socio == "Renan" else 1
+                                novo_socio = st.selectbox("Sócio", ["Renan", "Ronald"], index=idx_s)
+                            with e_col2:
+                                idx_t = 0 if ap_tipo_exib == "Aporte" else 1
+                                novo_tipo = st.selectbox("Tipo", ["Aporte", "Devolução"], index=idx_t)
+                            with e_col3:
+                                novo_val = st.number_input("Valor (R$)", min_value=1.0, value=abs(ap_val), format="%.2f")
 
-                        btn_s_ap, btn_c_ap = st.columns(2)
-                        with btn_s_ap:
-                            if st.form_submit_button("💾 Salvar Alterações", use_container_width=True, type="primary"):
-                                val_final = float(novo_val) if novo_tipo == "Aporte" else -float(novo_val)
-                                supabase.table("aportes").update({
-                                    "socio": novo_socio,
-                                    "tipo": novo_tipo,
-                                    "valor": val_final
-                                }).eq("id", ap_id).execute()
-                                st.session_state["editing_aporte_id"] = None
-                                st.session_state["flash_success"] = "Registro atualizado com sucesso!"
-                                st.rerun()
-                        with btn_c_ap:
-                            if st.form_submit_button("❌ Cancelar", use_container_width=True):
-                                st.session_state["editing_aporte_id"] = None
-                                st.rerun()
-                st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
+                            btn_s_ap, btn_c_ap = st.columns(2)
+                            with btn_s_ap:
+                                if st.form_submit_button("💾 Salvar Alterações", use_container_width=True, type="primary"):
+                                    val_final = float(novo_val) if novo_tipo == "Aporte" else -float(novo_val)
+                                    supabase.table("aportes").update({
+                                        "socio": novo_socio,
+                                        "tipo": novo_tipo,
+                                        "valor": val_final
+                                    }).eq("id", ap_id).execute()
+                                    st.session_state["editing_aporte_id"] = None
+                                    st.session_state["flash_success"] = "Registro atualizado com sucesso!"
+                                    st.rerun()
+                            with btn_c_ap:
+                                if st.form_submit_button("❌ Cancelar", use_container_width=True):
+                                    st.session_state["editing_aporte_id"] = None
+                                    st.rerun()
+                    st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
+        else:
+            st.info("Nenhum aporte registrado com data válida até o momento.")
     else:
         st.info("Nenhum aporte ou devolução registrado no momento.")
 
