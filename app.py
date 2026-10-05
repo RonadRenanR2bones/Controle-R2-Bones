@@ -145,7 +145,6 @@ def fetch_data(table_name: str) -> pd.DataFrame:
         return pd.DataFrame(res.data)
     except Exception as e:
         err_str = str(e)
-        # Oculta o aviso em tela se for tabela inexistente no schema cache
         if "PGRST205" not in err_str and "schema cache" not in err_str:
             st.warning(f"Aviso de leitura na tabela `{table_name}`: {e}")
         return pd.DataFrame()
@@ -506,7 +505,6 @@ elif menu in ["🛍️ Compras", "🛍 Compras"]:
     if not df_produtos.empty:
         df_exib_compras = df_produtos.copy()
         
-        # Converte e garante valores numéricos usando helper seguro
         df_exib_compras["custo_num"] = get_numeric_series(df_exib_compras, "custo")
         df_exib_compras["estampa_extra_num"] = get_numeric_series(df_exib_compras, "estampa_extra")
         df_exib_compras["matriz_bordado_num"] = get_numeric_series(df_exib_compras, "matriz_bordado")
@@ -556,87 +554,80 @@ elif menu == "📦 Estoque":
         col_qtd_est = "qtd_estoque" if "qtd_estoque" in df_est.columns else ("qtd" if "qtd" in df_est.columns else "estoque")
         
         qtds_est_num = get_numeric_series(df_est, col_qtd_est)
-        df_est["Status"] = qtds_est_num.apply(lambda val: "Disponível" if val > 0 else "Indisponível")
+        df_est["Status"] = qtds_est_num.apply(lambda val: "Disponível" if val > 0 else "Esgotado")
         
-        df_est_disponivel = df_est[df_est["Status"] == "Disponível"].copy()
+        with st.expander("🔍 Consultar e Pesquisar no Estoque", expanded=True):
+            c_f1, c_f2, c_f3 = st.columns(3)
+            with c_f1:
+                busca_texto = st.text_input("Pesquisar por Código ou Arte:")
+            with c_f2:
+                cat_unicas = ["Todas"] + sorted(list(df_est["categoria"].dropna().unique())) if "categoria" in df_est.columns else ["Todas"]
+                filtro_cat = st.selectbox("Filtrar por Produto/Categoria:", cat_unicas)
+            with c_f3:
+                cor_unicas = ["Todas"] + sorted(list(df_est["cor"].dropna().unique())) if "cor" in df_est.columns else ["Todas"]
+                filtro_cor = st.selectbox("Filtrar por Cor do Boné:", cor_unicas)
+
+            df_est_filtrado = df_est.copy()
+            if busca_texto:
+                df_est_filtrado = df_est_filtrado[
+                    df_est_filtrado["codigo"].astype(str).str.contains(busca_texto, case=False, na=False) |
+                    df_est_filtrado.get("frase", pd.Series([""]*len(df_est_filtrado))).astype(str).str.contains(busca_texto, case=False, na=False)
+                ]
+            if filtro_cat != "Todas" and "categoria" in df_est_filtrado.columns:
+                df_est_filtrado = df_est_filtrado[df_est_filtrado["categoria"] == filtro_cat]
+            if filtro_cor != "Todas" and "cor" in df_est_filtrado.columns:
+                df_est_filtrado = df_est_filtrado[df_est_filtrado["cor"] == filtro_cor]
+
+        if "custo" in df_est_filtrado.columns:
+            df_est_filtrado["custo"] = get_numeric_series(df_est_filtrado, "custo").apply(lambda v: f"R$ {float(v):,.2f}")
+
+        mapa_colunas_est = {
+            "codigo": "Código",
+            "cor": "Cor do Boné",
+            "frase": "Arte Estampada",
+            "cor_estampa": "Cor Estampada",
+            "categoria": "Produto",
+            "custo": "Custo Base",
+            col_qtd_est: "Estoque",
+            "Status": "Status"
+        }
         
-        if not df_est_disponivel.empty:
-            with st.expander("🔍 Consultar e Pesquisar no Estoque", expanded=False):
-                c_f1, c_f2, c_f3 = st.columns(3)
-                with c_f1:
-                    busca_texto = st.text_input("Pesquisar por Código ou Arte:")
-                with c_f2:
-                    cat_unicas = ["Todas"] + sorted(list(df_est_disponivel["categoria"].dropna().unique())) if "categoria" in df_est_disponivel.columns else ["Todas"]
-                    filtro_cat = st.selectbox("Filtrar por Produto/Categoria:", cat_unicas)
-                with c_f3:
-                    cor_unicas = ["Todas"] + sorted(list(df_est_disponivel["cor"].dropna().unique())) if "cor" in df_est_disponivel.columns else ["Todas"]
-                    filtro_cor = st.selectbox("Filtrar por Cor do Boné:", cor_unicas)
+        cols_est = [col for col in [
+            "codigo", "cor", "frase", "cor_estampa", "categoria", "custo", 
+            col_qtd_est, "Status"
+        ] if col in df_est_filtrado.columns]
 
-                if busca_texto:
-                    df_est_disponivel = df_est_disponivel[
-                        df_est_disponivel["codigo"].astype(str).str.contains(busca_texto, case=False, na=False) |
-                        df_est_disponivel.get("frase", pd.Series([""]*len(df_est_disponivel))).astype(str).str.contains(busca_texto, case=False, na=False)
-                    ]
-                if filtro_cat != "Todas" and "categoria" in df_est_disponivel.columns:
-                    df_est_disponivel = df_est_disponivel[df_est_disponivel["categoria"] == filtro_cat]
-                if filtro_cor != "Todas" and "cor" in df_est_disponivel.columns:
-                    df_est_disponivel = df_est_disponivel[df_est_disponivel["cor"] == filtro_cor]
-
-            if "custo" in df_est_disponivel.columns:
-                df_est_disponivel["custo"] = get_numeric_series(df_est_disponivel, "custo").apply(lambda v: f"R$ {float(v):,.2f}")
-
-            mapa_colunas_est = {
-                "codigo": "Código",
-                "cor": "Cor do Boné",
-                "frase": "Arte Estampada",
-                "cor_estampa": "Cor Estampada",
-                "categoria": "Produto",
-                "custo": "Custo Base",
-                col_qtd_est: "Estoque",
-                "Status": "Status"
-            }
-            
-            cols_est = [col for col in [
-                "codigo", "cor", "frase", "cor_estampa", "categoria", "custo", 
-                col_qtd_est, "Status"
-            ] if col in df_est_disponivel.columns]
-
-            st.dataframe(df_est_disponivel[cols_est].rename(columns=mapa_colunas_est), use_container_width=True, hide_index=True)
-        else:
-            st.info("Nenhum item disponível em estoque no momento.")
+        st.dataframe(df_est_filtrado[cols_est].rename(columns=mapa_colunas_est), use_container_width=True, hide_index=True)
     else:
         st.info("Estoque vazio no momento.")
 
 elif menu == "🛒 Vendas":
     st.subheader("🛒 Lançar Nova Venda")
+    
     if not df_produtos.empty and "codigo" in df_produtos.columns:
         c_qtd_p = "qtd_estoque" if "qtd_estoque" in df_produtos.columns else ("qtd" if "qtd" in df_produtos.columns else "estoque")
-        
         qtds_p = get_numeric_series(df_produtos, c_qtd_p)
-        df_prod_disp = df_produtos[qtds_p > 0].copy()
         
-        if not df_prod_disp.empty:
+        # Seleciona todos os produtos cadastrados para venda (permitindo seleção de código cadastrado)
+        opts = [f"[{r['codigo']}] \"{r.get('frase','')}\" (Disponível: {int(pd.to_numeric(r.get(c_qtd_p, 0), errors='coerce') or 0)} un)" for _, r in df_produtos.iterrows()]
+        
+        if opts:
             busca_bone = st.text_input("🔍 Pesquisar Boné no Estoque (por código, frase ou cor):", "")
+            opts_filtradas = opts
             if busca_bone.strip():
-                df_prod_disp = df_prod_disp[
-                    df_prod_disp["codigo"].astype(str).str.contains(busca_bone, case=False, na=False) |
-                    df_prod_disp.get("frase", pd.Series([""]*len(df_prod_disp))).astype(str).str.contains(busca_bone, case=False, na=False) |
-                    df_prod_disp.get("cor", pd.Series([""]*len(df_prod_disp))).astype(str).str.contains(busca_bone, case=False, na=False)
-                ]
+                opts_filtradas = [o for o in opts if busca_bone.lower() in o.lower()]
 
-            if not df_prod_disp.empty:
-                opts = [f"[{r['codigo']}] \"{r.get('frase','')}\" (Disponível: {r.get(c_qtd_p, 0)} un)" for _, r in df_prod_disp.iterrows()]
-                prod_sel = st.selectbox("Selecione o Boné Encontrado *", opts)
-                
+            if opts_filtradas:
+                prod_sel = st.selectbox("Selecione o Boné Encontrado *", opts_filtradas)
                 codigo_sel = prod_sel.split("]")[0].replace("[", "").strip() if prod_sel else ""
                 
-                p_match = df_prod_disp[df_prod_disp["codigo"] == codigo_sel]
-                estoque_disp = int(pd.to_numeric(p_match.iloc[0].get(c_qtd_p, 1), errors="coerce") or 1) if not p_match.empty else 1
+                p_match = df_produtos[df_produtos["codigo"] == codigo_sel]
+                estoque_disp = int(pd.to_numeric(p_match.iloc[0].get(c_qtd_p, 0), errors="coerce") or 0) if not p_match.empty else 0
                 max_qtd = max(1, estoque_disp)
 
                 c1, c2, c3 = st.columns(3)
                 with c1:
-                    qtd_venda = st.number_input("Quantidade *", min_value=1, max_value=max_qtd, value=1, step=1, help=f"Quantidade disponível em estoque: {max_qtd}")
+                    qtd_venda = st.number_input("Quantidade *", min_value=1, max_value=max(1, max_qtd), value=1, step=1, help=f"Quantidade disponível em estoque: {estoque_disp}")
                     cliente = st.text_input("Nome do Cliente *")
                 with c2:
                     valor_venda = st.number_input("Valor Total (R$) *", min_value=0.0, value=60.0, step=5.0, format="%.2f")
@@ -691,11 +682,12 @@ elif menu == "🛒 Vendas":
                             st.rerun()
             else:
                 st.warning("Nenhum produto correspondente à busca encontrado.")
-        else:
-            st.warning("Nenhum produto disponível em estoque no momento.")
+    else:
+        st.info("Nenhum produto cadastrado no banco de dados. Cadastre primeiro em Compras.")
 
     st.markdown("---")
     st.subheader("⏳ Vendas Pendentes de Recebimento")
+    
     if not df_vendas.empty:
         col_dt_rec = "data_recebimento" if "data_recebimento" in df_vendas.columns else ("data_receb" if "data_receb" in df_vendas.columns else None)
         if col_dt_rec:
@@ -767,6 +759,84 @@ elif menu == "🛒 Vendas":
     else:
         st.info("Nenhuma venda registrada.")
 
+    st.markdown("---")
+    st.subheader("📋 Histórico Detalhado de Vendas")
+    if not df_vendas.empty:
+        df_v_exib = df_vendas.copy()
+        col_d_v = "data_venda" if "data_venda" in df_v_exib.columns else "data"
+        col_c_b = "codigo_bone" if "codigo_bone" in df_v_exib.columns else "codigo"
+        col_cli = "cliente" if "cliente" in df_v_exib.columns else "nome_cliente"
+        col_val = "valor_venda" if "valor_venda" in df_v_exib.columns else "valor"
+        col_pag = "forma_pagto" if "forma_pagto" in df_v_exib.columns else "pagto"
+
+        st.markdown("##### ⚙️ Vendas Cadastradas")
+        
+        if "editing_venda_id" not in st.session_state:
+            st.session_state["editing_venda_id"] = None
+
+        for idx, row in df_v_exib.iterrows():
+            v_id = row["id"]
+            c_data_exib = format_data_br(row.get(col_d_v, ""))
+            c_cod_exib = row.get(col_c_b, "")
+            c_cli_exib = row.get(col_cli, "")
+            c_val_exib = float(pd.to_numeric(row.get(col_val, 0.0), errors="coerce") or 0.0)
+            c_pag_exib = row.get(col_pag, "PIX")
+
+            c_dt, c_cod, c_cli, c_vlr, c_pg, c_act1, c_act2 = st.columns([2, 1.5, 2.5, 1.5, 2, 1, 1])
+            with c_dt:
+                st.write(f"**Data:** {c_data_exib}")
+            with c_cod:
+                st.write(f"**Código:** {c_cod_exib}")
+            with c_cli:
+                st.write(f"**Cliente:** {c_cli_exib}")
+            with c_vlr:
+                st.write(f"**Valor:** R$ {c_val_exib:,.2f}")
+            with c_pg:
+                st.write(f"**Pagto:** {c_pag_exib}")
+            with c_act1:
+                if st.button("✏ Alterar", key=f"btn_edit_row_{v_id}", use_container_width=True):
+                    st.session_state["editing_venda_id"] = v_id
+                    st.rerun()
+            with c_act2:
+                if st.button("🗑 Excluir", key=f"btn_del_row_{v_id}", use_container_width=True):
+                    cod_prod_e = row.get("codigo_bone") or row.get("codigo") or row.get("codigo_produto")
+                    qtd_venda_e = int(row.get("qtd") or row.get("quantidade") or 1)
+                    estornar_estoque(cod_prod_e, qtd_venda_e)
+
+                    supabase.table("vendas").delete().eq("id", v_id).execute()
+                    st.session_state["flash_success"] = f"🗑️ Venda ID {v_id} excluída com sucesso!"
+                    st.rerun()
+
+            if st.session_state.get("editing_venda_id") == v_id:
+                with st.form(key=f"form_edit_row_{v_id}"):
+                    st.markdown(f"##### ✏ Editar Venda ID {v_id}")
+                    e_col1, e_col2, e_col3 = st.columns(3)
+                    with e_col1:
+                        e_cliente = st.text_input("Cliente *", value=str(c_cli_exib))
+                    with e_col2:
+                        e_valor = st.number_input("Valor (R$) *", min_value=0.0, value=float(c_val_exib), format="%.2f")
+                    with e_col3:
+                        opts_pag = ["PIX", "Cartão", "Dinheiro", "Brinde"]
+                        idx_pag = opts_pag.index(c_pag_exib) if c_pag_exib in opts_pag else 0
+                        e_forma_pagto = st.selectbox("Forma Pagto *", opts_pag, index=idx_pag)
+
+                    btn_salvar_e, btn_cancel_e = st.columns(2)
+                    with btn_salvar_e:
+                        if st.form_submit_button("💾 Salvar Alterações", use_container_width=True, type="primary"):
+                            supabase.table("vendas").update({
+                                "cliente": e_cliente.strip(),
+                                "valor_venda": round(float(e_valor), 2),
+                                "forma_pagto": e_forma_pagto
+                            }).eq("id", v_id).execute()
+                            st.session_state["editing_venda_id"] = None
+                            st.session_state["flash_success"] = f"🎉 Venda ID {v_id} atualizada com sucesso!"
+                            st.rerun()
+                    with btn_cancel_e:
+                        if st.form_submit_button("❌ Cancelar", use_container_width=True):
+                            st.session_state["editing_venda_id"] = None
+                            st.rerun()
+            st.markdown("<hr style='margin: 4px 0;'>", unsafe_allow_html=True)
+
 elif menu == "💵 Custos":
     st.subheader("💵 Gerenciamento de Custos e Despesas")
     sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷️ Custos de Venda", "🎪 Feiras"], horizontal=True)
@@ -807,7 +877,7 @@ elif menu == "💵 Custos":
                 cols_ind = [c for c in ["codigo", "categoria", "Custo Base", "Estampa Extra", "Matriz Bordado", "Custo Unit. Total", "Custo Total", "Data_Formatada"] if c in df_m.columns]
                 st.dataframe(df_m[cols_ind], use_container_width=True, hide_index=True)
 
-    elif sub_tab == "🏷️ Custos de Venda":
+    elif sub_tab == "🏷️️ Custos de Venda":
         with st.form("form_cv"):
             c1, c2, c3 = st.columns(3)
             with c1:
