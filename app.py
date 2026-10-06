@@ -1267,7 +1267,6 @@ elif "Vendas" in menu:
         df_cm_disponivel = pd.DataFrame()
         opts = []
 
-    # IMAGENS 1 E 2: Remoção da opção manual de digitação para forçar que o item possua estoque disponível
     if not opts:
         st.warning("⚠️ Nenhum boné disponível em estoque para venda no momento.")
         prod_sel = None
@@ -1295,7 +1294,8 @@ elif "Vendas" in menu:
         )
         cliente = st.text_input("Nome do Cliente *")
     with c2:
-        valor_venda = st.number_input("Valor de Venda (R$) *", min_value=0.0, value=60.0, step=5.0, format="%.2f")
+        # IMAGEM 3: Não sugerir "Valor de Venda (R$)", deixando o valor de forma editável com início em 0.0
+        valor_venda = st.number_input("Valor de Venda (R$) *", min_value=0.0, value=0.0, step=5.0, format="%.2f")
         forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
     with c3:
         data_venda = st.date_input("Data da Venda *", datetime.date.today(), format="DD/MM/YYYY")
@@ -1425,7 +1425,6 @@ elif "Vendas" in menu:
             )
             df_pend_exib["v_a_receber_num"] = df_pend_exib["v_venda_num"] - df_pend_exib["v_tarifa_num"]
 
-            # IMAGEM 3: Remoção da coluna "Tarifa" de Vendas Pendentes de Recebimento
             df_tabela_pend = pd.DataFrame({
                 "Data da Venda": df_pend_exib[col_d_v].apply(format_data_br) if col_d_v in df_pend_exib.columns else "",
                 "Código": df_pend_exib.get(col_c_b, ""),
@@ -1482,7 +1481,6 @@ elif "Vendas" in menu:
                     st.rerun()
 
     st.markdown("---")
-    # IMAGEM 3: Tabela do Histórico Detalhado de Vendas sem a coluna Tarifa
     st.subheader("📋 Histórico Detalhado de Vendas")
     if not df_vendas.empty:
         df_v_exib = df_vendas.copy()
@@ -1547,7 +1545,8 @@ elif "Vendas" in menu:
                 if st.session_state.get("editing_venda_id") == v_id:
                     with st.form(key=f"form_edit_row_{v_id}_{mes}"):
                         st.markdown(f"##### ✏ Editar Venda ID {v_id}")
-                        e_col1, e_col2, e_col3, e_col4 = st.columns(4)
+                        # IMAGEM 1: Remoção do campo Tarifa Bancária no Editar Venda
+                        e_col1, e_col2, e_col3 = st.columns(3)
                         with e_col1:
                             e_cliente = st.text_input("Cliente *", value=str(c_cli_exib))
                         with e_col2:
@@ -1556,18 +1555,14 @@ elif "Vendas" in menu:
                             opts_pag = ["PIX", "Cartão", "Dinheiro", "Brinde"]
                             idx_pag = opts_pag.index(c_pag_exib) if c_pag_exib in opts_pag else 0
                             e_forma_pagto = st.selectbox("Forma Pagto *", opts_pag, index=idx_pag)
-                        with e_col4:
-                            e_tarifa = st.number_input("Tarifa Bancária (R$)", min_value=0.0, value=float(c_tarifa_exib), format="%.2f")
 
                         btn_salvar_e, btn_cancel_e = st.columns(2)
                         with btn_salvar_e:
                             if st.form_submit_button("💾 Salvar Alterações", use_container_width=True, type="primary"):
-                                val_rec_calculado = max(0.0, float(e_valor) - float(e_tarifa))
+                                val_rec_calculado = max(0.0, float(e_valor))
                                 supabase.table("vendas").update({
                                     "cliente": e_cliente.strip(),
                                     "valor_venda": round(float(e_valor), 2),
-                                    "tarifa_cartao": round(float(e_tarifa), 2),
-                                    "tarifa_bancaria": round(float(e_tarifa), 2),
                                     "valor_recebido": round(val_rec_calculado, 2),
                                     "forma_pagto": e_forma_pagto
                                 }).eq("id", v_id).execute()
@@ -1879,7 +1874,6 @@ elif "Custos" in menu:
                 df_v_tarifa["Valor Venda"] = get_numeric_series(df_v_tarifa, col_val)
                 df_v_tarifa["Valor Venda (R$)"] = df_v_tarifa["Valor Venda"].apply(lambda v: f"R$ {v:,.2f}")
 
-                # IMAGEM 4: Remoção das colunas "Tarifa Bancária" e "% Taxa"
                 cols_fin = ["Data", "Código", "Cliente", "Valor Venda (R$)"]
                 st.dataframe(df_v_tarifa[cols_fin], use_container_width=True, hide_index=True)
             else:
@@ -2040,6 +2034,7 @@ elif "Aportes" in menu:
     st.subheader("🤝 Registro de Aportes e Devoluções")
     c1, c2, c3 = st.columns(3)
     with c1:
+        # IMAGEM 2: Configuração explícita da data no formato DD/MM/AAAA
         dt_ap = st.date_input("Data *", datetime.date.today(), format="DD/MM/YYYY")
     with c2:
         socio_ap = st.selectbox("Sócio *", ["", "Renan", "Ronald"], index=0)
@@ -2314,4 +2309,4 @@ elif "Configuração" in menu or "Configuracao" in menu:
         else:
             set_ultimo_codigo_config(novo_cod_input.strip())
             st.session_state["flash_success"] = f"🎉 Configuração atualizada! O 'Último Item Cadastrado no Estoque' é '{novo_cod_input.strip()}'."
-            st.rerun()
+            st.
