@@ -366,6 +366,20 @@ def safe_upsert_produto(payload: dict):
         st.error(f"Erro ao atualizar o produto `{payload.get('codigo')}`: {err}")
         return False
 
+def dar_baixa_estoque_venda(codigo_prod, qtd_venda=1):
+    if not supabase or not codigo_prod or qtd_venda <= 0:
+        return
+    try:
+        res_p = supabase.table("produtos").select("*").eq("codigo", codigo_prod).execute()
+        if res_p.data and len(res_p.data) > 0:
+            prod_row = res_p.data[0]
+            col_qtd = "qtd_estoque" if "qtd_estoque" in prod_row else ("qtd" if "qtd" in prod_row else "estoque")
+            qtd_atual = int(pd.to_numeric(prod_row.get(col_qtd, 0), errors="coerce") or 0)
+            novo_estoque = max(0, qtd_atual - int(qtd_venda))
+            supabase.table("produtos").update({col_qtd: novo_estoque}).eq("codigo", codigo_prod).execute()
+    except Exception as e:
+        st.error(f"Erro ao atualizar estoque do produto: {e}")
+
 def estornar_estoque(codigo_prod, qtd_estorno):
     if not supabase or not codigo_prod or qtd_estorno <= 0:
         return
@@ -498,7 +512,6 @@ def get_df_compra_mercadorias():
     
     col_dt = "data_criacao" if "data_criacao" in df_ped_ent.columns else "data"
     
-    # Garantir código único por linha
     if "codigo_produto" in df_ped_ent.columns:
         codigos_col = df_ped_ent["codigo_produto"].fillna(get_ultimo_codigo_config())
     else:
@@ -519,6 +532,65 @@ def get_df_compra_mercadorias():
         "total_item_calc": df_ped_ent["total_item_calc"]
     })
     return df_cm
+
+# Função auxiliar global para obter o saldo acumulado final do Fluxo de Caixa (IMAGEM 4)
+def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, df_devolucoes_in):
+    lista_movimentos = []
+
+    # 1. Compras de Mercadorias
+    df_cm = get_df_compra_mercadorias()
+    if not df_cm.empty:
+        df_cm["data_str"] = df_cm["Data_Raw"].astype(str).str.slice(0, 10)
+        agrup_cm = df_cm.groupby("data_str").agg(total_custo=("total_item_calc", "sum")).reset_index()
+        for _, r in agrup_cm.iterrows():
+            tot_c = float(r["total_custo"])
+            if tot_c > 0:
+                lista_movimentos.append({"Data_Val": r["data_str"], "Valor_Num": -tot_c})
+
+    # 2. Recebimentos das Vendas
+    if not df_vendas_in.empty:
+        col_dt_rec = "data_recebimento" if "data_recebimento" in df_vendas_in.columns else ("data_receb" if "data_receb" in df_vendas_in.columns else "data")
+        for _, r in df_vendas_in.iterrows():
+            dt_v = r.get(col_dt_rec) or r.get("data")
+            val_venda_num = parse_money(r.get("valor_venda") or r.get("valor") or 0.0)
+            tarifa_num = parse_money(r.get("tarifa_bancaria") or r.get("tarifa_cartao", 0.0))
+            val_rec_bd = r.get("valor_recebido")
+            if val_rec_bd is not None and str(val_rec_bd).strip() not in ["", "None", "nan"]:
+                val_v_calc = parse_money(val_rec_bd)
+            else:
+                val_v_calc = max(0.0, val_venda_num - tarifa_num)
+            if val_v_calc > 0:
+                lista_movimentos.append({"Data_Val": str(dt_v), "Valor_Num": val_v_calc})
+
+    # 3. Custos e Despesas
+    if not df_custos_in.empty:
+        for _, r in df_custos_in.iterrows():
+            val_c = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
+            if val_c > 0:
+                lista_movimentos.append({"Data_Val": str(r.get("data")), "Valor_Num": -val_c})
+
+    # 4. Aportes e Devoluções
+    if not df_aportes_in.empty:
+        for _, r in df_aportes_in.iterrows():
+            val_ap = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
+            tipo_ap = str(r.get("tipo", ""))
+            if val_ap != 0:
+                is_devolucao = "devoluc" in tipo_ap.lower() or val_ap < 0
+                val_final = -abs(val_ap) if is_devolucao else abs(val_ap)
+                dt_ap_raw = r.get("data") or r.get("created_at") or r.get("data_aporte")
+                lista_movimentos.append({"Data_Val": str(dt_ap_raw), "Valor_Num": val_final})
+
+    # 5. Devoluções de Vendas
+    if not df_devolucoes_in.empty:
+        for _, r in df_devolucoes_in.iterrows():
+            val_dev = float(pd.to_numeric(r.get("valor_devolvido", 0.0), errors="coerce") or 0.0)
+            if val_dev > 0:
+                lista_movimentos.append({"Data_Val": str(r.get("data_devolucao")), "Valor_Num": -val_dev})
+
+    if lista_movimentos:
+        df_ext = pd.DataFrame(lista_movimentos)
+        return float(df_ext["Valor_Num"].sum())
+    return 0.0
 
 # Carregar tabelas do Supabase
 df_produtos = fetch_data("produtos")
@@ -578,7 +650,7 @@ with st.sidebar:
                 
                 if save_logo_to_db(data_url):
                     st.session_state["current_logo"] = data_url
-                    st.success("Logo fixa salva e applied!")
+                    st.success("Logo fixa salva e aplicada!")
                     st.rerun()
 
         if st.session_state.get("current_logo") is not None:
@@ -624,12 +696,8 @@ if "Dashboard" in menu:
                 qtds = get_numeric_series(df_v_cm, col_q, 1.0) if col_q else 1.0
                 total_cmv = float((df_v_cm["total_item_calc"] * qtds).sum())
 
-    saldo_caixa = 0.0
-    if not df_caixa.empty and "valor" in df_caixa.columns and "tipo" in df_caixa.columns:
-        df_caixa["valor_num"] = get_numeric_series(df_caixa, "valor")
-        entradas = df_caixa[df_caixa["tipo"].isin(["Venda", "Aporte de Sócio", "Entrada"])]["valor_num"].sum()
-        saidas = df_caixa[~df_caixa["tipo"].isin(["Venda", "Aporte de Sócio", "Entrada"])]["valor_num"].sum()
-        saldo_caixa = float(entradas - saidas)
+    # IMAGEM 4: Na caixa "SALDO EM CAIXA" vincular essa informação ao "saldo final" do menu Fluxo de Caixa
+    saldo_caixa = calcular_saldo_final_fluxo_caixa(df_vendas, df_custos, df_aportes, df_devolucoes)
 
     total_qtd_vendida = 0
     if not df_vendas.empty:
@@ -643,7 +711,7 @@ if "Dashboard" in menu:
     with k2:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV TOTAL <span class="tooltip-icon" title="Custo das mercadorias vendidas obtido do menu Compra de Mercadoria">ℹ</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
     with k3:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo financeiro líquido acumulado">ℹ</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo final vindo do menu Fluxo de Caixa">ℹ</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
     with k4:
         st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Quantidade Vendida <span class="tooltip-icon" title="Quantidade total de peças/bonés faturados nas vendas">ℹ</span></div><div class="kpi-value">{total_qtd_vendida} un</div></div>', unsafe_allow_html=True)
 
@@ -1096,9 +1164,16 @@ elif "Estoque" in menu:
     
     if not df_cm.empty:
         df_est = df_cm.copy()
-        df_est["Estoque"] = 1
-        df_est["Status"] = "Disponível"
         
+        # Vincular estoque atual com a tabela de produtos
+        if not df_produtos.empty and "codigo" in df_produtos.columns:
+            col_qtd_p = "qtd_estoque" if "qtd_estoque" in df_produtos.columns else ("qtd" if "qtd" in df_produtos.columns else "estoque")
+            df_est = df_est.merge(df_produtos[["codigo", col_qtd_p]], left_on="Código", right_on="codigo", how="left")
+            df_est["Estoque"] = pd.to_numeric(df_est[col_qtd_p], errors="coerce").fillna(1).astype(int)
+        else:
+            df_est["Estoque"] = 1
+            
+        df_est["Status"] = df_est["Estoque"].apply(lambda q: "Disponível" if q > 0 else "Esgotado")
         df_est["custo_total_num"] = df_est["preco_num"] + df_est["estampa_extra_num"] + df_est["matriz_num"]
 
         qtd_total_estoque = int(df_est["Estoque"].sum())
@@ -1108,7 +1183,7 @@ elif "Estoque" in menu:
             with st.form("form_baixa_estoque"):
                 cb_c1, cb_c2, cb_c3 = st.columns(3)
                 with cb_c1:
-                    cods_disponiveis = df_est["Código"].tolist()
+                    cods_disponiveis = df_est[df_est["Estoque"] > 0]["Código"].tolist()
                     cod_baixa = st.selectbox("Selecione a Mercadoria *", cods_disponiveis if cods_disponiveis else ["Sem itens"])
                 with cb_c2:
                     motivo_baixa = st.selectbox("Motivo da Baixa *", ["Perda", "Avaria", "Brinde", "Outro"])
@@ -1126,6 +1201,7 @@ elif "Estoque" in menu:
                             "data_baixa": str(dt_baixa)
                         }
                         safe_insert("baixas_estoque", payload_baixa)
+                        dar_baixa_estoque_venda(cod_baixa, 1)
                         st.session_state["flash_success"] = f"🔻 Baixa do item '{cod_baixa}' por '{motivo_baixa}' realizada com sucesso!"
                         st.rerun()
 
@@ -1169,12 +1245,34 @@ elif "Vendas" in menu:
     st.subheader("🛒 Lançar Nova Venda")
     
     df_cm_estoque = get_df_compra_mercadorias()
-    opts = []
+    
+    # IMAGEM 1: Apenas produtos com estoque disponível > 0 e limpa do seletor quando atinge 0 unidades
+    map_estoque_disponivel = {}
     
     if not df_cm_estoque.empty:
         df_cm_estoque = df_cm_estoque[~df_cm_estoque["Código"].isin(CODIGOS_REMOVER)]
-        opts = [f"[{r['Código']}] \"{r.get('Arte Estampada','')}\" - Cor: {r.get('Cor do Boné','')} (Disponível: 1 un)" for _, r in df_cm_estoque.iterrows()]
-    
+        
+        # Mapeia com a tabela de produtos
+        if not df_produtos.empty and "codigo" in df_produtos.columns:
+            col_q = "qtd_estoque" if "qtd_estoque" in df_produtos.columns else ("qtd" if "qtd" in df_produtos.columns else "estoque")
+            df_cm_estoque = df_cm_estoque.merge(df_produtos[["codigo", col_q]], left_on="Código", right_on="codigo", how="left")
+            df_cm_estoque["qtd_disp"] = pd.to_numeric(df_cm_estoque[col_q], errors="coerce").fillna(1).astype(int)
+        else:
+            df_cm_estoque["qtd_disp"] = 1
+
+        # Filtra estritamente itens que possuem estoque > 0
+        df_cm_disponivel = df_cm_estoque[df_cm_estoque["qtd_disp"] > 0]
+        
+        opts = []
+        for _, r in df_cm_disponivel.iterrows():
+            cod_item = r['Código']
+            q_disp = int(r['qtd_disp'])
+            map_estoque_disponivel[cod_item] = q_disp
+            opts.append(f"[{cod_item}] \"{r.get('Arte Estampada','')}\" - Cor: {r.get('Cor do Boné','')} (Disponível: {q_disp} un)")
+    else:
+        df_cm_disponivel = pd.DataFrame()
+        opts = []
+
     opts.insert(0, "✏ Digitar Código Manualmente / Outro")
 
     col_sel_p, col_cod_m = st.columns([2, 1])
@@ -1183,12 +1281,14 @@ elif "Vendas" in menu:
             "🔍 Selecione/Pesquise o Boné no Estoque (ou selecione para digitar):",
             opts,
             index=0,
-            help="Campo de pesquisa integrada para seleção de bonés do estoque ou digitação livre."
+            help="Mostra apenas itens com estoque disponível."
         )
 
     codigo_sel = ""
     if prod_sel and not prod_sel.startswith("✏"):
         codigo_sel = prod_sel.split("]")[0].replace("[", "").strip()
+
+    max_qtd_permitida = map_estoque_disponivel.get(codigo_sel, 9999) if codigo_sel else 9999
 
     with col_cod_m:
         if prod_sel.startswith("✏"):
@@ -1198,19 +1298,25 @@ elif "Vendas" in menu:
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        qtd_venda = st.number_input("Quantidade *", min_value=1, value=1, step=1)
+        # IMAGEM 1: Limitar a quantidade máxima para venda conforme o estoque disponível
+        qtd_venda = st.number_input(
+            "Quantidade *", 
+            min_value=1, 
+            max_value=max_qtd_permitida, 
+            value=1, 
+            step=1,
+            help=f"Estoque limite atual: {max_qtd_permitida} un" if max_qtd_permitida < 9999 else "Quantidade a ser vendida"
+        )
         cliente = st.text_input("Nome do Cliente *")
     with c2:
         valor_venda = st.number_input("Valor de Venda (R$) *", min_value=0.0, value=60.0, step=5.0, format="%.2f")
         forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
     with c3:
         data_venda = st.date_input("Data da Venda *", datetime.date.today(), format="DD/MM/YYYY")
-        # IMAGEM 1: Campo Tarifa Bancária posicionado ao lado da forma de pagamento como Opcional (formato float com 2 casas decimais)
         tarifa_bancaria = st.number_input("Tarifa Bancária (R$) (Opcional)", min_value=0.0, value=0.0, step=0.5, format="%.2f")
 
     data_receb = st.date_input("Data de Recebimento (Opcional)", value=None, format="DD/MM/YYYY")
 
-    # IMAGEM 1: Valor Recebido Calculado = Valor de Venda - Tarifa Bancária
     valor_recebido = max(0.0, float(valor_venda) - float(tarifa_bancaria))
 
     st.markdown(f"👉 **Valor Recebido Calculado:** `R$ {valor_recebido:,.2f}`")
@@ -1238,7 +1344,7 @@ elif "Vendas" in menu:
                 "qtd": int(qtd_venda),
                 "valor_venda": val_venda_fmt,
                 "valor_recebido": val_receb_fmt,
-                "tarifa_cartao": tarifa_fmt, # Mantém compatibilidade no banco para a tarifa bancária
+                "tarifa_cartao": tarifa_fmt,
                 "tarifa_bancaria": tarifa_fmt,
                 "forma_pagto": forma_pagto,
                 "data": str(data_venda),
@@ -1250,6 +1356,9 @@ elif "Vendas" in menu:
                 payload_venda["data_recebimento"] = dt_receb_str
 
             if safe_insert("vendas", payload_venda):
+                # IMAGEM 1: Reduz o estoque para que o item suma da opção caso alcance 0 unidades
+                dar_baixa_estoque_venda(codigo_sel.strip(), int(qtd_venda))
+
                 if dt_receb_str and val_receb_fmt > 0:
                     safe_insert("caixa", {
                         "data": dt_receb_str,
@@ -1315,7 +1424,7 @@ elif "Vendas" in menu:
                     estornar_estoque(cod_prod_excluir, qtd_venda_excluir)
 
                     supabase.table("vendas").delete().eq("id", venda_id).execute()
-                    st.session_state["flash_success"] = "🗑️️ Venda excluída e produtos estornados ao estoque com sucesso!"
+                    st.session_state["flash_success"] = "🗑 Venda excluída e produtos estornados ao estoque com sucesso!"
                     st.rerun()
 
             df_pend_exib = df_pendentes.copy()
@@ -1325,20 +1434,20 @@ elif "Vendas" in menu:
             col_val = "valor_venda" if "valor_venda" in df_pend_exib.columns else "valor"
             col_pag = "forma_pagto" if "forma_pagto" in df_pend_exib.columns else "pagto"
 
-            # IMAGEM 2: Adicionadas colunas 'Despesas Financeira' (Tarifa Bancária) e 'Valor a Receber' (Valor Venda - Tarifa)
             df_pend_exib["v_venda_num"] = get_numeric_series(df_pend_exib, col_val)
             df_pend_exib["v_tarifa_num"] = df_pend_exib.apply(
                 lambda r: float(pd.to_numeric(r.get("tarifa_bancaria") or r.get("tarifa_cartao", 0.0), errors="coerce") or 0.0), axis=1
             )
             df_pend_exib["v_a_receber_num"] = df_pend_exib["v_venda_num"] - df_pend_exib["v_tarifa_num"]
 
+            # IMAGEM 2: acrescentar colunas de "Tarifa" e "Líquido Recebido" colocadas após a coluna "Recebido"/"Valor de Venda"
             df_tabela_pend = pd.DataFrame({
                 "Data da Venda": df_pend_exib[col_d_v].apply(format_data_br) if col_d_v in df_pend_exib.columns else "",
                 "Código": df_pend_exib.get(col_c_b, ""),
                 "Cliente": df_pend_exib.get(col_cli, ""),
                 "Valor de Venda": df_pend_exib["v_venda_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
-                "Despesas Financeira": df_pend_exib["v_tarifa_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
-                "Valor a Receber": df_pend_exib["v_a_receber_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
+                "Tarifa": df_pend_exib["v_tarifa_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
+                "Líquido Recebido": df_pend_exib["v_a_receber_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
                 "Forma de Pagamento": df_pend_exib.get(col_pag, "")
             })
             st.dataframe(df_tabela_pend, use_container_width=True, hide_index=True)
@@ -1389,7 +1498,6 @@ elif "Vendas" in menu:
                     st.rerun()
 
     st.markdown("---")
-    # IMAGEM 3: Estrutura completamente reformulada com tabela limpa e colunas exatas
     st.subheader("📋 Histórico Detalhado de Vendas")
     if not df_vendas.empty:
         df_v_exib = df_vendas.copy()
@@ -1406,7 +1514,6 @@ elif "Vendas" in menu:
             df_v_mes = df_v_exib[df_v_exib["Mes_Ano"] == mes]
             st.markdown(f"#### 📅 Mês: {mes}")
 
-            # Cabeçalho da Tabela
             col_h = st.columns([1.5, 1.3, 2.2, 1.8, 1.8, 0.6, 0.6])
             col_h[0].markdown("**Data da Venda**")
             col_h[1].markdown("**Código**")
@@ -1425,7 +1532,6 @@ elif "Vendas" in menu:
                 
                 c_val_exib = float(pd.to_numeric(row.get(col_val, 0.0), errors="coerce") or 0.0)
                 c_tarifa_exib = float(pd.to_numeric(row.get("tarifa_bancaria") or row.get("tarifa_cartao", 0.0), errors="coerce") or 0.0)
-                # Recebido = Valor Venda - Tarifa Bancária
                 c_receb_exib = max(0.0, c_val_exib - c_tarifa_exib)
                 
                 c_pag_exib = str(row.get(col_pag, "PIX"))
@@ -1548,6 +1654,7 @@ elif "Vendas" in menu:
                             payload_imp_v["data_recebimento"] = dt_rec_v_str
 
                         safe_insert("vendas", payload_imp_v)
+                        dar_baixa_estoque_venda(cod_v, qtd_v)
                         count_v_imp += 1
 
                     st.session_state["flash_success"] = f"🎉 {count_v_imp} vendas importadas com sucesso!"
@@ -1667,7 +1774,7 @@ elif "Custos" in menu:
                                 st.rerun()
                         st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
             else:
-                st.info("Nenum custo de venda registrado até o momento.")
+                st.info("Nenhum custo de venda registrado até o momento.")
         else:
             st.info("Nenhum custo registrado.")
 
@@ -1820,7 +1927,7 @@ elif "Caixa" in menu or "Fluxo" in menu:
                 lista_movimentos.append({
                     "Data_Val": dt_c,
                     "Data": format_data_br(dt_c),
-                    "Origem": "🛍️️ Compra de Mercadorias",
+                    "Origem": "🛍 Compra de Mercadorias",
                     "Descrição": f"Compra Agrupada ({tot_qtd} itens adquiridos)",
                     "Tipo": "Saída 🔴",
                     "Valor_Num": -tot_c
@@ -1923,11 +2030,24 @@ elif "Caixa" in menu or "Fluxo" in menu:
 
         meses_caixa = sorted(df_extrato["Mes_Ano"].unique(), reverse=True)
         for mes in meses_caixa:
-            df_cx_mes = df_extrato[df_extrato["Mes_Ano"] == mes]
+            df_cx_mes = df_extrato[df_extrato["Mes_Ano"] == mes].copy()
             st.markdown(f"#### 📅 Mês: {mes}")
             
             cols_final = ["Data", "Origem", "Descrição", "Tipo", "Valor (R$)", "Saldo Acumulado (R$)"]
-            st.dataframe(df_cx_mes[cols_final], use_container_width=True, hide_index=True)
+            
+            # IMAGEM 3: Adicionada linha com o Saldo Final ao final de cada período no extrato
+            saldo_final_mes = df_cx_mes["Saldo_Acumulado"].iloc[-1]
+            row_saldo_final = pd.DataFrame([{
+                "Data": "—",
+                "Origem": "🏁 SALDO FINAL",
+                "Descrição": f"Saldo Acumulado Final do Período ({mes})",
+                "Tipo": "Saldo 💵",
+                "Valor (R$)": f"R$ {saldo_final_mes:,.2f}",
+                "Saldo Acumulado (R$)": f"R$ {saldo_final_mes:,.2f}"
+            }])
+            
+            df_cx_mes_exib = pd.concat([df_cx_mes[cols_final], row_saldo_final], ignore_index=True)
+            st.dataframe(df_cx_mes_exib, use_container_width=True, hide_index=True)
     else:
         st.info("Nenhuma movimentação registrada no fluxo de caixa.")
 
@@ -2105,7 +2225,7 @@ elif "Aportes" in menu:
                                     st.rerun()
                     st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
         else:
-            st.info("Nenhum aporte registrado com data válida até o momento.")
+            st.info("Nenum aporte registrado com data válida até o momento.")
     else:
         st.info("Nenhum aporte ou devolução registrado no momento.")
 
