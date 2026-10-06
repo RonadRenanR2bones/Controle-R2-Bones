@@ -1153,7 +1153,7 @@ elif "Pedidos" in menu:
                                 conn.commit()
                                 conn.close()
 
-                                st.session_state["flash_success"] = f"🗑️ {len(ids_itens_acao)} item(ns) cancelado(s) e excluído(s) com sucesso!"
+                                st.session_state["flash_success"] = f"🗑️️ {len(ids_itens_acao)} item(ns) cancelado(s) e excluído(s) com sucesso!"
                                 st.rerun()
 
 elif "Estoque" in menu:
@@ -2309,4 +2309,4 @@ elif "Configuração" in menu or "Configuracao" in menu:
         else:
             set_ultimo_codigo_config(novo_cod_input.strip())
             st.session_state["flash_success"] = f"🎉 Configuração atualizada! O 'Último Item Cadastrado no Estoque' é '{novo_cod_input.strip()}'."
-            st.
+            st.rerun()
