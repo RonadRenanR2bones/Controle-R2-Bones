@@ -1298,7 +1298,7 @@ elif "Vendas" in menu:
         opts = []
 
     if not opts:
-        st.warning("⚠️️ Nenhum boné disponível em estoque para venda no momento.")
+        st.warning("⚠ Nenhum boné disponível em estoque para venda no momento.")
         prod_sel = None
         codigo_sel = ""
     else:
