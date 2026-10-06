@@ -195,6 +195,7 @@ def init_db():
             cliente TEXT,
             qtd INTEGER DEFAULT 1,
             valor_venda REAL DEFAULT 0.0,
+            tarifa REAL DEFAULT 0.0,
             valor_recebido REAL DEFAULT 0.0,
             forma_pagto TEXT,
             data TEXT,
@@ -209,6 +210,7 @@ def init_db():
     colunas_vendas_necessarias = {
         "codigo_bone": "TEXT", "codigo": "TEXT", "cliente": "TEXT",
         "qtd": "INTEGER DEFAULT 1", "valor_venda": "REAL DEFAULT 0.0",
+        "tarifa": "REAL DEFAULT 0.0",
         "valor_recebido": "REAL DEFAULT 0.0",
         "forma_pagto": "TEXT", "data": "TEXT", "data_venda": "TEXT",
         "data_recebimento": "TEXT", "custo": "REAL DEFAULT 0.0",
@@ -359,7 +361,13 @@ def normalizar_df_vendas(df: pd.DataFrame) -> pd.DataFrame:
     df_res = df.copy()
     col_v = "valor_venda" if "valor_venda" in df_res.columns else ("valor" if "valor" in df_res.columns else "valor_total")
     df_res["valor_bruto_calc"] = get_numeric_series(df_res, col_v)
-    df_res["liquido_recebido_calc"] = df_res["valor_bruto_calc"]
+    df_res["tarifa_calc"] = get_numeric_series(df_res, "tarifa")
+    
+    if "valor_recebido" in df_res.columns:
+        val_rec_raw = get_numeric_series(df_res, "valor_recebido")
+        df_res["liquido_recebido_calc"] = val_rec_raw.where(val_rec_raw > 0, df_res["valor_bruto_calc"] - df_res["tarifa_calc"])
+    else:
+        df_res["liquido_recebido_calc"] = df_res["valor_bruto_calc"] - df_res["tarifa_calc"]
 
     return df_res
 
@@ -533,7 +541,9 @@ def atualizar_caixa_da_venda(venda_antiga: dict, venda_nova: dict | None = None,
             supabase.table("caixa").delete().eq("data", parse_date_str(data_rec)).eq("desc", desc_antiga).execute()
         elif venda_nova is not None:
             data_nova = venda_nova.get("data_recebimento")
-            valor_novo = float(venda_nova.get("valor_recebido", 0) or 0)
+            v_bruto_n = float(venda_nova.get("valor_venda", 0) or 0)
+            t_n = float(venda_nova.get("tarifa", 0) or 0)
+            valor_novo = float(venda_nova.get("valor_recebido", v_bruto_n - t_n) or (v_bruto_n - t_n))
             codigo_novo = str(venda_nova.get("codigo_bone", codigo)).strip()
             cliente_novo = str(venda_nova.get("cliente", cliente)).strip()
             qtd_nova = int(pd.to_numeric(venda_nova.get("qtd", qtd), errors="coerce") or qtd)
@@ -592,7 +602,6 @@ def dar_baixa_estoque_venda(codigo_prod, qtd_venda=1):
     if not codigo_prod or qtd_venda <= 0:
         return False
     
-    # Atualizar no Supabase se disponível
     if supabase:
         try:
             res_p = supabase.table("produtos").select("*").eq("codigo", codigo_prod).execute()
@@ -605,7 +614,6 @@ def dar_baixa_estoque_venda(codigo_prod, qtd_venda=1):
         except Exception:
             pass
 
-    # Atualizar no SQLite local
     conn = None
     try:
         conn = sqlite3.connect(DB_NAME)
@@ -633,7 +641,6 @@ def estornar_estoque(codigo_prod, qtd_estorno):
     if not codigo_prod or qtd_estorno <= 0:
         return False
     
-    # 1. Atualizar no Supabase se disponível
     if supabase:
         try:
             res_p = supabase.table("produtos").select("*").eq("codigo", codigo_prod).execute()
@@ -646,7 +653,6 @@ def estornar_estoque(codigo_prod, qtd_estorno):
         except Exception:
             pass
 
-    # 2. Atualizar no SQLite local
     conn = None
     try:
         conn = sqlite3.connect(DB_NAME)
@@ -837,7 +843,7 @@ def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, 
             if tot_c > 0:
                 lista_movimentos.append({"Data_Val": r["data_str"], "Valor_Num": -tot_c})
 
-    # 2. Recebimentos das Vendas
+    # 2. Recebimentos Líquidos das Vendas
     if not df_vendas_in.empty:
         df_v_norm = normalizar_df_vendas(df_vendas_in)
         col_dt_rec = "data_recebimento" if "data_recebimento" in df_v_norm.columns else ("data_receb" if "data_receb" in df_v_norm.columns else "data")
@@ -1234,7 +1240,7 @@ elif "Pedidos" in menu:
                         except Exception as err_del_p:
                             st.error(f"Erro ao excluir no Supabase: {err_del_p}")
 
-                    st.session_state["flash_success"] = f"🗑️ Item ID #{id_ped_edit} excluído com sucesso!"
+                    st.session_state["flash_success"] = f"🗑️️ Item ID #{id_ped_edit} excluído com sucesso!"
                     st.rerun()
 
     st.markdown("---")
@@ -1704,7 +1710,7 @@ elif "Vendas" in menu:
 
     max_qtd_permitida = map_estoque_disponivel.get(codigo_sel, 1) if codigo_sel else 1
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         qtd_venda = st.number_input(
             "Quantidade *", 
@@ -1716,16 +1722,17 @@ elif "Vendas" in menu:
         )
         cliente = st.text_input("Nome do Cliente *")
     with c2:
-        valor_venda = st.number_input("Valor de Venda (R$) *", min_value=0.0, value=0.0, step=5.0, format="%.2f")
-        forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
+        valor_venda = st.number_input("Valor de Venda Bruto (R$) *", min_value=0.0, value=0.0, step=5.0, format="%.2f")
+        tarifa_venda = st.number_input("Tarifa / Taxa (R$)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
     with c3:
+        forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
         data_venda = st.date_input("Data da Venda *", datetime.date.today(), format="YYYY/MM/DD")
+    with c4:
+        data_receb = st.date_input("Data de Recebimento (Opcional)", value=None, format="YYYY/MM/DD")
+        st.write("")
 
-    data_receb = st.date_input("Data de Recebimento (Opcional)", value=None, format="YYYY/MM/DD")
-
-    valor_recebido = float(valor_venda)
-
-    st.markdown(f"👉 **Valor Total:** `R$ {valor_recebido:,.2f}`")
+    valor_liquido_calc = max(0.0, float(valor_venda) - float(tarifa_venda))
+    st.markdown(f"👉 **Valor Bruto:** `R$ {float(valor_venda):,.2f}` | 🏷 **Tarifa:** `R$ {float(tarifa_venda):,.2f}` | 💵 **Valor Líquido Recebido:** `R$ {valor_liquido_calc:,.2f}`")
 
     if st.button("🚀 Finalizar Venda Individual", type="primary", use_container_width=True):
         if not cliente.strip():
@@ -1740,15 +1747,18 @@ elif "Vendas" in menu:
             
             dt_venda_str = parse_date_str(data_venda)
             dt_receb_str = parse_date_str(data_receb) if data_receb is not None else None
-            val_venda_fmt = round(float(valor_venda), 2)
+            val_bruto_fmt = round(float(valor_venda), 2)
+            tarifa_fmt = round(float(tarifa_venda), 2)
+            val_liquido_fmt = round(valor_liquido_calc, 2)
 
             payload_venda = {
                 "codigo_bone": codigo_sel.strip(),
                 "codigo": codigo_sel.strip(),
                 "cliente": cliente.strip(),
                 "qtd": int(qtd_venda),
-                "valor_venda": val_venda_fmt,
-                "valor_recebido": val_venda_fmt,
+                "valor_venda": val_bruto_fmt,
+                "tarifa": tarifa_fmt,
+                "valor_recebido": val_liquido_fmt,
                 "forma_pagto": forma_pagto,
                 "data": dt_venda_str,
                 "data_venda": dt_venda_str,
@@ -1761,15 +1771,15 @@ elif "Vendas" in menu:
             if safe_insert("vendas", payload_venda):
                 dar_baixa_estoque_venda(codigo_sel.strip(), int(qtd_venda))
 
-                if dt_receb_str and val_venda_fmt > 0:
+                if dt_receb_str and val_liquido_fmt > 0:
                     safe_insert("caixa", {
                         "data": dt_receb_str,
                         "desc": f"Venda {codigo_sel.strip()} ({qtd_venda}un) - {cliente.strip()}",
                         "tipo": "Venda",
-                        "valor": val_venda_fmt
+                        "valor": val_liquido_fmt
                     })
                     
-                st.session_state["flash_success"] = f"🎉 Venda salva com sucesso! Valor: R$ {val_venda_fmt:,.2f}"
+                st.session_state["flash_success"] = f"🎉 Venda salva com sucesso! Líquido: R$ {val_liquido_fmt:,.2f}"
                 st.rerun()
 
     st.markdown("---")
@@ -1778,7 +1788,8 @@ elif "Vendas" in menu:
         df_modelo_vendas = pd.DataFrame([{
             "Código": "BL-0005",
             "Quantidade": 1,
-            "Valor": 80.00,
+            "Valor Bruto": 80.00,
+            "Tarifa": 3.50,
             "Data da Venda": "2026/10/05",
             "Nome do Cliente": "João Silva",
             "Forma de Pagto": "Cartão",
@@ -1809,7 +1820,9 @@ elif "Vendas" in menu:
                     for _, row in df_imp_v.iterrows():
                         cod_v = str(row.get('Código', row.get('codigo', ''))).strip()
                         qtd_v = int(pd.to_numeric(row.get('Quantidade', row.get('qtd', 1)), errors='coerce') or 1)
-                        val_v = parse_money(row.get('Valor', row.get('valor_venda', 0.0)))
+                        val_v = parse_money(row.get('Valor Bruto', row.get('valor_venda', row.get('valor', 0.0))))
+                        tarifa_v = parse_money(row.get('Tarifa', row.get('tarifa', 0.0)))
+                        val_liq_v = max(0.0, val_v - tarifa_v)
                         
                         dt_v_raw = row.get('Data da Venda', row.get('data', datetime.date.today()))
                         dt_v_str = parse_date_str(dt_v_raw)
@@ -1825,7 +1838,8 @@ elif "Vendas" in menu:
                             "cliente": cli_v,
                             "qtd": qtd_v,
                             "valor_venda": val_v,
-                            "valor_recebido": val_v,
+                            "tarifa": tarifa_v,
+                            "valor_recebido": val_liq_v,
                             "forma_pagto": pag_v,
                             "data": dt_v_str,
                             "data_venda": dt_v_str,
@@ -1846,7 +1860,7 @@ elif "Vendas" in menu:
 
     st.markdown("---")
     st.subheader("📋 Histórico Detalhado de Vendas")
-    st.caption("As vendas são agrupadas por mês. Use ✏️ para editar cliente, valor bruto e forma de pagamento, ou 🗑 para cancelar a venda e devolver a quantidade ao estoque.")
+    st.caption("As vendas são agrupadas por mês. Use ✏️ para editar cliente, valor bruto, tarifa e forma de pagamento, ou 🗑 para cancelar a venda e devolver a quantidade ao estoque.")
 
     df_historico_vendas = fetch_data("vendas")
     if df_historico_vendas.empty:
@@ -1873,9 +1887,10 @@ elif "Vendas" in menu:
                 venda_edit = linha_edicao.iloc[0].to_dict()
                 st.markdown("### ✏️ Editar Venda")
                 with st.container(border=True):
-                    c_ed1, c_ed2, c_ed3 = st.columns(3)
+                    c_ed1, c_ed2, c_ed3, c_ed4 = st.columns(4)
                     cliente_atual = str(venda_edit.get("cliente", "") or "")
                     bruto_atual = parse_money(venda_edit.get("valor_venda", venda_edit.get("valor", 0.0)))
+                    tarifa_atual = parse_money(venda_edit.get("tarifa", 0.0))
                     forma_atual = str(venda_edit.get("forma_pagto", "PIX") or "PIX")
                     formas_pagto = ["PIX", "Cartão", "Dinheiro", "Brinde"]
                     if forma_atual and forma_atual not in formas_pagto:
@@ -1886,7 +1901,12 @@ elif "Vendas" in menu:
                     with c_ed2:
                         bruto_editado = st.number_input("Valor Bruto (R$) *", min_value=0.0, value=float(bruto_atual), step=5.0, format="%.2f", key=f"bruto_edit_{id_edicao}")
                     with c_ed3:
+                        tarifa_editada = st.number_input("Tarifa (R$)", min_value=0.0, value=float(tarifa_atual), step=1.0, format="%.2f", key=f"tarifa_edit_{id_edicao}")
+                    with c_ed4:
                         forma_editada = st.selectbox("Forma de Pagamento *", formas_pagto, index=formas_pagto.index(forma_atual), key=f"forma_edit_{id_edicao}")
+
+                    liq_editado_calc = max(0.0, float(bruto_editado) - float(tarifa_editada))
+                    st.write(f"💵 **Líquido recalculado:** `R$ {liq_editado_calc:,.2f}`")
 
                     ce1, ce2, ce3 = st.columns([1, 1, 3])
                     with ce1:
@@ -1905,7 +1925,8 @@ elif "Vendas" in menu:
                             payload_edicao = {
                                 "cliente": cliente_editado.strip(),
                                 "valor_venda": round(float(bruto_editado), 2),
-                                "valor_recebido": round(float(bruto_editado), 2),
+                                "tarifa": round(float(tarifa_editada), 2),
+                                "valor_recebido": round(liq_editado_calc, 2),
                                 "forma_pagto": forma_editada
                             }
                             if safe_update_venda(id_edicao, payload_edicao):
@@ -1931,10 +1952,12 @@ elif "Vendas" in menu:
                 cliente = str(venda_row.get("cliente", "") or "").strip()
                 qtd = int(pd.to_numeric(venda_row.get("qtd", 1), errors="coerce") or 1)
                 valor_bruto = parse_money(venda_row.get("valor_venda", venda_row.get("valor", 0.0)))
+                tarifa_val = parse_money(venda_row.get("tarifa", 0.0))
+                valor_liquido = max(0.0, valor_bruto - tarifa_val)
                 forma = str(venda_row.get("forma_pagto", "") or "")
                 data_hist = str(venda_row.get("_data_hist", ""))
 
-                r1, r2, r3, r4, r5, r6, r7, r8 = st.columns([1.15, 1.0, 1.9, 0.9, 1.15, 1.0, 0.65, 0.65], vertical_alignment="center")
+                r1, r2, r3, r4, r5, r6, r7, r8, r9, r10 = st.columns([1.1, 0.9, 1.6, 0.6, 0.9, 0.8, 0.9, 0.8, 0.5, 0.5], vertical_alignment="center")
                 with r1:
                     st.write(f"**{data_hist}**")
                 with r2:
@@ -1942,16 +1965,20 @@ elif "Vendas" in menu:
                 with r3:
                     st.write(f"{cliente or 'Sem cliente'}")
                 with r4:
-                    st.write(f"{qtd} un")
+                    st.write(f"{qtd}un")
                 with r5:
                     st.write(f"R$ {valor_bruto:,.2f}")
                 with r6:
-                    st.write(f"{forma or '-'}")
+                    st.write(f"R$ {tarifa_val:,.2f}")
                 with r7:
+                    st.write(f"**R$ {valor_liquido:,.2f}**")
+                with r8:
+                    st.write(f"{forma or '-'}")
+                with r9:
                     if st.button("✏️", key=f"editar_venda_{venda_id}", help="Editar venda"):
                         st.session_state["editar_venda_id"] = venda_id
                         st.rerun()
-                with r8:
+                with r10:
                     if st.button("🗑", key=f"excluir_venda_{venda_id}", help="Excluir / Cancelar venda"):
                         qtd_estorno = max(1, qtd)
                         if estornar_estoque(codigo, qtd_estorno):
@@ -1967,7 +1994,7 @@ elif "Vendas" in menu:
 
 elif "Custos" in menu:
     st.subheader("💵 Gerenciamento de Custos e Despesas")
-    sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷 Custos de Venda", "🎪 Feiras"], horizontal=True)
+    sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷 Custos de Venda", "🎪 Feiras", "💳 Tarifas"], horizontal=True)
 
     if "Mercadorias" in sub_tab:
         df_cm = get_df_compra_mercadorias()
@@ -2163,6 +2190,47 @@ elif "Custos" in menu:
         else:
             st.info("Nenhum custo registrado.")
 
+    elif "Tarifas" in sub_tab:
+        st.markdown("##### 💳 Demonstrativo Detalhado de Tarifas Descontadas nas Vendas")
+        
+        df_v_tarifas = fetch_data("vendas")
+        if df_v_tarifas.empty:
+            df_v_tarifas = carregar_vendas_local()
+
+        if not df_v_tarifas.empty:
+            df_v_tarifas["tarifa_num"] = get_numeric_series(df_v_tarifas, "tarifa")
+            df_v_tarifa_com_valor = df_v_tarifas[df_v_tarifas["tarifa_num"] > 0].copy()
+
+            if not df_v_tarifa_com_valor.empty:
+                col_dt_t = "data_venda" if "data_venda" in df_v_tarifa_com_valor.columns else ("data" if "data" in df_v_tarifa_com_valor.columns else None)
+                col_cod_t = "codigo_bone" if "codigo_bone" in df_v_tarifa_com_valor.columns else ("codigo" if "codigo" in df_v_tarifa_com_valor.columns else "codigo_produto")
+
+                df_v_tarifa_com_valor["_data_t"] = df_v_tarifa_com_valor[col_dt_t].apply(parse_date_str) if col_dt_t else datetime.date.today().strftime("%Y/%m/%d")
+                df_v_tarifa_com_valor["_mes_t"] = pd.to_datetime(df_v_tarifa_com_valor["_data_t"], format="%Y/%m/%d", errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
+
+                meses_t = sorted(df_v_tarifa_com_valor["_mes_t"].unique(), reverse=True)
+                for mes in meses_t:
+                    df_mes_t = df_v_tarifa_com_valor[df_v_tarifa_com_valor["_mes_t"] == mes].sort_values(by="_data_t", ascending=False)
+                    total_mes_t = df_mes_t["tarifa_num"].sum()
+
+                    st.markdown(f"#### 📅 Mês: {mes.replace('-', '/')} — Total de Tarifas: `R$ {total_mes_t:,.2f}`")
+
+                    lista_exib_t = []
+                    for _, r in df_mes_t.iterrows():
+                        lista_exib_t.append({
+                            "Data": format_data_br(r.get("_data_t")),
+                            "Código Boné": str(r.get(col_cod_t, "")),
+                            "Cliente": str(r.get("cliente", "")),
+                            "Forma Pagto": str(r.get("forma_pagto", "")),
+                            "Valor da Tarifa": f"R$ {float(r.get('tarifa_num', 0)):,.2f}"
+                        })
+
+                    st.dataframe(pd.DataFrame(lista_exib_t), use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhuma tarifa de venda registrada até o momento.")
+        else:
+            st.info("Nenhuma venda registrada.")
+
 elif "Caixa" in menu or "Fluxo" in menu:
     st.subheader("💰 Extrato Consolidado de Fluxo de Caixa")
     
@@ -2192,7 +2260,7 @@ elif "Caixa" in menu or "Fluxo" in menu:
                     "Valor_Num": -tot_c
                 })
 
-    # 2. Recebimentos das Vendas
+    # 2. Recebimentos Líquidos das Vendas
     if not df_vendas.empty:
         df_v_norm = normalizar_df_vendas(df_vendas)
         col_dt_rec = "data_recebimento" if "data_recebimento" in df_v_norm.columns else ("data_receb" if "data_receb" in df_v_norm.columns else "data")
@@ -2207,7 +2275,7 @@ elif "Caixa" in menu or "Fluxo" in menu:
                 lista_movimentos.append({
                     "Data_Val": dt_v_str,
                     "Data": format_data_br(dt_v_str),
-                    "Origem": "🛒 Recebimento de Vendas",
+                    "Origem": "🛒 Recebimento de Vendas (Líquido)",
                     "Descrição": f"Venda {cod} - Cliente: {cli}",
                     "Tipo": "Entrada 🟢",
                     "Valor_Num": val_v_calc
@@ -2219,7 +2287,7 @@ elif "Caixa" in menu or "Fluxo" in menu:
             val_c = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
             sub_c = str(r.get("subcategoria", "Custos"))
             desc_c = r.get("desc") or r.get("descricao") or "Despesa Avulsa"
-            origem_tag = "🏷️️ Custos de Venda" if "venda" in sub_c.lower() else ("🎪 Custos de Feiras" if "feira" in sub_c.lower() else f"💵 Custos ({sub_c})")
+            origem_tag = "🏷 Custos de Venda" if "venda" in sub_c.lower() else ("🎪 Custos de Feiras" if "feira" in sub_c.lower() else f"💵 Custos ({sub_c})")
             if val_c > 0:
                 dt_c_str = parse_date_str(r.get("data"))
                 lista_movimentos.append({
