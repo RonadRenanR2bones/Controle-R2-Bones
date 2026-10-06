@@ -577,7 +577,7 @@ def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, 
             if val_ap != 0:
                 is_devolucao = "devoluc" in tipo_ap.lower() or val_ap < 0
                 val_final = -abs(val_ap) if is_devolucao else abs(val_ap)
-                dt_ap_raw = r.get("data") or r.get("created_at") or r.get("data_aporte")
+                dt_ap_raw = r.get("data") or r.get("data_aporte") or r.get("created_at")
                 lista_movimentos.append({"Data_Val": str(dt_ap_raw), "Valor_Num": val_final})
 
     # 5. Devoluções de Vendas
@@ -1267,28 +1267,21 @@ elif "Vendas" in menu:
         df_cm_disponivel = pd.DataFrame()
         opts = []
 
-    opts.insert(0, "✏ Digitar Código Manualmente / Outro")
-
-    col_sel_p, col_cod_m = st.columns([2, 1])
-    with col_sel_p:
+    # IMAGENS 1 E 2: Remoção da opção manual de digitação para forçar que o item possua estoque disponível
+    if not opts:
+        st.warning("⚠️ Nenhum boné disponível em estoque para venda no momento.")
+        prod_sel = None
+        codigo_sel = ""
+    else:
         prod_sel = st.selectbox(
-            "🔍 Selecione/Pesquise o Boné no Estoque (ou selecione para digitar):",
+            "🔍 Selecione/Pesquise o Boné no Estoque:",
             opts,
             index=0,
             help="Mostra apenas itens com estoque disponível."
         )
+        codigo_sel = prod_sel.split("]")[0].replace("[", "").strip() if prod_sel else ""
 
-    codigo_sel = ""
-    if prod_sel and not prod_sel.startswith("✏"):
-        codigo_sel = prod_sel.split("]")[0].replace("[", "").strip()
-
-    max_qtd_permitida = map_estoque_disponivel.get(codigo_sel, 9999) if codigo_sel else 9999
-
-    with col_cod_m:
-        if prod_sel.startswith("✏"):
-            codigo_sel = st.text_input("Código do Produto / Boné *", value="BL-0001", help="Informe o código único do item vendido")
-        else:
-            st.text_input("Código Selecionado", value=codigo_sel, disabled=True)
+    max_qtd_permitida = map_estoque_disponivel.get(codigo_sel, 1) if codigo_sel else 1
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -1298,7 +1291,7 @@ elif "Vendas" in menu:
             max_value=max_qtd_permitida, 
             value=1, 
             step=1,
-            help=f"Estoque limite atual: {max_qtd_permitida} un" if max_qtd_permitida < 9999 else "Quantidade a ser vendida"
+            help=f"Estoque limite atual: {max_qtd_permitida} un"
         )
         cliente = st.text_input("Nome do Cliente *")
     with c2:
@@ -1318,7 +1311,7 @@ elif "Vendas" in menu:
         if not cliente.strip():
             st.error("Informe o nome do cliente!")
         elif not codigo_sel.strip():
-            st.error("Informe um código de produto válido!")
+            st.error("Selecione um produto com estoque válido!")
         else:
             custo_total_cm = 0.0
             if not df_cm_estoque.empty and codigo_sel in df_cm_estoque["Código"].values:
@@ -1432,12 +1425,12 @@ elif "Vendas" in menu:
             )
             df_pend_exib["v_a_receber_num"] = df_pend_exib["v_venda_num"] - df_pend_exib["v_tarifa_num"]
 
+            # IMAGEM 3: Remoção da coluna "Tarifa" de Vendas Pendentes de Recebimento
             df_tabela_pend = pd.DataFrame({
                 "Data da Venda": df_pend_exib[col_d_v].apply(format_data_br) if col_d_v in df_pend_exib.columns else "",
                 "Código": df_pend_exib.get(col_c_b, ""),
                 "Cliente": df_pend_exib.get(col_cli, ""),
                 "Valor de Venda": df_pend_exib["v_venda_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
-                "Tarifa": df_pend_exib["v_tarifa_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
                 "Líquido Recebido": df_pend_exib["v_a_receber_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
                 "Forma de Pagamento": df_pend_exib.get(col_pag, "")
             })
@@ -1489,7 +1482,7 @@ elif "Vendas" in menu:
                     st.rerun()
 
     st.markdown("---")
-    # IMAGENS 3 E 4: Tabela do Histórico Detalhado de Vendas atualizada com "Tarifa" e "Líquido Recebido" após "Recebido/Valor de Venda"
+    # IMAGEM 3: Tabela do Histórico Detalhado de Vendas sem a coluna Tarifa
     st.subheader("📋 Histórico Detalhado de Vendas")
     if not df_vendas.empty:
         df_v_exib = df_vendas.copy()
@@ -1506,16 +1499,15 @@ elif "Vendas" in menu:
             df_v_mes = df_v_exib[df_v_exib["Mes_Ano"] == mes]
             st.markdown(f"#### 📅 Mês: {mes}")
 
-            col_h = st.columns([1.3, 1.1, 1.8, 1.4, 1.3, 1.5, 1.5, 0.5, 0.5])
+            col_h = st.columns([1.5, 1.2, 2.0, 1.8, 1.8, 1.7, 0.5, 0.5])
             col_h[0].markdown("**Data da Venda**")
             col_h[1].markdown("**Código**")
             col_h[2].markdown("**Cliente**")
             col_h[3].markdown("**Valor de Venda**")
-            col_h[4].markdown("**Tarifa**")
-            col_h[5].markdown("**Líquido Recebido**")
-            col_h[6].markdown("**Forma de Pagto**")
-            col_h[7].markdown("**Editar**")
-            col_h[8].markdown("**Excluir**")
+            col_h[4].markdown("**Líquido Recebido**")
+            col_h[5].markdown("**Forma de Pagto**")
+            col_h[6].markdown("**Editar**")
+            col_h[7].markdown("**Excluir**")
             st.markdown("<hr style='margin: 2px 0 8px 0;'>", unsafe_allow_html=True)
 
             for idx, row in df_v_mes.iterrows():
@@ -1530,20 +1522,19 @@ elif "Vendas" in menu:
                 
                 c_pag_exib = str(row.get(col_pag, "PIX"))
 
-                c_linha = st.columns([1.3, 1.1, 1.8, 1.4, 1.3, 1.5, 1.5, 0.5, 0.5])
+                c_linha = st.columns([1.5, 1.2, 2.0, 1.8, 1.8, 1.7, 0.5, 0.5])
                 c_linha[0].write(c_data_exib)
                 c_linha[1].write(c_cod_exib)
                 c_linha[2].write(c_cli_exib)
                 c_linha[3].write(f"R$ {c_val_exib:,.2f}")
-                c_linha[4].write(f"R$ {c_tarifa_exib:,.2f}")
-                c_linha[5].write(f"R$ {c_receb_exib:,.2f}")
-                c_linha[6].write(c_pag_exib)
+                c_linha[4].write(f"R$ {c_receb_exib:,.2f}")
+                c_linha[5].write(c_pag_exib)
                 
-                with c_linha[7]:
+                with c_linha[6]:
                     if st.button("✏️", key=f"btn_edit_row_{v_id}_{mes}", use_container_width=True):
                         st.session_state["editing_venda_id"] = v_id
                         st.rerun()
-                with c_linha[8]:
+                with c_linha[7]:
                     if st.button("🗑", key=f"btn_del_row_{v_id}_{mes}", use_container_width=True):
                         cod_prod_e = row.get("codigo_bone") or row.get("codigo") or row.get("codigo_produto")
                         qtd_venda_e = int(row.get("qtd") or row.get("quantidade") or 1)
@@ -1886,16 +1877,10 @@ elif "Custos" in menu:
                 df_v_tarifa["Código"] = df_v_tarifa.get(col_c_b, "")
                 df_v_tarifa["Cliente"] = df_v_tarifa.get(col_cli, "")
                 df_v_tarifa["Valor Venda"] = get_numeric_series(df_v_tarifa, col_val)
-                df_v_tarifa["Tarifa Bancária"] = df_v_tarifa["tarifa_cartao_num"]
-                
-                df_v_tarifa["% Taxa"] = df_v_tarifa.apply(
-                    lambda r: f"{(r['Tarifa Bancária'] / r['Valor Venda'] * 100):.2f}%" if r["Valor Venda"] > 0 else "0.00%", axis=1
-                )
-                
                 df_v_tarifa["Valor Venda (R$)"] = df_v_tarifa["Valor Venda"].apply(lambda v: f"R$ {v:,.2f}")
-                df_v_tarifa["Tarifa Bancária (R$)"] = df_v_tarifa["Tarifa Bancária"].apply(lambda v: f"R$ {v:,.2f}")
 
-                cols_fin = ["Data", "Código", "Cliente", "Valor Venda (R$)", "Tarifa Bancária (R$)", "% Taxa"]
+                # IMAGEM 4: Remoção das colunas "Tarifa Bancária" e "% Taxa"
+                cols_fin = ["Data", "Código", "Cliente", "Valor Venda (R$)"]
                 st.dataframe(df_v_tarifa[cols_fin], use_container_width=True, hide_index=True)
             else:
                 st.info("Nenhuma venda realizada por cartão com tarifa registrada.")
@@ -1975,14 +1960,13 @@ elif "Caixa" in menu or "Fluxo" in menu:
                     "Valor_Num": -val_c
                 })
 
-    # 4. Aporte e Devoluções de Sócios (IMAGENS 1 E 2: Garantia da data correta no Fluxo de Caixa)
+    # 4. Aporte e Devoluções de Sócios
     if not df_aportes.empty:
         for _, r in df_aportes.iterrows():
             val_ap = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
             tipo_ap = str(r.get("tipo", ""))
             socio = r.get("socio", "")
             
-            # Busca dinâmica e estrita da data do aporte
             dt_ap_raw = r.get("data") or r.get("data_aporte") or r.get("created_at")
             dt_ap_str = parse_date_str(dt_ap_raw) if dt_ap_raw else datetime.date.today().strftime("%Y-%m-%d")
             
