@@ -1307,8 +1307,11 @@ elif "Pedidos" in menu:
             "Cor da Estampa": "Off White",
             "Produto": "Básico",
             "Preço Base": 29.00,
+            "Estampa Extra": 0.00,
+            "Matriz Bordado": 0.00,
             "Total Item": 29.00,
             "Status": "Em Produção",
+            "Observações": "Nenhuma",
             "Data": "2026/10/06"
         }])
         st.dataframe(modelo_pedido, use_container_width=True, hide_index=True)
@@ -1345,8 +1348,11 @@ elif "Pedidos" in menu:
                     "Cor da Estampa": ["Cor da Estampa", "cor_linha", "Cor Estampa"],
                     "Produto": ["Produto", "tipo", "Categoria"],
                     "Preço Base": ["Preço Base", "Preco Base", "preco", "Preço", "Valor"],
+                    "Estampa Extra": ["Estampa Extra", "estampa_extra", "valor_estampa_extra"],
+                    "Matriz Bordado": ["Matriz Bordado", "matriz_bordado", "valor_matriz", "Matriz"],
                     "Total Item": ["Total Item", "total_item", "Total", "Valor Total"],
                     "Status": ["status"],
+                    "Observações": ["Observações", "Observacoes", "observacoes", "Obs"],
                     "Data": ["Data", "data", "Data da Criação", "data_criacao"]
                 }
 
@@ -1388,8 +1394,14 @@ elif "Pedidos" in menu:
                                 cor_estampa_imp = str(row.get(mapa_colunas_p.get("Cor da Estampa", ""), "")).strip() if "Cor da Estampa" in mapa_colunas_p else ""
                                 produto_imp = str(row.get(mapa_colunas_p["Produto"], "Básico")).strip() or "Básico"
                                 preco_imp = parse_money(row.get(mapa_colunas_p["Preço Base"], 0))
-                                total_imp = parse_money(row.get(mapa_colunas_p["Total Item"], preco_imp))
+                                estampa_extra_imp = parse_money(row.get(mapa_colunas_p.get("Estampa Extra", ""), 0)) if "Estampa Extra" in mapa_colunas_p else 0.0
+                                matriz_bordado_imp = parse_money(row.get(mapa_colunas_p.get("Matriz Bordado", ""), 0)) if "Matriz Bordado" in mapa_colunas_p else 0.0
+                                total_calc_imp = preco_imp + estampa_extra_imp + matriz_bordado_imp
+                                total_imp = parse_money(row.get(mapa_colunas_p["Total Item"], total_calc_imp))
+                                if total_imp <= 0:
+                                    total_imp = total_calc_imp
                                 status_imp = str(row.get(mapa_colunas_p["Status"], "Em Produção")).strip() or "Em Produção"
+                                obs_imp = str(row.get(mapa_colunas_p.get("Observações", ""), "Importado via planilha")).strip() if "Observações" in mapa_colunas_p else "Importado via planilha"
                                 data_imp = parse_date_str(row.get(mapa_colunas_p["Data"]))
 
                                 if not cor_bone_imp or not arte_imp:
@@ -1410,11 +1422,11 @@ elif "Pedidos" in menu:
                                     "cor_linha": cor_estampa_imp,
                                     "tipo": produto_imp,
                                     "preco": preco_imp,
+                                    "valor_estampa_extra": estampa_extra_imp,
+                                    "valor_matriz": matriz_bordado_imp,
                                     "total_item": total_imp,
-                                    "observacoes": "Importado via planilha",
-                                    "status": status_imp,
-                                    "valor_estampa_extra": 0.0,
-                                    "valor_matriz": 0.0
+                                    "observacoes": obs_imp,
+                                    "status": status_imp
                                 }
 
                                 if supabase:
