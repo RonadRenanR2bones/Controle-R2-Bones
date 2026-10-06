@@ -276,7 +276,7 @@ def parse_date_str(val):
 def get_numeric_series(df: pd.DataFrame, col_name: str, default_value: float = 0.0) -> pd.Series:
     if df.empty or col_name not in df.columns:
         return pd.Series([default_value] * len(df), index=df.index, dtype=float)
-    return pd.to_numeric(df[col_name], errors="coerce").fillna(default_value)
+    return df[col_name].apply(parse_money)
 
 def fetch_data(table_name: str) -> pd.DataFrame:
     if not supabase:
@@ -292,31 +292,31 @@ def fetch_data(table_name: str) -> pd.DataFrame:
 
 def normalizar_df_vendas(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Garante a presença e consistência das colunas de Tarifa Bancária e Líquido Recebido.
+    Garante a extração e cálculo consistente das colunas de Tarifa Bancária e Líquido Recebido
+    mesmo quando os dados vêm com tipos variados (string, float, int, None) do Supabase/SQLite.
     """
     if df.empty:
         return df
 
     df_res = df.copy()
 
-    # Identifica coluna de tarifa
-    def extrair_tarifa(row):
-        for col in ["tarifa_bancaria", "tarifa_cartao", "tarifa"]:
-            if col in row and pd.notna(row[col]):
-                val = parse_money(row[col])
-                if val > 0:
-                    return val
-        return 0.0
+    # Extrai o valor numérico de cada coluna potencial de tarifa
+    s_tb = get_numeric_series(df_res, "tarifa_bancaria") if "tarifa_bancaria" in df_res.columns else pd.Series(0.0, index=df_res.index)
+    s_tc = get_numeric_series(df_res, "tarifa_cartao") if "tarifa_cartao" in df_res.columns else pd.Series(0.0, index=df_res.index)
+    s_t = get_numeric_series(df_res, "tarifa") if "tarifa" in df_res.columns else pd.Series(0.0, index=df_res.index)
 
-    df_res["tarifa_bancaria_calc"] = df_res.apply(extrair_tarifa, axis=1)
+    # Consolida a tarifa prioritariamente pela primeira coluna que contiver valor > 0
+    df_res["tarifa_bancaria_calc"] = s_tb
+    df_res["tarifa_bancaria_calc"] = df_res["tarifa_bancaria_calc"].where(df_res["tarifa_bancaria_calc"] > 0, s_tc)
+    df_res["tarifa_bancaria_calc"] = df_res["tarifa_bancaria_calc"].where(df_res["tarifa_bancaria_calc"] > 0, s_t)
+    df_res["tarifa_bancaria_calc"] = df_res["tarifa_bancaria_calc"].fillna(0.0)
 
-    # Identifica valor bruto
+    # Identifica coluna de valor bruto da venda
     col_v = "valor_venda" if "valor_venda" in df_res.columns else ("valor" if "valor" in df_res.columns else "valor_total")
     df_res["valor_bruto_calc"] = get_numeric_series(df_res, col_v)
 
-    # Calcula líquido recebido
-    df_res["liquido_recebido_calc"] = df_res["valor_bruto_calc"] - df_res["tarifa_bancaria_calc"]
-    df_res["liquido_recebido_calc"] = df_res["liquido_recebido_calc"].apply(lambda v: max(0.0, v))
+    # Calcula a coluna de líquido recebido com garantia de não ficar negativa
+    df_res["liquido_recebido_calc"] = (df_res["valor_bruto_calc"] - df_res["tarifa_bancaria_calc"]).clip(lower=0.0)
 
     return df_res
 
@@ -1342,7 +1342,7 @@ elif "Vendas" in menu:
             tarifa_fmt = round(float(tarifa_bancaria), 2)
             val_receb_fmt = round(max(0.0, val_venda_fmt - tarifa_fmt), 2)
 
-            # Grava a tarifa explicitamente em todas as variações de nomes de colunas
+            # Grava a tarifa explicitamente em todas as variações de nomes de colunas como número decimal puro
             payload_venda = {
                 "codigo_bone": codigo_sel.strip(),
                 "codigo": codigo_sel.strip(),
