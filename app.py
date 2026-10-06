@@ -201,7 +201,6 @@ def init_db():
     ''')
     c.execute("UPDATE pedidos SET status = 'Em Produção' WHERE status = 'Pendente'")
     
-    # Tabela local de configurações caso não haja Supabase
     c.execute('''
         CREATE TABLE IF NOT EXISTS configuracoes (
             chave TEXT PRIMARY KEY,
@@ -209,7 +208,6 @@ def init_db():
         )
     ''')
     
-    # Tabela local de baixas de estoque
     c.execute('''
         CREATE TABLE IF NOT EXISTS baixas_estoque (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -220,7 +218,6 @@ def init_db():
         )
     ''')
     
-    # Tabela local de devoluções de vendas
     c.execute('''
         CREATE TABLE IF NOT EXISTS devolucoes_vendas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -238,7 +235,6 @@ def init_db():
 
 init_db()
 
-# Função auxiliar para formatar datas no padrão brasileiro DD/MM/AAAA garantindo dayfirst=True
 def format_data_br(val):
     if not val or pd.isna(val) or str(val).strip().lower() in ["none", "nat", "nan", ""]:
         return ""
@@ -248,7 +244,6 @@ def format_data_br(val):
     except Exception:
         return str(val)
 
-# Utilitário para conversão flexível de moeda
 def parse_money(val):
     if pd.isna(val) or val is None:
         return 0.0
@@ -266,7 +261,6 @@ def parse_money(val):
         cleaned = re.sub(r'[^\d.]', '', s)
         return float(cleaned) if cleaned else 0.0
 
-# Utilitário para conversão flexível de data (Garante ano-mês-dia sem inverter dia/mês brasileiro)
 def parse_date_str(val):
     if pd.isna(val) or val is None:
         return datetime.date.today().strftime("%Y-%m-%d")
@@ -279,7 +273,6 @@ def parse_date_str(val):
     except Exception:
         return s
 
-# Extração segura de Séries numéricas
 def get_numeric_series(df: pd.DataFrame, col_name: str, default_value: float = 0.0) -> pd.Series:
     if df.empty or col_name not in df.columns:
         return pd.Series([default_value] * len(df), index=df.index, dtype=float)
@@ -296,6 +289,36 @@ def fetch_data(table_name: str) -> pd.DataFrame:
         if "PGRST205" not in err_str and "schema cache" not in err_str:
             st.warning(f"Aviso de leitura na tabela `{table_name}`: {e}")
         return pd.DataFrame()
+
+def normalizar_df_vendas(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Garante a presença e consistência das colunas de Tarifa Bancária e Líquido Recebido.
+    """
+    if df.empty:
+        return df
+
+    df_res = df.copy()
+
+    # Identifica coluna de tarifa
+    def extrair_tarifa(row):
+        for col in ["tarifa_bancaria", "tarifa_cartao", "tarifa"]:
+            if col in row and pd.notna(row[col]):
+                val = parse_money(row[col])
+                if val > 0:
+                    return val
+        return 0.0
+
+    df_res["tarifa_bancaria_calc"] = df_res.apply(extrair_tarifa, axis=1)
+
+    # Identifica valor bruto
+    col_v = "valor_venda" if "valor_venda" in df_res.columns else ("valor" if "valor" in df_res.columns else "valor_total")
+    df_res["valor_bruto_calc"] = get_numeric_series(df_res, col_v)
+
+    # Calcula líquido recebido
+    df_res["liquido_recebido_calc"] = df_res["valor_bruto_calc"] - df_res["tarifa_bancaria_calc"]
+    df_res["liquido_recebido_calc"] = df_res["liquido_recebido_calc"].apply(lambda v: max(0.0, v))
+
+    return df_res
 
 def safe_insert(table_name: str, payload: dict):
     if not supabase:
@@ -431,7 +454,6 @@ def delete_logo_from_db():
     except Exception as e:
         st.error(f"Erro ao remover logo: {e}")
 
-# Auxiliares de Configuração do "Último Item Cadastrado no Estoque"
 def get_ultimo_codigo_config():
     if supabase:
         try:
@@ -492,7 +514,6 @@ def gerar_proximo_codigo(codigo_atual):
     except Exception:
         return "BL-0002"
 
-# Função auxiliar para centralizar os dados do menu Compra de Mercadorias (Pedidos Entregues)
 def get_df_compra_mercadorias():
     df_ped_ent = carregar_dataframe(
         "SELECT * FROM pedidos WHERE status LIKE '%Entregue%' ORDER BY id DESC"
@@ -533,7 +554,6 @@ def get_df_compra_mercadorias():
     })
     return df_cm
 
-# Função auxiliar global para obter o saldo acumulado final do Fluxo de Caixa
 def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, df_devolucoes_in):
     lista_movimentos = []
 
@@ -549,16 +569,11 @@ def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, 
 
     # 2. Recebimentos das Vendas
     if not df_vendas_in.empty:
-        col_dt_rec = "data_recebimento" if "data_recebimento" in df_vendas_in.columns else ("data_receb" if "data_receb" in df_vendas_in.columns else "data")
-        for _, r in df_vendas_in.iterrows():
+        df_v_norm = normalizar_df_vendas(df_vendas_in)
+        col_dt_rec = "data_recebimento" if "data_recebimento" in df_v_norm.columns else ("data_receb" if "data_receb" in df_v_norm.columns else "data")
+        for _, r in df_v_norm.iterrows():
             dt_v = r.get(col_dt_rec) or r.get("data")
-            val_venda_num = parse_money(r.get("valor_venda") or r.get("valor") or 0.0)
-            tarifa_num = parse_money(r.get("tarifa_bancaria") or r.get("tarifa_cartao", 0.0))
-            val_rec_bd = r.get("valor_recebido")
-            if val_rec_bd is not None and str(val_rec_bd).strip() not in ["", "None", "nan"]:
-                val_v_calc = parse_money(val_rec_bd)
-            else:
-                val_v_calc = max(0.0, val_venda_num - tarifa_num)
+            val_v_calc = float(r.get("liquido_recebido_calc", 0.0))
             if val_v_calc > 0:
                 lista_movimentos.append({"Data_Val": str(dt_v), "Valor_Num": val_v_calc})
 
@@ -1018,7 +1033,7 @@ elif "Pedidos" in menu:
     df_ped = carregar_dataframe("SELECT id, lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes, codigo_produto FROM pedidos ORDER BY id DESC")
 
     if df_ped.empty:
-        st.info("Nenum pedido cadastrado no momento.")
+        st.info("Nenhum pedido cadastrado no momento.")
     else:
         df_ped['lote_id'] = df_ped['lote_id'].fillna('Sem Lote Definido')
         df_ped['total_item'] = df_ped['preco'] + df_ped['valor_estampa_extra'].fillna(0) + df_ped['valor_matriz'].fillna(0)
@@ -1298,7 +1313,6 @@ elif "Vendas" in menu:
         )
         cliente = st.text_input("Nome do Cliente *")
     with c2:
-        # Valor inicializado em 0.00 sem auto-sugestão prévia
         valor_venda = st.number_input("Valor de Venda (R$) *", min_value=0.0, value=0.0, step=5.0, format="%.2f")
         forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
     with c3:
@@ -1325,9 +1339,10 @@ elif "Vendas" in menu:
             dt_venda_str = parse_date_str(data_venda)
             dt_receb_str = parse_date_str(data_receb) if data_receb is not None else None
             val_venda_fmt = round(float(valor_venda), 2)
-            val_receb_fmt = round(float(valor_recebido), 2)
             tarifa_fmt = round(float(tarifa_bancaria), 2)
+            val_receb_fmt = round(max(0.0, val_venda_fmt - tarifa_fmt), 2)
 
+            # Grava a tarifa explicitamente em todas as variações de nomes de colunas
             payload_venda = {
                 "codigo_bone": codigo_sel.strip(),
                 "codigo": codigo_sel.strip(),
@@ -1335,8 +1350,9 @@ elif "Vendas" in menu:
                 "qtd": int(qtd_venda),
                 "valor_venda": val_venda_fmt,
                 "valor_recebido": val_receb_fmt,
-                "tarifa_cartao": tarifa_fmt,
                 "tarifa_bancaria": tarifa_fmt,
+                "tarifa_cartao": tarifa_fmt,
+                "tarifa": tarifa_fmt,
                 "forma_pagto": forma_pagto,
                 "data": dt_venda_str,
                 "data_venda": dt_venda_str,
@@ -1357,22 +1373,22 @@ elif "Vendas" in menu:
                         "valor": val_receb_fmt
                     })
                     
-                st.session_state["flash_success"] = f"🎉 Venda salva com sucesso! Valor Recebido: R$ {val_receb_fmt:,.2f}"
+                st.session_state["flash_success"] = f"🎉 Venda salva com sucesso! Líquido Recebido: R$ {val_receb_fmt:,.2f} (Tarifa: R$ {tarifa_fmt:,.2f})"
                 st.rerun()
 
     st.markdown("---")
     st.subheader("⏳ Vendas Pendentes de Recebimento")
     
     if not df_vendas.empty:
-        col_dt_rec = "data_recebimento" if "data_recebimento" in df_vendas.columns else ("data_receb" if "data_receb" in df_vendas.columns else None)
+        df_vendas_norm = normalizar_df_vendas(df_vendas)
+        col_dt_rec = "data_recebimento" if "data_recebimento" in df_vendas_norm.columns else ("data_receb" if "data_receb" in df_vendas_norm.columns else None)
         if col_dt_rec:
-            df_pendentes = df_vendas[df_vendas[col_dt_rec].isna() | (df_vendas[col_dt_rec] == "") | (df_vendas[col_dt_rec] == "None")].copy()
+            df_pendentes = df_vendas_norm[df_vendas_norm[col_dt_rec].isna() | (df_vendas_norm[col_dt_rec] == "") | (df_vendas_norm[col_dt_rec] == "None")].copy()
         else:
             df_pendentes = pd.DataFrame()
 
         if not df_pendentes.empty:
-            c_val_p = "valor_venda" if "valor_venda" in df_pendentes.columns else ("valor" if "valor" in df_pendentes.columns else "valor_total")
-            opts_pend = [f"ID {r['id']} | {r.get('cliente','')} - R$ {round(float(r.get(c_val_p, 0.0)), 2):,.2f} (Venda: {format_data_br(r.get('data',''))})" for _, r in df_pendentes.iterrows()]
+            opts_pend = [f"ID {r['id']} | {r.get('cliente','')} - R$ {round(float(r.get('valor_bruto_calc', 0.0)), 2):,.2f} (Venda: {format_data_br(r.get('data',''))})" for _, r in df_pendentes.iterrows()]
             venda_sel = st.selectbox("📌 Selecione uma Venda para Gerenciar / Confirmar Recebimento:", opts_pend)
             
             c_rec1, c_rec2, c_rec3 = st.columns([2, 2, 1])
@@ -1388,10 +1404,7 @@ elif "Vendas" in menu:
                     supabase.table("vendas").update({col_dt_rec: dt_conf_str}).eq("id", venda_id).execute()
                     
                     c_cod = "codigo_bone" if "codigo_bone" in row_v else ("codigo" if "codigo" in row_v else "codigo_produto")
-                    
-                    val_bruto = float(pd.to_numeric(row_v.get(c_val_p, 0.0), errors="coerce") or 0.0)
-                    tarifa_val = float(pd.to_numeric(row_v.get("tarifa_bancaria") or row_v.get("tarifa_cartao", 0.0), errors="coerce") or 0.0)
-                    val_rec_fmt = round(max(0.0, val_bruto - tarifa_val), 2)
+                    val_rec_fmt = round(float(row_v.get("liquido_recebido_calc", 0.0)), 2)
                     
                     if val_rec_fmt > 0:
                         safe_insert("caixa", {
@@ -1422,23 +1435,15 @@ elif "Vendas" in menu:
             col_d_v = "data_venda" if "data_venda" in df_pend_exib.columns else "data"
             col_c_b = "codigo_bone" if "codigo_bone" in df_pend_exib.columns else "codigo"
             col_cli = "cliente" if "cliente" in df_pend_exib.columns else "nome_cliente"
-            col_val = "valor_venda" if "valor_venda" in df_pend_exib.columns else "valor"
             col_pag = "forma_pagto" if "forma_pagto" in df_pend_exib.columns else "pagto"
 
-            df_pend_exib["v_venda_num"] = get_numeric_series(df_pend_exib, col_val)
-            df_pend_exib["v_tarifa_num"] = df_pend_exib.apply(
-                lambda r: float(pd.to_numeric(r.get("tarifa_bancaria") or r.get("tarifa_cartao", 0.0), errors="coerce") or 0.0), axis=1
-            )
-            df_pend_exib["v_a_receber_num"] = df_pend_exib["v_venda_num"] - df_pend_exib["v_tarifa_num"]
-
-            # Exibição do relatório de Pendentes incluindo Tarifa Bancária e Líquido
             df_tabela_pend = pd.DataFrame({
                 "Data da Venda": df_pend_exib[col_d_v].apply(format_data_br) if col_d_v in df_pend_exib.columns else "",
                 "Código": df_pend_exib.get(col_c_b, ""),
                 "Cliente": df_pend_exib.get(col_cli, ""),
-                "Valor Bruto": df_pend_exib["v_venda_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
-                "Tarifa Bancária": df_pend_exib["v_tarifa_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
-                "Líquido Recebido": df_pend_exib["v_a_receber_num"].apply(lambda v: f"R$ {float(v):,.2f}"),
+                "Valor Bruto": df_pend_exib["valor_bruto_calc"].apply(lambda v: f"R$ {float(v):,.2f}"),
+                "Tarifa Bancária": df_pend_exib["tarifa_bancaria_calc"].apply(lambda v: f"R$ {float(v):,.2f}"),
+                "Líquido Recebido": df_pend_exib["liquido_recebido_calc"].apply(lambda v: f"R$ {float(v):,.2f}"),
                 "Forma de Pagamento": df_pend_exib.get(col_pag, "")
             })
             st.dataframe(df_tabela_pend, use_container_width=True, hide_index=True)
@@ -1450,7 +1455,8 @@ elif "Vendas" in menu:
     st.markdown("---")
     with st.expander("🔄 Registrar Devolução de Mercadoria (Devolução de Venda)", expanded=False):
         if not df_vendas.empty:
-            opts_vendas_dev = [f"ID #{r['id']} | Código: {r.get('codigo_bone', r.get('codigo',''))} | Cliente: {r.get('cliente','')} (R$ {float(r.get('valor_venda', r.get('valor', 0.0))):,.2f})" for _, r in df_vendas.iterrows()]
+            df_vendas_norm = normalizar_df_vendas(df_vendas)
+            opts_vendas_dev = [f"ID #{r['id']} | Código: {r.get('codigo_bone', r.get('codigo',''))} | Cliente: {r.get('cliente','')} (R$ {float(r.get('valor_bruto_calc', 0.0)):,.2f})" for _, r in df_vendas_norm.iterrows()]
             venda_dev_sel = st.selectbox("Selecione a Venda a Devolver *", opts_vendas_dev)
             
             c_dev1, c_dev2 = st.columns(2)
@@ -1461,11 +1467,11 @@ elif "Vendas" in menu:
 
             if st.button("🔄 Processar Devolução da Venda", type="primary", use_container_width=True):
                 v_id_dev = int(venda_dev_sel.split("|")[0].replace("ID #", "").strip())
-                match_v = df_vendas[df_vendas["id"] == v_id_dev]
+                match_v = df_vendas_norm[df_vendas_norm["id"] == v_id_dev]
                 if not match_v.empty:
                     row_v = match_v.iloc[0]
                     cod_p = str(row_v.get("codigo_bone", row_v.get("codigo", "")))
-                    val_v_dev = float(pd.to_numeric(row_v.get("valor_recebido") or row_v.get("valor_venda") or row_v.get("valor", 0.0), errors="coerce") or 0.0)
+                    val_v_dev = float(row_v.get("liquido_recebido_calc", 0.0))
                     cli_dev = str(row_v.get("cliente", ""))
                     dt_dev_str = parse_date_str(dt_devolucao)
 
@@ -1492,11 +1498,10 @@ elif "Vendas" in menu:
     st.markdown("---")
     st.subheader("📋 Histórico Detalhado de Vendas")
     if not df_vendas.empty:
-        df_v_exib = df_vendas.copy()
+        df_v_exib = normalizar_df_vendas(df_vendas)
         col_d_v = "data_venda" if "data_venda" in df_v_exib.columns else "data"
         col_c_b = "codigo_bone" if "codigo_bone" in df_v_exib.columns else "codigo"
         col_cli = "cliente" if "cliente" in df_v_exib.columns else "nome_cliente"
-        col_val = "valor_venda" if "valor_venda" in df_v_exib.columns else "valor"
         col_pag = "forma_pagto" if "forma_pagto" in df_v_exib.columns else "pagto"
 
         df_v_exib["Mes_Ano"] = pd.to_datetime(df_v_exib[col_d_v], dayfirst=True, errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
@@ -1524,9 +1529,9 @@ elif "Vendas" in menu:
                 c_cod_exib = str(row.get(col_c_b, ""))
                 c_cli_exib = str(row.get(col_cli, ""))
                 
-                c_val_exib = float(pd.to_numeric(row.get(col_val, 0.0), errors="coerce") or 0.0)
-                c_tarifa_exib = float(pd.to_numeric(row.get("tarifa_bancaria") or row.get("tarifa_cartao", 0.0), errors="coerce") or 0.0)
-                c_receb_exib = max(0.0, c_val_exib - c_tarifa_exib)
+                c_val_exib = float(row.get("valor_bruto_calc", 0.0))
+                c_tarifa_exib = float(row.get("tarifa_bancaria_calc", 0.0))
+                c_receb_exib = float(row.get("liquido_recebido_calc", 0.0))
                 
                 c_pag_exib = str(row.get(col_pag, "PIX"))
 
@@ -1556,12 +1561,14 @@ elif "Vendas" in menu:
                 if st.session_state.get("editing_venda_id") == v_id:
                     with st.form(key=f"form_edit_row_{v_id}_{mes}"):
                         st.markdown(f"##### ✏ Editar Venda ID {v_id}")
-                        e_col1, e_col2, e_col3 = st.columns(3)
+                        e_col1, e_col2, e_col3, e_col4 = st.columns(4)
                         with e_col1:
                             e_cliente = st.text_input("Cliente *", value=str(c_cli_exib))
                         with e_col2:
-                            e_valor = st.number_input("Valor de Venda (R$) *", min_value=0.0, value=float(c_val_exib), format="%.2f")
+                            e_valor = st.number_input("Valor Bruto (R$) *", min_value=0.0, value=float(c_val_exib), format="%.2f")
                         with e_col3:
+                            e_tarifa = st.number_input("Tarifa (R$)", min_value=0.0, value=float(c_tarifa_exib), format="%.2f")
+                        with e_col4:
                             opts_pag = ["PIX", "Cartão", "Dinheiro", "Brinde"]
                             idx_pag = opts_pag.index(c_pag_exib) if c_pag_exib in opts_pag else 0
                             e_forma_pagto = st.selectbox("Forma Pagto *", opts_pag, index=idx_pag)
@@ -1570,10 +1577,15 @@ elif "Vendas" in menu:
                         with btn_salvar_e:
                             if st.form_submit_button("💾 Salvar Alterações", use_container_width=True, type="primary"):
                                 val_bruto_edit = float(e_valor)
-                                val_rec_calculado = max(0.0, val_bruto_edit - c_tarifa_exib)
+                                tarifa_edit = float(e_tarifa)
+                                val_rec_calculado = max(0.0, val_bruto_edit - tarifa_edit)
+                                
                                 supabase.table("vendas").update({
                                     "cliente": e_cliente.strip(),
                                     "valor_venda": round(val_bruto_edit, 2),
+                                    "tarifa_bancaria": round(tarifa_edit, 2),
+                                    "tarifa_cartao": round(tarifa_edit, 2),
+                                    "tarifa": round(tarifa_edit, 2),
                                     "valor_recebido": round(val_rec_calculado, 2),
                                     "forma_pagto": e_forma_pagto
                                 }).eq("id", v_id).execute()
@@ -1593,9 +1605,10 @@ elif "Vendas" in menu:
             "Código": "BL-0005",
             "Quantidade": 1,
             "Valor": 80.00,
+            "Tarifa": 3.50,
             "Data da Venda": "05/10/2026",
             "Nome do Cliente": "João Silva",
-            "Forma de Pagto": "PIX",
+            "Forma de Pagto": "Cartão",
             "Data de Recebimento": "05/10/2026"
         }])
         st.dataframe(df_modelo_vendas, use_container_width=True, hide_index=True)
@@ -1624,6 +1637,8 @@ elif "Vendas" in menu:
                         cod_v = str(row.get('Código', row.get('codigo', ''))).strip()
                         qtd_v = int(pd.to_numeric(row.get('Quantidade', row.get('qtd', 1)), errors='coerce') or 1)
                         val_v = parse_money(row.get('Valor', row.get('valor_venda', 0.0)))
+                        tar_v = parse_money(row.get('Tarifa', row.get('tarifa_bancaria', 0.0)))
+                        rec_v = max(0.0, val_v - tar_v)
                         dt_v_str = parse_date_str(row.get('Data da Venda', row.get('data', datetime.date.today())))
                         cli_v = str(row.get('Nome do Cliente', row.get('cliente', ''))).strip()
                         pag_v = str(row.get('Forma de Pagto', row.get('forma_pagto', 'PIX'))).strip()
@@ -1636,7 +1651,10 @@ elif "Vendas" in menu:
                             "cliente": cli_v,
                             "qtd": qtd_v,
                             "valor_venda": val_v,
-                            "valor_recebido": val_v,
+                            "tarifa_bancaria": tar_v,
+                            "tarifa_cartao": tar_v,
+                            "tarifa": tar_v,
+                            "valor_recebido": rec_v,
                             "forma_pagto": pag_v,
                             "data": dt_v_str,
                             "data_venda": dt_v_str,
@@ -1856,23 +1874,13 @@ elif "Custos" in menu:
     elif "Financeiros" in sub_tab:
         st.markdown("##### 💳 Demonstrativo de Tarifas de Cartão")
         if not df_vendas.empty:
-            col_d_v = "data_venda" if "data_venda" in df_vendas.columns else "data"
-            col_c_b = "codigo_bone" if "codigo_bone" in df_vendas.columns else "codigo"
-            col_cli = "cliente" if "cliente" in df_vendas.columns else "nome_cliente"
-            col_val = "valor_venda" if "valor_venda" in df_vendas.columns else "valor"
-            col_tar = "tarifa_bancaria" if "tarifa_bancaria" in df_vendas.columns else ("tarifa_cartao" if "tarifa_cartao" in df_vendas.columns else None)
-
-            df_v_fin = df_vendas.copy()
-            
-            if col_tar and col_tar in df_v_fin.columns:
-                df_v_fin["tarifa_cartao_num"] = get_numeric_series(df_v_fin, col_tar)
-            else:
-                df_v_fin["tarifa_cartao_num"] = df_v_fin.apply(
-                    lambda r: max(0.0, float(r.get(col_val, 0.0)) - float(r.get("valor_recebido", 0.0))) if "valor_recebido" in r and r["valor_recebido"] is not None else 0.0, axis=1
-                )
+            df_v_fin = normalizar_df_vendas(df_vendas)
+            col_d_v = "data_venda" if "data_venda" in df_v_fin.columns else "data"
+            col_c_b = "codigo_bone" if "codigo_bone" in df_v_fin.columns else "codigo"
+            col_cli = "cliente" if "cliente" in df_v_fin.columns else "nome_cliente"
 
             df_v_tarifa = df_v_fin[
-                (df_v_fin["tarifa_cartao_num"] > 0) | 
+                (df_v_fin["tarifa_bancaria_calc"] > 0) | 
                 (df_v_fin.get("forma_pagto", pd.Series([""] * len(df_v_fin))).astype(str).str.lower().str.contains("cart", na=False))
             ].copy()
 
@@ -1880,11 +1888,11 @@ elif "Custos" in menu:
                 df_v_tarifa["Data"] = df_v_tarifa[col_d_v].apply(format_data_br)
                 df_v_tarifa["Código"] = df_v_tarifa.get(col_c_b, "")
                 df_v_tarifa["Cliente"] = df_v_tarifa.get(col_cli, "")
-                df_v_tarifa["Valor Venda"] = get_numeric_series(df_v_tarifa, col_val)
-                df_v_tarifa["Valor Venda (R$)"] = df_v_tarifa["Valor Venda"].apply(lambda v: f"R$ {v:,.2f}")
-                df_v_tarifa["Tarifa (R$)"] = df_v_tarifa["tarifa_cartao_num"].apply(lambda v: f"R$ {v:,.2f}")
+                df_v_tarifa["Valor Bruto (R$)"] = df_v_tarifa["valor_bruto_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
+                df_v_tarifa["Tarifa (R$)"] = df_v_tarifa["tarifa_bancaria_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
+                df_v_tarifa["Líquido (R$)"] = df_v_tarifa["liquido_recebido_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
 
-                cols_fin = ["Data", "Código", "Cliente", "Valor Venda (R$)", "Tarifa (R$)"]
+                cols_fin = ["Data", "Código", "Cliente", "Valor Bruto (R$)", "Tarifa (R$)", "Líquido (R$)"]
                 st.dataframe(df_v_tarifa[cols_fin], use_container_width=True, hide_index=True)
             else:
                 st.info("Nenhuma venda realizada por cartão com tarifa registrada.")
@@ -1922,18 +1930,11 @@ elif "Caixa" in menu or "Fluxo" in menu:
 
     # 2. Recebimentos das Vendas
     if not df_vendas.empty:
-        col_dt_rec = "data_recebimento" if "data_recebimento" in df_vendas.columns else ("data_receb" if "data_receb" in df_vendas.columns else "data")
-        for _, r in df_vendas.iterrows():
+        df_v_norm = normalizar_df_vendas(df_vendas)
+        col_dt_rec = "data_recebimento" if "data_recebimento" in df_v_norm.columns else ("data_receb" if "data_receb" in df_v_norm.columns else "data")
+        for _, r in df_v_norm.iterrows():
             dt_v = r.get(col_dt_rec) or r.get("data")
-            
-            val_venda_num = parse_money(r.get("valor_venda") or r.get("valor") or 0.0)
-            tarifa_num = parse_money(r.get("tarifa_bancaria") or r.get("tarifa_cartao", 0.0))
-            
-            val_rec_bd = r.get("valor_recebido")
-            if val_rec_bd is not None and str(val_rec_bd).strip() not in ["", "None", "nan"]:
-                val_v_calc = parse_money(val_rec_bd)
-            else:
-                val_v_calc = max(0.0, val_venda_num - tarifa_num)
+            val_v_calc = float(r.get("liquido_recebido_calc", 0.0))
 
             cli = r.get("cliente") or r.get("nome_cliente") or ""
             cod = r.get("codigo_bone") or r.get("codigo") or ""
@@ -2010,7 +2011,6 @@ elif "Caixa" in menu or "Fluxo" in menu:
     if lista_movimentos:
         df_extrato = pd.DataFrame(lista_movimentos)
         
-        # Converte estritamente no padrão brasileiro (dayfirst=True) para evitar ano-mês invertido
         df_extrato["Data_Raw"] = pd.to_datetime(df_extrato["Data_Val"], dayfirst=True, errors="coerce")
         df_extrato["Data_Raw"] = df_extrato["Data_Raw"].fillna(pd.Timestamp.now())
         df_extrato["Mes_Ano"] = df_extrato["Data_Raw"].dt.strftime("%Y-%m").fillna("Outros")
