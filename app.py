@@ -1098,7 +1098,7 @@ elif "Pedidos" in menu:
 
                     st.markdown("##### 🚚 Ações do Pedido (Entregas e Acompanhamento)")
                     
-                    col_e1, col_e2, col_e3 = st.columns([3, 1.5, 1.5])
+                    col_e1, col_e2, col_e3, col_e4 = st.columns([3, 2, 1.5, 1.5])
                     with col_e1:
                         dict_itens_ped = {row["id"]: f"ID #{row['id']} | {row['cor_bone']} - {row['frase_arte']} (Status: {row['status']})" for _, row in df_lote.iterrows()}
                         ids_itens_acao = st.multiselect(
@@ -1107,8 +1107,16 @@ elif "Pedidos" in menu:
                             format_func=lambda x: dict_itens_ped[x], 
                             key=f"msel_entregue_{lote}_{mes}"
                         )
-                    
+
                     with col_e2:
+                        dt_entrega_manual = st.date_input(
+                            "Data da Entrega / Aquisição *", 
+                            value=datetime.date.today(), 
+                            format="DD/MM/YYYY",
+                            key=f"dt_entrega_{lote}_{mes}"
+                        )
+                    
+                    with col_e3:
                         st.markdown("<br>", unsafe_allow_html=True)
                         if st.button("🚚 Entregue", key=f"btn_entregue_{lote}_{mes}", use_container_width=True, type="primary"):
                             if not ids_itens_acao:
@@ -1125,7 +1133,7 @@ elif "Pedidos" in menu:
                                     codigo_base_atual = gerar_proximo_codigo(codigo_base_atual)
                                     codigos_gerados.append(codigo_base_atual)
 
-                                    dt_aquisicao_item = parse_date_str(row_alvo.get("data_criacao", datetime.date.today()))
+                                    dt_aquisicao_item = parse_date_str(dt_entrega_manual)
 
                                     novo_prod = {
                                         "codigo": codigo_base_atual,
@@ -1154,10 +1162,10 @@ elif "Pedidos" in menu:
                                 
                                 set_ultimo_codigo_config(codigo_base_atual)
 
-                                st.session_state["flash_success"] = f"🎉 {len(codigos_gerados)} item(ns) entregue(s) com sucesso e cadastrado(s) no estoque (Códigos: {', '.join(codigos_gerados)})!"
+                                st.session_state["flash_success"] = f"🎉 {len(codigos_gerados)} item(ns) entregue(s) com sucesso em {format_data_br(dt_entrega_manual)} e cadastrado(s) no estoque (Códigos: {', '.join(codigos_gerados)})!"
                                 st.rerun()
 
-                    with col_e3:
+                    with col_e4:
                         st.markdown("<br>", unsafe_allow_html=True)
                         if st.button("❌ Cancelar", key=f"btn_cancelar_{lote}_{mes}", use_container_width=True, type="secondary"):
                             if not ids_itens_acao:
@@ -1412,7 +1420,7 @@ elif "Vendas" in menu:
         uploaded_v_file = st.file_uploader("Enviar arquivo de vendas (.xlsx ou .csv)", type=["xlsx", "csv"], key="uploader_vendas_final")
         if uploaded_v_file is not None:
             try:
-                df_imp_v = pd.read_csv(uploaded_v_file) if uploaded_v_file.name.endswith(".csv") else pd.read_excel(uploaded_v_file)
+                df_imp_v = pd.read_csv(uploaded_v_file, dtype=str) if uploaded_v_file.name.endswith(".csv") else pd.read_excel(uploaded_v_file, dtype=str)
                 st.markdown("##### 🔍 Pré-visualização das Vendas a Importar:")
                 st.dataframe(df_imp_v, use_container_width=True)
                 
@@ -1655,7 +1663,7 @@ elif "Custos" in menu:
                                 st.rerun()
                         st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
             else:
-                st.info("Nenum custo de feira registrado até o momento.")
+                st.info("Nenhum custo de feira registrado até o momento.")
         else:
             st.info("Nenhum custo registrado.")
 
