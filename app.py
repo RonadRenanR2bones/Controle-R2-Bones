@@ -111,7 +111,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Cache em sessão para guardar custos avulsos, baixas e devoluções locais se necessário
+# Cache em sessão para guardar custos avulsos, baixas e devoluções locais
 if "extra_costs_cache" not in st.session_state:
     st.session_state["extra_costs_cache"] = {}
 
@@ -231,12 +231,33 @@ def init_db():
 
 init_db()
 
+# ----------------------------------------------------
+# FUNÇÕES ROBUSTAS DE TRATAMENTO E FORMATO DE DATAS (BR)
+# ----------------------------------------------------
+def parse_date_str(val):
+    if pd.isna(val) or val is None or str(val).strip() == "":
+        return datetime.date.today().strftime("%Y-%m-%d")
+    if isinstance(val, (datetime.date, datetime.datetime)):
+        return val.strftime("%Y-%m-%d")
+    if isinstance(val, pd.Timestamp):
+        return val.strftime("%Y-%m-%d")
+    s = str(val).strip()
+    try:
+        dt = pd.to_datetime(s, dayfirst=True, format="%d/%m/%Y", errors="coerce")
+        if pd.isna(dt):
+            dt = pd.to_datetime(s, dayfirst=True, errors="coerce")
+        return dt.strftime("%Y-%m-%d") if pd.notna(dt) else datetime.date.today().strftime("%Y-%m-%d")
+    except Exception:
+        return s
+
 def format_data_br(val):
     if not val or pd.isna(val) or str(val).strip().lower() in ["none", "nat", "nan", ""]:
         return ""
     try:
-        dt = pd.to_datetime(val, dayfirst=True)
-        return dt.strftime("%d/%m/%Y")
+        dt = pd.to_datetime(val, dayfirst=True, format="%d/%m/%Y", errors="coerce")
+        if pd.isna(dt):
+            dt = pd.to_datetime(val, dayfirst=True, errors="coerce")
+        return dt.strftime("%d/%m/%Y") if pd.notna(dt) else str(val)
     except Exception:
         return str(val)
 
@@ -256,18 +277,6 @@ def parse_money(val):
         import re
         cleaned = re.sub(r'[^\d.]', '', s)
         return float(cleaned) if cleaned else 0.0
-
-def parse_date_str(val):
-    if pd.isna(val) or val is None:
-        return datetime.date.today().strftime("%Y-%m-%d")
-    if isinstance(val, (pd.Timestamp, datetime.date, datetime.datetime)):
-        return val.strftime("%Y-%m-%d")
-    s = str(val).strip()
-    try:
-        dt = pd.to_datetime(s, dayfirst=True)
-        return dt.strftime("%Y-%m-%d")
-    except Exception:
-        return s
 
 def get_numeric_series(df: pd.DataFrame, col_name: str, default_value: float = 0.0) -> pd.Series:
     if df.empty or col_name not in df.columns:
@@ -548,7 +557,7 @@ def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, 
     # 1. Compras de Mercadorias
     df_cm = get_df_compra_mercadorias()
     if not df_cm.empty:
-        df_cm["data_str"] = df_cm["Data_Raw"].astype(str).str.slice(0, 10)
+        df_cm["data_str"] = df_cm["Data_Raw"].apply(parse_date_str)
         agrup_cm = df_cm.groupby("data_str").agg(total_custo=("total_item_calc", "sum")).reset_index()
         for _, r in agrup_cm.iterrows():
             tot_c = float(r["total_custo"])
@@ -563,14 +572,14 @@ def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, 
             dt_v = r.get(col_dt_rec) or r.get("data")
             val_v_calc = float(r.get("liquido_recebido_calc", 0.0))
             if val_v_calc > 0:
-                lista_movimentos.append({"Data_Val": str(dt_v), "Valor_Num": val_v_calc})
+                lista_movimentos.append({"Data_Val": parse_date_str(dt_v), "Valor_Num": val_v_calc})
 
     # 3. Custos e Despesas
     if not df_custos_in.empty:
         for _, r in df_custos_in.iterrows():
             val_c = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
             if val_c > 0:
-                lista_movimentos.append({"Data_Val": str(r.get("data")), "Valor_Num": -val_c})
+                lista_movimentos.append({"Data_Val": parse_date_str(r.get("data")), "Valor_Num": -val_c})
 
     # 4. Aportes e Devoluções
     if not df_aportes_in.empty:
@@ -725,21 +734,21 @@ if "Dashboard" in menu:
     col_d_venda = "data" if "data" in df_vendas.columns else ("data_venda" if "data_venda" in df_vendas.columns else None)
     meses_disponiveis = ["TODOS"]
     if not df_vendas.empty and col_d_venda:
-        df_vendas["mes_ano"] = pd.to_datetime(df_vendas[col_d_venda], dayfirst=True, errors="coerce").dt.strftime("%Y-%m")
+        df_vendas["mes_ano"] = pd.to_datetime(df_vendas[col_d_venda].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m")
         meses_disponiveis.extend(sorted(df_vendas["mes_ano"].dropna().unique().tolist()))
     
     mes_sel = st.selectbox("📅 Selecionar Período / Mês:", list(set(meses_disponiveis)))
     
     df_vendas_fil = df_vendas.copy()
     if mes_sel != "TODOS" and not df_vendas_fil.empty and col_d_venda:
-        df_vendas_fil["mes_temp"] = pd.to_datetime(df_vendas_fil[col_d_venda], dayfirst=True, errors="coerce").dt.strftime("%Y-%m")
+        df_vendas_fil["mes_temp"] = pd.to_datetime(df_vendas_fil[col_d_venda].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m")
         df_vendas_fil = df_vendas_fil[df_vendas_fil["mes_temp"] == mes_sel]
         
     g1, g2 = st.columns(2)
     with g1:
         st.markdown("#### 🟢 Faturamento vs. 🔴 CMV")
         if not df_vendas_fil.empty and col_d_venda and col_v_val:
-            df_vendas_fil["mes"] = pd.to_datetime(df_vendas_fil[col_d_venda], dayfirst=True, errors="coerce").dt.strftime("%Y-%m")
+            df_vendas_fil["mes"] = pd.to_datetime(df_vendas_fil[col_d_venda].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m")
             y_cols = [col_v_val]
             if "custo" in df_vendas_fil.columns:
                 y_cols.append("custo")
@@ -774,7 +783,7 @@ elif "Compra de Mercadorias" in menu:
     if df_cm.empty:
         st.info("Nenhum pedido entregue disponível para o relatório de compra de mercadorias.")
     else:
-        df_cm["Mes_Ano"] = pd.to_datetime(df_cm["Data_Raw"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
+        df_cm["Mes_Ano"] = pd.to_datetime(df_cm["Data_Raw"].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
         
         meses_unicos_cm = df_cm["Mes_Ano"].unique()
         for mes in sorted(meses_unicos_cm, reverse=True):
@@ -855,7 +864,7 @@ elif "Pedidos" in menu:
                 dt_init_val = datetime.date.today()
                 if is_edit_ped and dados_p_edit.get("data_criacao"):
                     try:
-                        dt_init_val = pd.to_datetime(dados_p_edit.get("data_criacao"), dayfirst=True).date()
+                        dt_init_val = pd.to_datetime(parse_date_str(dados_p_edit.get("data_criacao"))).date()
                     except Exception:
                         pass
                 dt_p_m = st.date_input("Data da Criação *", dt_init_val, format="DD/MM/YYYY")
@@ -874,19 +883,20 @@ elif "Pedidos" in menu:
                 if not lote_m.strip() or not cor_b_m.strip() or not arte_m.strip():
                     st.error("Preencha os campos obrigatórios (Lote, Cor e Arte)!")
                 else:
+                    dt_p_str = parse_date_str(dt_p_m)
                     conn = sqlite3.connect(DB_NAME)
                     c = conn.cursor()
                     c.execute('''
                         INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, status, valor_estampa_extra, valor_matriz)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (lote_m.strip(), str(dt_p_m), cor_b_m.strip(), arte_m.strip(), cor_e_m.strip(), prod_m, preco_m, obs_p_m.strip(), "Em Produção", v_extra_m, v_matriz_m))
+                    ''', (lote_m.strip(), dt_p_str, cor_b_m.strip(), arte_m.strip(), cor_e_m.strip(), prod_m, preco_m, obs_p_m.strip(), "Em Produção", v_extra_m, v_matriz_m))
                     conn.commit()
                     conn.close()
 
                     if supabase:
                         safe_insert("pedidos", {
                             "lote_id": lote_m.strip(),
-                            "data_criacao": str(dt_p_m),
+                            "data_criacao": dt_p_str,
                             "cor_bone": cor_b_m.strip(),
                             "frase_arte": arte_m.strip(),
                             "cor_linha": cor_e_m.strip(),
@@ -907,12 +917,13 @@ elif "Pedidos" in menu:
                 elif not lote_m.strip() or not cor_b_m.strip() or not arte_m.strip():
                     st.error("Preencha os campos obrigatórios (Lote, Cor e Arte)!")
                 else:
+                    dt_p_str = parse_date_str(dt_p_m)
                     conn = sqlite3.connect(DB_NAME)
                     c = conn.cursor()
                     c.execute('''
                         UPDATE pedidos SET lote_id=?, data_criacao=?, cor_bone=?, frase_arte=?, cor_linha=?, tipo=?, preco=?, observacoes=?, valor_estampa_extra=?, valor_matriz=?
                         WHERE id=?
-                    ''', (lote_m.strip(), str(dt_p_m), cor_b_m.strip(), arte_m.strip(), cor_e_m.strip(), prod_m, preco_m, obs_p_m.strip(), v_extra_m, v_matriz_m, id_ped_edit))
+                    ''', (lote_m.strip(), dt_p_str, cor_b_m.strip(), arte_m.strip(), cor_e_m.strip(), prod_m, preco_m, obs_p_m.strip(), v_extra_m, v_matriz_m, id_ped_edit))
                     conn.commit()
                     conn.close()
 
@@ -920,7 +931,7 @@ elif "Pedidos" in menu:
                         try:
                             supabase.table("pedidos").update({
                                 "lote_id": lote_m.strip(),
-                                "data_criacao": str(dt_p_m),
+                                "data_criacao": dt_p_str,
                                 "cor_bone": cor_b_m.strip(),
                                 "frase_arte": arte_m.strip(),
                                 "cor_linha": cor_e_m.strip(),
@@ -983,7 +994,10 @@ elif "Pedidos" in menu:
                         preco_b = parse_money(row.get('Preço Base', row.get('preco', 29.0)))
                         v_extra = parse_money(row.get('Estampa Extra', row.get('valor_estampa_extra', 0.0)))
                         v_matriz = parse_money(row.get('Matriz Bordado', row.get('valor_matriz', 0.0)))
-                        dt_str = parse_date_str(row.get('Data', row.get('data_criacao', datetime.date.today())))
+                        
+                        dt_raw = row.get('Data', row.get('data_criacao', datetime.date.today()))
+                        dt_str = parse_date_str(dt_raw)
+                        
                         st_val = str(row.get('Status', row.get('status', 'Em Produção'))).strip() or 'Em Produção'
                         obs_val = str(row.get('Observações', row.get('observacoes', ''))).strip() if pd.notna(row.get('Observações', row.get('observacoes'))) else ''
 
@@ -1025,7 +1039,7 @@ elif "Pedidos" in menu:
     else:
         df_ped['lote_id'] = df_ped['lote_id'].fillna('Sem Lote Definido')
         df_ped['total_item'] = df_ped['preco'] + df_ped['valor_estampa_extra'].fillna(0) + df_ped['valor_matriz'].fillna(0)
-        df_ped["Mes_Ano"] = pd.to_datetime(df_ped["data_criacao"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
+        df_ped["Mes_Ano"] = pd.to_datetime(df_ped["data_criacao"].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
 
         meses_pedidos = sorted(df_ped["Mes_Ano"].unique(), reverse=True)
         for mes in meses_pedidos:
@@ -1105,7 +1119,7 @@ elif "Pedidos" in menu:
                                     codigo_base_atual = gerar_proximo_codigo(codigo_base_atual)
                                     codigos_gerados.append(codigo_base_atual)
 
-                                    dt_aquisicao_item = str(row_alvo.get("data_criacao", datetime.date.today().strftime("%Y-%m-%d")))
+                                    dt_aquisicao_item = parse_date_str(row_alvo.get("data_criacao", datetime.date.today()))
 
                                     novo_prod = {
                                         "codigo": codigo_base_atual,
@@ -1404,7 +1418,10 @@ elif "Vendas" in menu:
                         val_v = parse_money(row.get('Valor', row.get('valor_venda', 0.0)))
                         tar_v = parse_money(row.get('Tarifa', row.get('tarifa_bancaria', 0.0)))
                         rec_v = max(0.0, val_v - tar_v)
-                        dt_v_str = parse_date_str(row.get('Data da Venda', row.get('data', datetime.date.today())))
+                        
+                        dt_v_raw = row.get('Data da Venda', row.get('data', datetime.date.today()))
+                        dt_v_str = parse_date_str(dt_v_raw)
+                        
                         cli_v = str(row.get('Nome do Cliente', row.get('cliente', ''))).strip()
                         pag_v = str(row.get('Forma de Pagto', row.get('forma_pagto', 'PIX'))).strip()
                         dt_rec_v = row.get('Data de Recebimento', row.get('data_recebimento'))
@@ -1448,7 +1465,7 @@ elif "Custos" in menu:
         if not df_cm.empty:
             df_m = df_cm.copy()
             df_m["qtd_num"] = 1
-            df_m["Mes_Ano"] = pd.to_datetime(df_m["Data_Raw"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
+            df_m["Mes_Ano"] = pd.to_datetime(df_m["Data_Raw"].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
 
             meses_custos_m = sorted(df_m["Mes_Ano"].unique(), reverse=True)
             for mes in meses_custos_m:
@@ -1516,7 +1533,7 @@ elif "Custos" in menu:
             df_cv_exib = df_custos[subcat_col.str.contains("venda", case=False, na=False)].copy()
             
             if not df_cv_exib.empty:
-                df_cv_exib["Mes_Ano"] = pd.to_datetime(df_cv_exib["data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
+                df_cv_exib["Mes_Ano"] = pd.to_datetime(df_cv_exib["data"].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
                 meses_cv = sorted(df_cv_exib["Mes_Ano"].unique(), reverse=True)
                 
                 for mes in meses_cv:
@@ -1597,7 +1614,7 @@ elif "Custos" in menu:
             df_cf_exib = df_custos[subcat_col.str.contains("feira", case=False, na=False)].copy()
             
             if not df_cf_exib.empty:
-                df_cf_exib["Mes_Ano"] = pd.to_datetime(df_cf_exib["data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
+                df_cf_exib["Mes_Ano"] = pd.to_datetime(df_cf_exib["data"].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
                 meses_cf = sorted(df_cf_exib["Mes_Ano"].unique(), reverse=True)
                 
                 for mes in meses_cf:
@@ -1672,7 +1689,7 @@ elif "Caixa" in menu or "Fluxo" in menu:
     # 1. Compras do Módulo Compra de Mercadorias
     df_cm = get_df_compra_mercadorias()
     if not df_cm.empty:
-        df_cm["data_str"] = df_cm["Data_Raw"].astype(str).str.slice(0, 10)
+        df_cm["data_str"] = df_cm["Data_Raw"].apply(parse_date_str)
         
         agrup_cm = df_cm.groupby("data_str").agg(
             total_custo=("total_item_calc", "sum"),
@@ -1776,7 +1793,7 @@ elif "Caixa" in menu or "Fluxo" in menu:
     if lista_movimentos:
         df_extrato = pd.DataFrame(lista_movimentos)
         
-        df_extrato["Data_Raw"] = pd.to_datetime(df_extrato["Data_Val"], dayfirst=True, errors="coerce")
+        df_extrato["Data_Raw"] = pd.to_datetime(df_extrato["Data_Val"].apply(parse_date_str), errors="coerce")
         df_extrato["Data_Raw"] = df_extrato["Data_Raw"].fillna(pd.Timestamp.now())
         df_extrato["Mes_Ano"] = df_extrato["Data_Raw"].dt.strftime("%Y-%m").fillna("Outros")
         
@@ -1916,7 +1933,7 @@ elif "Aportes" in menu:
         col_dt_ap = "data" if "data" in df_aportes.columns else ("data_aporte" if "data_aporte" in df_aportes.columns else ("created_at" if "created_at" in df_aportes.columns else None))
         
         if col_dt_ap and not df_aportes.empty:
-            df_aportes["Mes_Ano"] = pd.to_datetime(df_aportes[col_dt_ap], dayfirst=True, errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
+            df_aportes["Mes_Ano"] = pd.to_datetime(df_aportes[col_dt_ap].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
             
             meses_aportes = sorted(df_aportes["Mes_Ano"].unique(), reverse=True)
             for mes in meses_aportes:
