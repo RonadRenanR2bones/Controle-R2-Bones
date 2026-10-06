@@ -273,8 +273,8 @@ init_db()
 # FUNÇÕES ROBUSTAS DE TRATAMENTO E FORMATO DE DATAS (BR)
 # ----------------------------------------------------
 def parse_date_str(val):
-    """Normaliza datas para o padrão brasileiro DD/MM/AAAA."""
-    hoje = datetime.date.today().strftime("%d/%m/%Y")
+    """Normaliza datas de entrada, inclusive BR, para YYYY/MM/DD."""
+    hoje = datetime.date.today().strftime("%Y/%m/%d")
     if val is None:
         return hoje
     try:
@@ -283,34 +283,29 @@ def parse_date_str(val):
     except Exception:
         pass
     if isinstance(val, pd.Timestamp):
-        return val.strftime("%d/%m/%Y")
+        return val.strftime("%Y/%m/%d")
     if isinstance(val, datetime.datetime):
-        return val.strftime("%d/%m/%Y")
+        return val.strftime("%Y/%m/%d")
     if isinstance(val, datetime.date):
-        return val.strftime("%d/%m/%Y")
+        return val.strftime("%Y/%m/%d")
     s = str(val).strip()
     if not s or s.lower() in {"none", "nat", "nan", "null"}:
         return hoje
-    formatos = [
-        "%d/%m/%Y", "%d-%m-%Y",
-        "%Y/%m/%d", "%Y-%m-%d",
-        "%d/%m/%Y %H:%M:%S", "%d-%m-%Y %H:%M:%S",
-        "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"
-    ]
+    formatos = ["%Y/%m/%d", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"]
     for fmt in formatos:
         try:
-            return datetime.datetime.strptime(s, fmt).strftime("%d/%m/%Y")
+            return datetime.datetime.strptime(s, fmt).strftime("%Y/%m/%d")
         except ValueError:
             pass
     try:
         dt = pd.to_datetime(s, dayfirst=True, errors="coerce")
-        return dt.strftime("%d/%m/%Y") if pd.notna(dt) else hoje
+        return dt.strftime("%Y/%m/%d") if pd.notna(dt) else hoje
     except Exception:
         return hoje
 
 
 def format_data_br(val):
-    """Formata qualquer data para exibição no padrão brasileiro DD/MM/AAAA."""
+    """Nome legado: a exibição agora segue rigorosamente YYYY/MM/DD."""
     if val is None:
         return ""
     try:
@@ -859,7 +854,7 @@ def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, 
                 is_devolucao = "devoluc" in tipo_ap.lower() or val_ap < 0
                 val_final = -abs(val_ap) if is_devolucao else abs(val_ap)
                 dt_ap_raw = r.get("data") or r.get("data_aporte") or r.get("created_at")
-                dt_ap_str = parse_date_str(dt_ap_raw) if dt_ap_raw else datetime.date.today().strftime("%d/%m/%Y")
+                dt_ap_str = parse_date_str(dt_ap_raw) if dt_ap_raw else datetime.date.today().strftime("%Y-%m-%d")
                 lista_movimentos.append({"Data_Val": dt_ap_str, "Valor_Num": val_final})
 
     # 5. Devoluções de Vendas
@@ -868,7 +863,7 @@ def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, 
             val_dev = float(pd.to_numeric(r.get("valor_devolvido", 0.0), errors="coerce") or 0.0)
             if val_dev > 0:
                 dt_dev_raw = r.get("data_devolucao")
-                dt_dev_str = parse_date_str(dt_dev_raw) if dt_dev_raw else datetime.date.today().strftime("%d/%m/%Y")
+                dt_dev_str = parse_date_str(dt_dev_raw) if dt_dev_raw else datetime.date.today().strftime("%Y-%m-%d")
                 lista_movimentos.append({"Data_Val": dt_dev_str, "Valor_Num": -val_dev})
 
     if lista_movimentos:
@@ -1138,7 +1133,7 @@ elif "Pedidos" in menu:
                         dt_init_val = pd.to_datetime(parse_date_str(dados_p_edit.get("data_criacao"))).date()
                     except Exception:
                         pass
-                dt_p_m = st.date_input("Data da Criação *", dt_init_val, format="DD/MM/YYYY")
+                dt_p_m = st.date_input("Data da Criação *", dt_init_val, format="YYYY/MM/DD")
 
             obs_p_m = st.text_area("Observações do Pedido", value=str(dados_p_edit.get("observacoes", "")))
 
@@ -1250,7 +1245,7 @@ elif "Pedidos" in menu:
         with c_imp2:
             st.write("")
             st.write("")
-            st.caption("Formato de data aceito: DD/MM/AAAA ou DD/MM/YYYY.")
+            st.caption("Formato de data aceito: YYYY/MM/DD ou DD/MM/YYYY.")
 
         modelo_pedido = pd.DataFrame([{
             "Cor do Boné": "Preta",
@@ -1469,7 +1464,7 @@ elif "Pedidos" in menu:
                         dt_entrega_manual = st.text_input(
                             "Data da Entrega / Aquisição (opcional)",
                             value="",
-                            placeholder="DD/MM/AAAA",
+                            placeholder="YYYY/MM/DD",
                             key=f"dt_entrega_{lote}_{mes}",
                             help="Se ficar em branco, será usada automaticamente a data atual ao marcar como Entregue."
                         )
@@ -1491,7 +1486,7 @@ elif "Pedidos" in menu:
                                     codigo_base_atual = gerar_proximo_codigo(codigo_base_atual)
                                     codigos_gerados.append(codigo_base_atual)
 
-                                    dt_aquisicao_item = parse_date_str(dt_entrega_manual) if str(dt_entrega_manual).strip() else datetime.date.today().strftime("%d/%m/%Y")
+                                    dt_aquisicao_item = parse_date_str(dt_entrega_manual) if str(dt_entrega_manual).strip() else datetime.date.today().strftime("%Y/%m/%d")
 
                                     novo_prod = {
                                         "codigo": codigo_base_atual,
@@ -1578,7 +1573,7 @@ elif "Estoque" in menu:
                     cod_baixa = st.selectbox("Selecione a Mercadoria *", cods_disponiveis if cods_disponiveis else ["Sem itens"])
                 with cb_c2:
                     motivo_baixa = st.selectbox("Motivo da Baixa *", ["Perda", "Avaria", "Brinde", "Outro"])
-                    dt_baixa = st.date_input("Data da Baixa *", datetime.date.today(), format="DD/MM/YYYY")
+                    dt_baixa = st.date_input("Data da Baixa *", datetime.date.today(), format="YYYY/MM/DD")
                 with cb_c3:
                     obs_baixa = st.text_input("Observação / Justificativa")
                 
@@ -1696,10 +1691,10 @@ elif "Vendas" in menu:
         valor_venda = st.number_input("Valor de Venda (R$) *", min_value=0.0, value=0.0, step=5.0, format="%.2f")
         forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
     with c3:
-        data_venda = st.date_input("Data da Venda *", datetime.date.today(), format="DD/MM/YYYY")
+        data_venda = st.date_input("Data da Venda *", datetime.date.today(), format="YYYY/MM/DD")
         tarifa_bancaria = st.number_input("Tarifa Bancária (R$) (Opcional)", min_value=0.0, value=0.0, step=0.5, format="%.2f")
 
-    data_receb = st.date_input("Data de Recebimento (Opcional)", value=None, format="DD/MM/YYYY")
+    data_receb = st.date_input("Data de Recebimento (Opcional)", value=None, format="YYYY/MM/DD")
 
     valor_recebido = max(0.0, float(valor_venda) - float(tarifa_bancaria))
 
@@ -1847,9 +1842,9 @@ elif "Vendas" in menu:
         col_codigo_hist = "codigo_bone" if "codigo_bone" in df_historico_vendas.columns else ("codigo" if "codigo" in df_historico_vendas.columns else "codigo_produto")
         if col_data_hist:
             df_historico_vendas["_data_hist"] = df_historico_vendas[col_data_hist].apply(parse_date_str)
-            df_historico_vendas["_mes_hist"] = pd.to_datetime(df_historico_vendas["_data_hist"], format="%d/%m/%Y", errors="coerce").dt.strftime("%Y/%m")
+            df_historico_vendas["_mes_hist"] = pd.to_datetime(df_historico_vendas["_data_hist"], format="%Y/%m/%d", errors="coerce").dt.strftime("%Y/%m")
         else:
-            df_historico_vendas["_data_hist"] = datetime.date.today().strftime("%d/%m/%Y")
+            df_historico_vendas["_data_hist"] = datetime.date.today().strftime("%Y/%m/%d")
             df_historico_vendas["_mes_hist"] = datetime.date.today().strftime("%Y-%m")
 
         meses_hist = [m for m in sorted(df_historico_vendas["_mes_hist"].dropna().unique().tolist(), reverse=True)]
@@ -2007,7 +2002,7 @@ elif "Custos" in menu:
         with st.form("form_cv"):
             c1, c2, c3 = st.columns(3)
             with c1:
-                dt_cv = st.date_input("Data *", datetime.date.today(), format="DD/MM/YYYY")
+                dt_cv = st.date_input("Data *", datetime.date.today(), format="YYYY/MM/DD")
                 desc_cv = st.text_input("Descrição *")
             with c2:
                 tipo_cv = st.selectbox("Tipo de Despesa *", ["Brindes", "Embalagem", "Unboxing"])
@@ -2087,7 +2082,7 @@ elif "Custos" in menu:
         with st.form("form_cf"):
             c1, c2, c3 = st.columns(3)
             with c1:
-                dt_cf = st.date_input("Data *", datetime.date.today(), format="DD/MM/YYYY")
+                dt_cf = st.date_input("Data *", datetime.date.today(), format="YYYY/MM/DD")
                 feira_cf = st.text_input("Nome da Feira *")
             with c2:
                 desc_cf = st.text_input("Descrição *")
@@ -2268,7 +2263,7 @@ elif "Caixa" in menu or "Fluxo" in menu:
             socio = r.get("socio", "")
             
             dt_ap_raw = r.get("data") or r.get("data_aporte") or r.get("created_at")
-            dt_ap_str = parse_date_str(dt_ap_raw) if dt_ap_raw else datetime.date.today().strftime("%d/%m/%Y")
+            dt_ap_str = parse_date_str(dt_ap_raw) if dt_ap_raw else datetime.date.today().strftime("%Y-%m-%d")
             
             if val_ap != 0:
                 is_devolucao = "devoluc" in tipo_ap.lower() or val_ap < 0
@@ -2290,7 +2285,7 @@ elif "Caixa" in menu or "Fluxo" in menu:
             cod_dev = r.get("codigo", "")
             cli_dev = r.get("cliente", "")
             dt_dev_raw = r.get("data_devolucao")
-            dt_dev_str = parse_date_str(dt_dev_raw) if dt_dev_raw else datetime.date.today().strftime("%d/%m/%Y")
+            dt_dev_str = parse_date_str(dt_dev_raw) if dt_dev_raw else datetime.date.today().strftime("%Y-%m-%d")
             if val_dev > 0:
                 lista_movimentos.append({
                     "Data_Val": dt_dev_str,
@@ -2340,7 +2335,7 @@ elif "Aportes" in menu:
     st.subheader("🤝 Registro de Aportes e Devoluções")
     c1, c2, c3 = st.columns(3)
     with c1:
-        dt_ap = st.date_input("Data *", datetime.date.today(), format="DD/MM/YYYY")
+        dt_ap = st.date_input("Data *", datetime.date.today(), format="YYYY/MM/DD")
     with c2:
         socio_ap = st.selectbox("Sócio *", ["", "Renan", "Ronald"], index=0)
     with c3:
