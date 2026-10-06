@@ -975,64 +975,59 @@ elif "Pedidos" in menu:
                 else:
                     df_imp_ped = pd.read_excel(uploaded_ped_file, dtype=str)
 
-                nome_sugerido = uploaded_ped_file.name.rsplit(".", 1)[0].replace("_", " ")
-                lote_input = st.text_input("Identificador / Lote do Pedido *", value=nome_sugerido, key="lote_imp_input")
+                lote_nome = uploaded_ped_file.name.rsplit(".", 1)[0].replace("_", " ")
 
-                st.markdown("##### 🔍 Pré-visualização do Pedido a Importar:")
-                st.dataframe(df_imp_ped, use_container_width=True)
+                conn = sqlite3.connect(DB_NAME)
+                c = conn.cursor()
+                count_inserted = 0
 
-                if st.button("🚀 Confirmar Importação do Pedido", type="primary", use_container_width=True):
-                    conn = sqlite3.connect(DB_NAME)
-                    c = conn.cursor()
-                    count_inserted = 0
+                for _, row in df_imp_ped.iterrows():
+                    cor_b = str(row.get('Cor do Boné', row.get('cor_bone', ''))).strip()
+                    arte = str(row.get('Arte Estampada', row.get('frase_arte', ''))).strip()
+                    cor_e = str(row.get('Cor da Estampa', row.get('cor_linha', ''))).strip()
+                    prod_tipo = str(row.get('Produto', row.get('tipo', 'Básico'))).strip()
+                    preco_b = parse_money(row.get('Preço Base', row.get('preco', 29.0)))
+                    v_extra = parse_money(row.get('Estampa Extra', row.get('valor_estampa_extra', 0.0)))
+                    v_matriz = parse_money(row.get('Matriz Bordado', row.get('valor_matriz', 0.0)))
+                    
+                    dt_raw = str(row.get('Data', row.get('data_criacao', ''))).strip()
+                    try:
+                        dt_obj = pd.to_datetime(dt_raw, format="%d/%m/%Y", errors="coerce")
+                        if pd.isna(dt_obj):
+                            dt_obj = pd.to_datetime(dt_raw, dayfirst=True, errors="coerce")
+                        dt_str = dt_obj.strftime("%Y-%m-%d") if pd.notna(dt_obj) else datetime.date.today().strftime("%Y-%m-%d")
+                    except Exception:
+                        dt_str = parse_date_str(dt_raw)
+                    
+                    st_val = str(row.get('Status', row.get('status', 'Em Produção'))).strip() or 'Em Produção'
+                    obs_val = str(row.get('Observações', row.get('observacoes', ''))).strip() if pd.notna(row.get('Observações', row.get('observacoes'))) else ''
 
-                    for _, row in df_imp_ped.iterrows():
-                        cor_b = str(row.get('Cor do Boné', row.get('cor_bone', ''))).strip()
-                        arte = str(row.get('Arte Estampada', row.get('frase_arte', ''))).strip()
-                        cor_e = str(row.get('Cor da Estampa', row.get('cor_linha', ''))).strip()
-                        prod_tipo = str(row.get('Produto', row.get('tipo', 'Básico'))).strip()
-                        preco_b = parse_money(row.get('Preço Base', row.get('preco', 29.0)))
-                        v_extra = parse_money(row.get('Estampa Extra', row.get('valor_estampa_extra', 0.0)))
-                        v_matriz = parse_money(row.get('Matriz Bordado', row.get('valor_matriz', 0.0)))
-                        
-                        dt_raw = str(row.get('Data', row.get('data_criacao', ''))).strip()
-                        try:
-                            dt_obj = pd.to_datetime(dt_raw, format="%d/%m/%Y", errors="coerce")
-                            if pd.isna(dt_obj):
-                                dt_obj = pd.to_datetime(dt_raw, dayfirst=True, errors="coerce")
-                            dt_str = dt_obj.strftime("%Y-%m-%d") if pd.notna(dt_obj) else datetime.date.today().strftime("%Y-%m-%d")
-                        except Exception:
-                            dt_str = parse_date_str(dt_raw)
-                        
-                        st_val = str(row.get('Status', row.get('status', 'Em Produção'))).strip() or 'Em Produção'
-                        obs_val = str(row.get('Observações', row.get('observacoes', ''))).strip() if pd.notna(row.get('Observações', row.get('observacoes'))) else ''
+                    c.execute('''
+                        INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, status, valor_estampa_extra, valor_matriz)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (lote_nome.strip(), dt_str, cor_b, arte, cor_e, prod_tipo, preco_b, obs_val, st_val, v_extra, v_matriz))
+                    count_inserted += 1
 
-                        c.execute('''
-                            INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, status, valor_estampa_extra, valor_matriz)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (lote_input.strip(), dt_str, cor_b, arte, cor_e, prod_tipo, preco_b, obs_val, st_val, v_extra, v_matriz))
-                        count_inserted += 1
+                    if supabase:
+                        safe_insert("pedidos", {
+                            "lote_id": lote_nome.strip(),
+                            "data_criacao": dt_str,
+                            "cor_bone": cor_b,
+                            "frase_arte": arte,
+                            "cor_linha": cor_e,
+                            "tipo": prod_tipo,
+                            "preco": preco_b,
+                            "observacoes": obs_val,
+                            "status": st_val,
+                            "valor_estampa_extra": v_extra,
+                            "valor_matriz": v_matriz
+                        })
 
-                        if supabase:
-                            safe_insert("pedidos", {
-                                "lote_id": lote_input.strip(),
-                                "data_criacao": dt_str,
-                                "cor_bone": cor_b,
-                                "frase_arte": arte,
-                                "cor_linha": cor_e,
-                                "tipo": prod_tipo,
-                                "preco": preco_b,
-                                "observacoes": obs_val,
-                                "status": st_val,
-                                "valor_estampa_extra": v_extra,
-                                "valor_matriz": v_matriz
-                            })
+                conn.commit()
+                conn.close()
 
-                    conn.commit()
-                    conn.close()
-
-                    st.session_state["flash_success"] = f"🎉 Pedido '{lote_input.strip()}' com {count_inserted} itens importado com sucesso!"
-                    st.rerun()
+                st.session_state["flash_success"] = f"🎉 Pedido '{lote_nome.strip()}' com {count_inserted} itens importado e gravado com sucesso!"
+                st.rerun()
             except Exception as err:
                 st.error(f"Erro ao importar planilha de pedido: {err}")
 
@@ -1303,7 +1298,7 @@ elif "Vendas" in menu:
         opts = []
 
     if not opts:
-        st.warning("⚠️ Nenhum boné disponível em estoque para venda no momento.")
+        st.warning("⚠️️ Nenhum boné disponível em estoque para venda no momento.")
         prod_sel = None
         codigo_sel = ""
     else:
