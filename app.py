@@ -108,14 +108,19 @@ st.markdown("""
         cursor: pointer;
         margin-left: 6px;
     }
-    .status-texto {
-        font-weight: bold;
-        color: #333333;
+    
+    .card-venda-pendente {
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-left: 5px solid #f59e0b;
+        padding: 16px;
+        border-radius: 8px;
+        margin-bottom: 15px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Cache em sessão para guardar despesas extras e baixas de estoque
+# Cache em sessão para guardar custos avulsos, baixas e devoluções locais se necessário
 if "extra_costs_cache" not in st.session_state:
     st.session_state["extra_costs_cache"] = {}
 
@@ -128,7 +133,7 @@ if "baixas_estoque_local" not in st.session_state:
 if "devolucoes_venda_local" not in st.session_state:
     st.session_state["devolucoes_venda_local"] = []
 
-# Configurações do Banco de Pedidos (SQLite / PostgreSQL SDK)
+# Configurações do Banco de Dados SQLite / Supabase
 DB_NAME = "ordens_producao.db"
 UPLOADS_DIR = "uploads"
 COMPROVANTES_DIR = "comprovantes"
@@ -292,30 +297,30 @@ def fetch_data(table_name: str) -> pd.DataFrame:
 
 def normalizar_df_vendas(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Garante a extração e cálculo consistente das colunas de Tarifa Bancária e Líquido Recebido
-    mesmo quando os dados vêm com tipos variados (string, float, int, None) do Supabase/SQLite.
+    Função atualizada que extrai com rigor absoluto os valores das colunas de tarifa
+    (tarifa_bancaria, tarifa_cartao, tarifa) e calcula o liquido_recebido_calc.
     """
     if df.empty:
         return df
 
     df_res = df.copy()
 
-    # Extrai o valor numérico de cada coluna potencial de tarifa
+    # Conversão rigorosa de cada coluna potencial de tarifa
     s_tb = get_numeric_series(df_res, "tarifa_bancaria") if "tarifa_bancaria" in df_res.columns else pd.Series(0.0, index=df_res.index)
     s_tc = get_numeric_series(df_res, "tarifa_cartao") if "tarifa_cartao" in df_res.columns else pd.Series(0.0, index=df_res.index)
     s_t = get_numeric_series(df_res, "tarifa") if "tarifa" in df_res.columns else pd.Series(0.0, index=df_res.index)
 
-    # Consolida a tarifa prioritariamente pela primeira coluna que contiver valor > 0
-    df_res["tarifa_bancaria_calc"] = s_tb
-    df_res["tarifa_bancaria_calc"] = df_res["tarifa_bancaria_calc"].where(df_res["tarifa_bancaria_calc"] > 0, s_tc)
-    df_res["tarifa_bancaria_calc"] = df_res["tarifa_bancaria_calc"].where(df_res["tarifa_bancaria_calc"] > 0, s_t)
-    df_res["tarifa_bancaria_calc"] = df_res["tarifa_bancaria_calc"].fillna(0.0)
+    # Consolida a tarifa final selecionando o primeiro valor válido > 0
+    tarifa_calc = s_tb.copy()
+    tarifa_calc = tarifa_calc.where(tarifa_calc > 0, s_tc)
+    tarifa_calc = tarifa_calc.where(tarifa_calc > 0, s_t)
+    df_res["tarifa_bancaria_calc"] = tarifa_calc.fillna(0.0)
 
-    # Identifica coluna de valor bruto da venda
+    # Extrai valor bruto da venda
     col_v = "valor_venda" if "valor_venda" in df_res.columns else ("valor" if "valor" in df_res.columns else "valor_total")
     df_res["valor_bruto_calc"] = get_numeric_series(df_res, col_v)
 
-    # Calcula a coluna de líquido recebido com garantia de não ficar negativa
+    # Cálculo garantido: Líquido Recebido = max(0.0, Valor Bruto - Tarifa Bancária)
     df_res["liquido_recebido_calc"] = (df_res["valor_bruto_calc"] - df_res["tarifa_bancaria_calc"]).clip(lower=0.0)
 
     return df_res
@@ -1323,7 +1328,7 @@ elif "Vendas" in menu:
 
     valor_recebido = max(0.0, float(valor_venda) - float(tarifa_bancaria))
 
-    st.markdown(f"👉 **Valor Recebido Calculado:** `R$ {valor_recebido:,.2f}`")
+    st.markdown(f"👉 **Líquido Recebido Calculado:** `R$ {valor_recebido:,.2f}`")
 
     if st.button("🚀 Finalizar Venda Individual", type="primary", use_container_width=True):
         if not cliente.strip():
@@ -1342,7 +1347,6 @@ elif "Vendas" in menu:
             tarifa_fmt = round(float(tarifa_bancaria), 2)
             val_receb_fmt = round(max(0.0, val_venda_fmt - tarifa_fmt), 2)
 
-            # Grava a tarifa explicitamente em todas as variações de nomes de colunas como número decimal puro
             payload_venda = {
                 "codigo_bone": codigo_sel.strip(),
                 "codigo": codigo_sel.strip(),
@@ -1373,90 +1377,128 @@ elif "Vendas" in menu:
                         "valor": val_receb_fmt
                     })
                     
-                st.session_state["flash_success"] = f"🎉 Venda salva com sucesso! Líquido Recebido: R$ {val_receb_fmt:,.2f} (Tarifa: R$ {tarifa_fmt:,.2f})"
+                st.session_state["flash_success"] = f"🎉 Venda salva com sucesso! Líquido Recebido: R$ {val_receb_fmt:,.2f} (Tarifa Bancária: R$ {tarifa_fmt:,.2f})"
                 st.rerun()
 
     st.markdown("---")
+    
+    # -------------------------------------------------------------------------------------
+    # RELATÓRIO 1: VENDAS PENDENTES DE RECEBIMENTO (REESTRUTURADO TOTALMENTE)
+    # -------------------------------------------------------------------------------------
     st.subheader("⏳ Vendas Pendentes de Recebimento")
     
-    if not df_vendas.empty:
-        df_vendas_norm = normalizar_df_vendas(df_vendas)
+    df_vendas_norm = normalizar_df_vendas(df_vendas)
+    
+    if not df_vendas_norm.empty:
         col_dt_rec = "data_recebimento" if "data_recebimento" in df_vendas_norm.columns else ("data_receb" if "data_receb" in df_vendas_norm.columns else None)
         if col_dt_rec:
-            df_pendentes = df_vendas_norm[df_vendas_norm[col_dt_rec].isna() | (df_vendas_norm[col_dt_rec] == "") | (df_vendas_norm[col_dt_rec] == "None")].copy()
+            df_pendentes = df_vendas_norm[
+                df_vendas_norm[col_dt_rec].isna() | 
+                (df_vendas_norm[col_dt_rec] == "") | 
+                (df_vendas_norm[col_dt_rec].astype(str).str.lower() == "none")
+            ].copy()
         else:
-            df_pendentes = pd.DataFrame()
+            df_pendentes = df_vendas_norm.copy()
 
         if not df_pendentes.empty:
-            opts_pend = [f"ID {r['id']} | {r.get('cliente','')} - R$ {round(float(r.get('valor_bruto_calc', 0.0)), 2):,.2f} (Venda: {format_data_br(r.get('data',''))})" for _, r in df_pendentes.iterrows()]
-            venda_sel = st.selectbox("📌 Selecione uma Venda para Gerenciar / Confirmar Recebimento:", opts_pend)
+            opts_pend = []
+            for _, r in df_pendentes.iterrows():
+                v_id = r['id']
+                cli = r.get('cliente', 'Cliente Desconhecido')
+                vb = float(r.get('valor_bruto_calc', 0.0))
+                tb = float(r.get('tarifa_bancaria_calc', 0.0))
+                lr = float(r.get('liquido_recebido_calc', 0.0))
+                dt_str = format_data_br(r.get('data', ''))
+                
+                opts_pend.append(
+                    f"ID #{v_id} | Cliente: {cli} | Valor Bruto: R$ {vb:,.2f} | Tarifa Bancária: R$ {tb:,.2f} | Líquido Recebido: R$ {lr:,.2f} (Venda: {dt_str})"
+                )
+
+            st.markdown("##### 📌 Seleção para Baixa ou Exclusão")
+            venda_sel_str = st.selectbox(
+                "Selecione uma Venda Pendente para Confirmar Recebimento ou Excluir:",
+                opts_pend,
+                key="sb_vendas_pendentes_novo"
+            )
             
-            c_rec1, c_rec2, c_rec3 = st.columns([2, 2, 1])
+            venda_id_sel = int(venda_sel_str.split("|")[0].replace("ID #", "").strip())
+            row_venda_sel = df_pendentes[df_pendentes["id"] == venda_id_sel].iloc[0]
+
+            # Card Explicativo com os Campos Solicitados Corrigidos
+            c_code = str(row_venda_sel.get("codigo_bone", row_venda_sel.get("codigo", "")))
+            c_cli = str(row_venda_sel.get("cliente", ""))
+            c_vbruto = float(row_venda_sel.get("valor_bruto_calc", 0.0))
+            c_tarifa = float(row_venda_sel.get("tarifa_bancaria_calc", 0.0))
+            c_liq = float(row_venda_sel.get("liquido_recebido_calc", 0.0))
+
+            st.markdown(f"""
+            <div class="card-venda-pendente">
+                <h4>🧢 Venda Selecionada: ID #{venda_id_sel} (Código: {c_code})</h4>
+                <p><b>Cliente:</b> {c_cli} | <b>Forma de Pagamento:</b> {row_venda_sel.get('forma_pagto', 'N/A')}</p>
+                <p style="font-size: 1.1em;">
+                    • <b>Valor Bruto:</b> <span style="color: #0f172a;">R$ {c_vbruto:,.2f}</span><br>
+                    • <b>Tarifa Bancária:</b> <span style="color: #ef4444;">R$ {c_tarifa:,.2f}</span><br>
+                    • <b>Líquido Recebido:</b> <span style="color: #10b981; font-weight: bold;">R$ {c_liq:,.2f}</span>
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            c_rec1, c_rec2, c_rec3 = st.columns([2, 2, 1.5])
             with c_rec1:
-                dt_confirmada = st.date_input("Data Efetiva de Recebimento *", datetime.date.today(), key="dt_conf_rec", format="DD/MM/YYYY")
+                dt_confirmada = st.date_input("Data Efetiva de Recebimento *", datetime.date.today(), key="dt_conf_rec_novo", format="DD/MM/YYYY")
             with c_rec2:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("✅ Confirmar Recebimento", use_container_width=True, type="primary"):
-                    venda_id = int(venda_sel.split("|")[0].replace("ID", "").strip())
-                    row_v = df_pendentes[df_pendentes["id"] == venda_id].iloc[0]
-                    
+                if st.button("✅ Confirmar Recebimento", use_container_width=True, type="primary", key="btn_confirm_rec_novo"):
                     dt_conf_str = parse_date_str(dt_confirmada)
-                    supabase.table("vendas").update({col_dt_rec: dt_conf_str}).eq("id", venda_id).execute()
                     
-                    c_cod = "codigo_bone" if "codigo_bone" in row_v else ("codigo" if "codigo" in row_v else "codigo_produto")
-                    val_rec_fmt = round(float(row_v.get("liquido_recebido_calc", 0.0)), 2)
+                    if supabase:
+                        supabase.table("vendas").update({col_dt_rec: dt_conf_str}).eq("id", venda_id_sel).execute()
                     
-                    if val_rec_fmt > 0:
+                    if c_liq > 0:
                         safe_insert("caixa", {
                             "data": dt_conf_str,
-                            "desc": f"Venda {row_v.get(c_cod,'')} ({row_v.get('qtd',1)}un) - {row_v.get('cliente','')}",
+                            "desc": f"Venda {c_code} ({row_venda_sel.get('qtd',1)}un) - {c_cli}",
                             "tipo": "Venda",
-                            "valor": val_rec_fmt
+                            "valor": round(c_liq, 2)
                         })
                     
-                    st.success("🎉 Recebimento confirmado e lançado no caixa!")
+                    st.session_state["flash_success"] = f"🎉 Recebimento da Venda ID #{venda_id_sel} confirmado! R$ {c_liq:,.2f} creditados no Caixa."
                     st.rerun()
 
             with c_rec3:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🗑 Excluir Venda Incorreta", use_container_width=True, type="secondary"):
-                    venda_id = int(venda_sel.split("|")[0].replace("ID", "").strip())
-                    row_v = df_pendentes[df_pendentes["id"] == venda_id].iloc[0]
-                    
-                    cod_prod_excluir = row_v.get("codigo_bone") or row_v.get("codigo") or row_v.get("codigo_produto")
-                    qtd_venda_excluir = int(row_v.get("qtd") or row_v.get("quantidade") or 1)
-                    estornar_estoque(cod_prod_excluir, qtd_venda_excluir)
+                if st.button("🗑 Excluir Venda Incorreta", use_container_width=True, type="secondary", key="btn_del_venda_pend_novo"):
+                    qtd_v = int(row_venda_sel.get("qtd") or 1)
+                    estornar_estoque(c_code, qtd_v)
 
-                    supabase.table("vendas").delete().eq("id", venda_id).execute()
-                    st.session_state["flash_success"] = "🗑 Venda excluída e produtos estornados ao estoque com sucesso!"
+                    if supabase:
+                        supabase.table("vendas").delete().eq("id", venda_id_sel).execute()
+
+                    st.session_state["flash_success"] = f"🗑 Venda ID #{venda_id_sel} excluída e {qtd_v} unidade(s) de '{c_code}' retornada(s) ao estoque!"
                     st.rerun()
 
-            df_pend_exib = df_pendentes.copy()
-            col_d_v = "data_venda" if "data_venda" in df_pend_exib.columns else "data"
-            col_c_b = "codigo_bone" if "codigo_bone" in df_pend_exib.columns else "codigo"
-            col_cli = "cliente" if "cliente" in df_pend_exib.columns else "nome_cliente"
-            col_pag = "forma_pagto" if "forma_pagto" in df_pend_exib.columns else "pagto"
-
-            df_tabela_pend = pd.DataFrame({
-                "Data da Venda": df_pend_exib[col_d_v].apply(format_data_br) if col_d_v in df_pend_exib.columns else "",
-                "Código": df_pend_exib.get(col_c_b, ""),
-                "Cliente": df_pend_exib.get(col_cli, ""),
-                "Valor Bruto": df_pend_exib["valor_bruto_calc"].apply(lambda v: f"R$ {float(v):,.2f}"),
-                "Tarifa Bancária": df_pend_exib["tarifa_bancaria_calc"].apply(lambda v: f"R$ {float(v):,.2f}"),
-                "Líquido Recebido": df_pend_exib["liquido_recebido_calc"].apply(lambda v: f"R$ {float(v):,.2f}"),
-                "Forma de Pagamento": df_pend_exib.get(col_pag, "")
+            st.markdown("##### 📊 Tabela Descritiva de Vendas Pendentes")
+            df_pend_tabela = pd.DataFrame({
+                "ID": df_pendentes["id"],
+                "Data Venda": df_pendentes["data"].apply(format_data_br),
+                "Código": df_pendentes.get("codigo_bone", df_pendentes.get("codigo", "")),
+                "Cliente": df_pendentes.get("cliente", ""),
+                "Forma Pagto": df_pendentes.get("forma_pagto", ""),
+                "Valor Bruto": df_pendentes["valor_bruto_calc"].apply(lambda v: f"R$ {float(v):,.2f}"),
+                "Tarifa Bancária": df_pendentes["tarifa_bancaria_calc"].apply(lambda v: f"R$ {float(v):,.2f}"),
+                "Líquido Recebido": df_pendentes["liquido_recebido_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
             })
-            st.dataframe(df_tabela_pend, use_container_width=True, hide_index=True)
+            st.dataframe(df_pend_tabela, use_container_width=True, hide_index=True)
+
         else:
             st.info("Nenhuma venda pendente de recebimento no momento.")
     else:
-        st.info("Nenhuma venda registrada.")
+        st.info("Nenhuma venda cadastrada para verificação de pendências.")
 
     st.markdown("---")
     with st.expander("🔄 Registrar Devolução de Mercadoria (Devolução de Venda)", expanded=False):
-        if not df_vendas.empty:
-            df_vendas_norm = normalizar_df_vendas(df_vendas)
-            opts_vendas_dev = [f"ID #{r['id']} | Código: {r.get('codigo_bone', r.get('codigo',''))} | Cliente: {r.get('cliente','')} (R$ {float(r.get('valor_bruto_calc', 0.0)):,.2f})" for _, r in df_vendas_norm.iterrows()]
+        if not df_vendas_norm.empty:
+            opts_vendas_dev = [f"ID #{r['id']} | Código: {r.get('codigo_bone', r.get('codigo',''))} | Cliente: {r.get('cliente','')} (Valor Bruto: R$ {float(r.get('valor_bruto_calc', 0.0)):,.2f})" for _, r in df_vendas_norm.iterrows()]
             venda_dev_sel = st.selectbox("Selecione a Venda a Devolver *", opts_vendas_dev)
             
             c_dev1, c_dev2 = st.columns(2)
@@ -1496,22 +1538,32 @@ elif "Vendas" in menu:
                     st.rerun()
 
     st.markdown("---")
+    
+    # -------------------------------------------------------------------------------------
+    # RELATÓRIO 2: HISTÓRICO DETALHADO DE VENDAS (REESTRUTURADO TOTALMENTE)
+    # -------------------------------------------------------------------------------------
     st.subheader("📋 Histórico Detalhado de Vendas")
-    if not df_vendas.empty:
-        df_v_exib = normalizar_df_vendas(df_vendas)
-        col_d_v = "data_venda" if "data_venda" in df_v_exib.columns else "data"
-        col_c_b = "codigo_bone" if "codigo_bone" in df_v_exib.columns else "codigo"
-        col_cli = "cliente" if "cliente" in df_v_exib.columns else "nome_cliente"
-        col_pag = "forma_pagto" if "forma_pagto" in df_v_exib.columns else "pagto"
+    
+    if not df_vendas_norm.empty:
+        col_d_v = "data_venda" if "data_venda" in df_vendas_norm.columns else "data"
+        col_c_b = "codigo_bone" if "codigo_bone" in df_vendas_norm.columns else "codigo"
+        col_cli = "cliente" if "cliente" in df_vendas_norm.columns else "nome_cliente"
+        col_pag = "forma_pagto" if "forma_pagto" in df_vendas_norm.columns else "pagto"
 
-        df_v_exib["Mes_Ano"] = pd.to_datetime(df_v_exib[col_d_v], dayfirst=True, errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
+        df_vendas_norm["Mes_Ano"] = pd.to_datetime(df_vendas_norm[col_d_v], dayfirst=True, errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
         
-        meses_vendas = sorted(df_v_exib["Mes_Ano"].unique(), reverse=True)
+        meses_vendas = sorted(df_vendas_norm["Mes_Ano"].unique(), reverse=True)
         for mes in meses_vendas:
-            df_v_mes = df_v_exib[df_v_exib["Mes_Ano"] == mes]
-            st.markdown(f"#### 📅 Mês: {mes}")
+            df_v_mes = df_vendas_norm[df_vendas_norm["Mes_Ano"] == mes].copy()
+            
+            tot_bruto_mes = df_v_mes["valor_bruto_calc"].sum()
+            tot_tarifa_mes = df_v_mes["tarifa_bancaria_calc"].sum()
+            tot_liquido_mes = df_v_mes["liquido_recebido_calc"].sum()
 
-            col_h = st.columns([1.3, 1.0, 1.8, 1.4, 1.4, 1.4, 1.4, 0.5, 0.5])
+            st.markdown(f"#### 📅 Mês: {mes} — (Bruto: R$ {tot_bruto_mes:,.2f} | Tarifa: R$ {tot_tarifa_mes:,.2f} | Líquido Rec.: R$ {tot_liquido_mes:,.2f})")
+
+            # Cabeçalho da Tabela
+            col_h = st.columns([1.2, 1.0, 1.8, 1.3, 1.3, 1.3, 1.3, 0.6, 0.6])
             col_h[0].markdown("**Data Venda**")
             col_h[1].markdown("**Código**")
             col_h[2].markdown("**Cliente**")
@@ -1535,7 +1587,7 @@ elif "Vendas" in menu:
                 
                 c_pag_exib = str(row.get(col_pag, "PIX"))
 
-                c_linha = st.columns([1.3, 1.0, 1.8, 1.4, 1.4, 1.4, 1.4, 0.5, 0.5])
+                c_linha = st.columns([1.2, 1.0, 1.8, 1.3, 1.3, 1.3, 1.3, 0.6, 0.6])
                 c_linha[0].write(c_data_exib)
                 c_linha[1].write(c_cod_exib)
                 c_linha[2].write(c_cli_exib)
@@ -1545,29 +1597,31 @@ elif "Vendas" in menu:
                 c_linha[6].write(c_pag_exib)
                 
                 with c_linha[7]:
-                    if st.button("✏️", key=f"btn_edit_row_{v_id}_{mes}", use_container_width=True):
+                    if st.button("✏️", key=f"btn_edit_hist_{v_id}_{mes}", use_container_width=True):
                         st.session_state["editing_venda_id"] = v_id
                         st.rerun()
                 with c_linha[8]:
-                    if st.button("🗑", key=f"btn_del_row_{v_id}_{mes}", use_container_width=True):
+                    if st.button("🗑", key=f"btn_del_hist_{v_id}_{mes}", use_container_width=True):
                         cod_prod_e = row.get("codigo_bone") or row.get("codigo") or row.get("codigo_produto")
                         qtd_venda_e = int(row.get("qtd") or row.get("quantidade") or 1)
                         estornar_estoque(cod_prod_e, qtd_venda_e)
 
-                        supabase.table("vendas").delete().eq("id", v_id).execute()
-                        st.session_state["flash_success"] = f"🗑 Venda ID {v_id} excluída com sucesso!"
+                        if supabase:
+                            supabase.table("vendas").delete().eq("id", v_id).execute()
+                        st.session_state["flash_success"] = f"🗑 Venda ID #{v_id} excluída com sucesso!"
                         st.rerun()
 
+                # Formulário de Edição Inline
                 if st.session_state.get("editing_venda_id") == v_id:
-                    with st.form(key=f"form_edit_row_{v_id}_{mes}"):
-                        st.markdown(f"##### ✏ Editar Venda ID {v_id}")
+                    with st.form(key=f"form_edit_hist_{v_id}_{mes}"):
+                        st.markdown(f"##### ✏ Editar Venda ID #{v_id}")
                         e_col1, e_col2, e_col3, e_col4 = st.columns(4)
                         with e_col1:
                             e_cliente = st.text_input("Cliente *", value=str(c_cli_exib))
                         with e_col2:
                             e_valor = st.number_input("Valor Bruto (R$) *", min_value=0.0, value=float(c_val_exib), format="%.2f")
                         with e_col3:
-                            e_tarifa = st.number_input("Tarifa (R$)", min_value=0.0, value=float(c_tarifa_exib), format="%.2f")
+                            e_tarifa = st.number_input("Tarifa Bancária (R$)", min_value=0.0, value=float(c_tarifa_exib), format="%.2f")
                         with e_col4:
                             opts_pag = ["PIX", "Cartão", "Dinheiro", "Brinde"]
                             idx_pag = opts_pag.index(c_pag_exib) if c_pag_exib in opts_pag else 0
@@ -1576,21 +1630,23 @@ elif "Vendas" in menu:
                         btn_salvar_e, btn_cancel_e = st.columns(2)
                         with btn_salvar_e:
                             if st.form_submit_button("💾 Salvar Alterações", use_container_width=True, type="primary"):
-                                val_bruto_edit = float(e_valor)
-                                tarifa_edit = float(e_tarifa)
-                                val_rec_calculado = max(0.0, val_bruto_edit - tarifa_edit)
+                                val_bruto_edit = round(float(e_valor), 2)
+                                tarifa_edit = round(float(e_tarifa), 2)
+                                val_rec_calculado = round(max(0.0, val_bruto_edit - tarifa_edit), 2)
                                 
-                                supabase.table("vendas").update({
-                                    "cliente": e_cliente.strip(),
-                                    "valor_venda": round(val_bruto_edit, 2),
-                                    "tarifa_bancaria": round(tarifa_edit, 2),
-                                    "tarifa_cartao": round(tarifa_edit, 2),
-                                    "tarifa": round(tarifa_edit, 2),
-                                    "valor_recebido": round(val_rec_calculado, 2),
-                                    "forma_pagto": e_forma_pagto
-                                }).eq("id", v_id).execute()
+                                if supabase:
+                                    supabase.table("vendas").update({
+                                        "cliente": e_cliente.strip(),
+                                        "valor_venda": val_bruto_edit,
+                                        "tarifa_bancaria": tarifa_edit,
+                                        "tarifa_cartao": tarifa_edit,
+                                        "tarifa": tarifa_edit,
+                                        "valor_recebido": val_rec_calculado,
+                                        "forma_pagto": e_forma_pagto
+                                    }).eq("id", v_id).execute()
+
                                 st.session_state["editing_venda_id"] = None
-                                st.session_state["flash_success"] = f"🎉 Venda ID {v_id} atualizada com sucesso!"
+                                st.session_state["flash_success"] = f"🎉 Venda ID #{v_id} atualizada! Líquido: R$ {val_rec_calculado:,.2f}"
                                 st.rerun()
                         with btn_cancel_e:
                             if st.form_submit_button("❌ Cancelar", use_container_width=True):
@@ -1786,7 +1842,7 @@ elif "Custos" in menu:
                                 st.rerun()
                         st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
             else:
-                st.info("Nenhum custo de venda registrado até o momento.")
+                st.info("Nenum custo de venda registrado até o momento.")
         else:
             st.info("Nenhum custo registrado.")
 
@@ -2186,13 +2242,14 @@ elif "Aportes" in menu:
                             st.rerun()
                     with c6:
                         if st.button("🗑", key=f"del_ap_{ap_id}_{mes}", use_container_width=True):
-                            supabase.table("aportes").delete().eq("id", ap_id).execute()
-                            st.session_state["flash_success"] = f"Registro ID {ap_id} excluído com sucesso!"
+                            if supabase:
+                                supabase.table("aportes").delete().eq("id", ap_id).execute()
+                            st.session_state["flash_success"] = f"Registro ID #{ap_id} excluído com sucesso!"
                             st.rerun()
 
                     if st.session_state.get("editing_aporte_id") == ap_id:
                         with st.form(key=f"form_edit_ap_{ap_id}_{mes}"):
-                            st.markdown(f"##### ✏ Editar Registro ID {ap_id}")
+                            st.markdown(f"##### ✏ Editar Registro ID #{ap_id}")
                             e_col1, e_col2, e_col3 = st.columns(3)
                             with e_col1:
                                 idx_s = 0 if ap_socio == "Renan" else 1
@@ -2207,11 +2264,12 @@ elif "Aportes" in menu:
                             with btn_s_ap:
                                 if st.form_submit_button("💾 Salvar Alterações", use_container_width=True, type="primary"):
                                     val_final = float(novo_val) if novo_tipo == "Aporte" else -float(novo_val)
-                                    supabase.table("aportes").update({
-                                        "socio": novo_socio,
-                                        "tipo": novo_tipo,
-                                        "valor": val_final
-                                    }).eq("id", ap_id).execute()
+                                    if supabase:
+                                        supabase.table("aportes").update({
+                                            "socio": novo_socio,
+                                            "tipo": novo_tipo,
+                                            "valor": val_final
+                                        }).eq("id", ap_id).execute()
                                     st.session_state["editing_aporte_id"] = None
                                     st.session_state["flash_success"] = "Registro atualizado com sucesso!"
                                     st.rerun()
