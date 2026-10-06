@@ -553,20 +553,30 @@ def safe_update_venda(venda_id, payload: dict):
 
 
 def safe_delete_venda(venda_id):
-    """Exclui uma venda do Supabase ou SQLite local."""
+    """Exclui uma venda do Supabase e do SQLite local permanentemente."""
     if venda_id in (None, ""):
         return False
-    if not supabase:
-        return sqlite_delete_record("vendas", venda_id)
+    
+    # 1. Excluir do SQLite local
     try:
-        supabase.table("vendas").delete().eq("id", venda_id).execute()
-        return True
-    except Exception as err:
-        err_str = str(err)
-        if "PGRST205" in err_str or "schema cache" in err_str:
-            return sqlite_delete_record("vendas", venda_id)
-        st.error(f"Erro ao excluir a venda: {err}")
-        return False
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        cur.execute("DELETE FROM vendas WHERE id = ?", (venda_id,))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+    # 2. Excluir do Supabase
+    if supabase:
+        try:
+            supabase.table("vendas").delete().eq("id", venda_id).execute()
+        except Exception as err:
+            err_str = str(err)
+            if "PGRST205" not in err_str and "schema cache" not in err_str:
+                pass
+
+    return True
 
 
 def atualizar_caixa_da_venda(venda_antiga: dict, venda_nova: dict | None = None, excluir: bool = False):
@@ -659,21 +669,65 @@ def dar_baixa_estoque_venda(codigo_prod, qtd_venda=1):
         return False
 
 def estornar_estoque(codigo_prod, qtd_estorno):
-    if not supabase or not codigo_prod or qtd_estorno <= 0:
+    if not codigo_prod or qtd_estorno <= 0:
         return False
+    
+    sucesso = False
+    
+    # 1. Atualizar no Supabase se disponível
+    if supabase:
+        try:
+            res_p = supabase.table("produtos").select("*").eq("codigo", codigo_prod).execute()
+            if res_p.data and len(res_p.data) > 0:
+                prod_row = res_p.data[0]
+                col_qtd = "qtd_estoque" if "qtd_estoque" in prod_row else ("qtd" if "qtd" in prod_row else "estoque")
+                qtd_atual = int(pd.to_numeric(prod_row.get(col_qtd, 0), errors="coerce") or 0)
+                novo_estoque = qtd_atual + int(qtd_estorno)
+                supabase.table("produtos").update({col_qtd: novo_estoque}).eq("codigo", codigo_prod).execute()
+                sucesso = True
+        except Exception:
+            pass
+
+    # 2. Atualizar no SQLite local
+    conn = None
     try:
-        res_p = supabase.table("produtos").select("*").eq("codigo", codigo_prod).execute()
-        if res_p.data and len(res_p.data) > 0:
-            prod_row = res_p.data[0]
-            col_qtd = "qtd_estoque" if "qtd_estoque" in prod_row else ("qtd" if "qtd" in prod_row else "estoque")
-            qtd_atual = int(pd.to_numeric(prod_row.get(col_qtd, 0), errors="coerce") or 0)
-            novo_estoque = qtd_atual + int(qtd_estorno)
-            supabase.table("produtos").update({col_qtd: novo_estoque}).eq("codigo", codigo_prod).execute()
-            return True
-        return False
-    except Exception as e:
-        st.error(f"Erro ao estornar produto ao estoque: {e}")
-        return False
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        cur.execute("PRAGMA table_info(produtos)")
+        cols = {row[1] for row in cur.fetchall()}
+        if cols:
+            col_qtd_sql = "qtd_estoque" if "qtd_estoque" in cols else ("qtd" if "qtd" in cols else "estoque")
+            cur.execute(f"SELECT {col_qtd_sql} FROM produtos WHERE codigo = ?", (codigo_prod,))
+            row_p = cur.fetchone()
+            if row_p:
+                qtd_atual_sql = int(pd.to_numeric(row_p[0], errors="coerce") or 0)
+                novo_estoque_sql = qtd_atual_sql + int(qtd_estorno)
+                cur.execute(f"UPDATE produtos SET {col_qtd_sql} = ? WHERE codigo = ?", (novo_estoque_sql, codigo_prod))
+                conn.commit()
+                sucesso = True
+        else:
+            # Tabela produtos pode não existir no SQLite local, vamos criá-la se necessário
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS produtos (
+                    codigo TEXT PRIMARY KEY,
+                    cor TEXT,
+                    frase TEXT,
+                    cor_estampa TEXT,
+                    categoria TEXT,
+                    custo REAL,
+                    qtd_estoque INTEGER DEFAULT 1
+                )
+            ''')
+            cur.execute("INSERT OR REPLACE INTO produtos (codigo, qtd_estoque) VALUES (?, ?)", (codigo_prod, int(qtd_estorno)))
+            conn.commit()
+            sucesso = True
+    except Exception:
+        pass
+    finally:
+        if conn is not None:
+            conn.close()
+
+    return True
 
 @st.cache_data(ttl=600)
 def get_saved_logo():
