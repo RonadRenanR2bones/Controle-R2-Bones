@@ -2035,7 +2035,9 @@ elif "Contas a Receber" in menu:
                         st.write(f"Tarifa: R$ {v_tarifa:,.2f}")
                         st.markdown(f"**Líquido: R$ {v_liq:,.2f}**")
                     with rc3:
-                        dt_receb_input = st.date_input("Data de Recebimento", datetime.date.today(), format="YYYY/MM/DD", key=func_key := f"dt_rec_cr_{v_id}")
+                        # Atribuição da chave separadamente (sem operador := no argumento)
+                        key_input_rec = f"dt_rec_cr_{v_id}"
+                        dt_receb_input = st.date_input("Data de Recebimento", datetime.date.today(), format="YYYY/MM/DD", key=key_input_rec)
                     with rc4:
                         st.write("")
                         if st.button("✅ Confirmar Recebimento", key=f"btn_rec_cr_{v_id}", use_container_width=True, type="primary"):
@@ -2754,7 +2756,7 @@ elif "Gestão" in menu or "Dados" in menu:
                     st.error(f"Erro durante a restauração do backup: {ex}")
 
 elif "Configuração" in menu or "Configuracao" in menu:
-    st.subheader("⚙️️ Configurações Gerais do Sistema")
+    st.subheader("⚙ Configurações Gerais do Sistema")
     st.markdown("Gerencie variáveis de sistema, sequenciais de código e parâmetros operacionais.")
 
     ult_cod = get_ultimo_codigo_config()
