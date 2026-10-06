@@ -2588,4 +2588,3 @@ elif "Configuração" in menu or "Configuracao" in menu:
             set_ultimo_codigo_config(novo_cod_input.strip())
             st.session_state["flash_success"] = f"🎉 Configuração atualizada! O 'Último Item Cadastrado no Estoque' é '{novo_cod_input.strip()}'."
             st.rerun()
-```[cite: 1, 2, 3, 4, 5, 6]
