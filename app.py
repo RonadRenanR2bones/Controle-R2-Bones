@@ -301,7 +301,6 @@ def parse_date_str(val):
     except Exception:
         return hoje
 
-
 def format_data_br(val):
     """Exibição rigorosa em YYYY/MM/DD."""
     if val is None:
@@ -398,7 +397,6 @@ def sqlite_insert_record(table_name: str, payload: dict):
         if conn is not None:
             conn.close()
 
-
 def sqlite_update_record(table_name: str, record_id, payload: dict):
     if table_name not in {"vendas", "pedidos"} or record_id in (None, ""):
         return False
@@ -425,7 +423,6 @@ def sqlite_update_record(table_name: str, record_id, payload: dict):
         if conn is not None:
             conn.close()
 
-
 def sqlite_delete_record(table_name: str, record_id):
     if table_name not in {"vendas", "pedidos"} or record_id in (None, ""):
         return False
@@ -443,13 +440,11 @@ def sqlite_delete_record(table_name: str, record_id):
         if conn is not None:
             conn.close()
 
-
 def carregar_vendas_local() -> pd.DataFrame:
     try:
         return carregar_dataframe("SELECT * FROM vendas ORDER BY id DESC")
     except Exception:
         return pd.DataFrame()
-
 
 def safe_insert(table_name: str, payload: dict):
     if not supabase:
@@ -487,7 +482,6 @@ def safe_insert(table_name: str, payload: dict):
                 return safe_insert(table_name, payload_retry)
         return sqlite_insert_record(table_name, payload) if table_name in {"pedidos", "vendas"} else False
 
-
 def safe_update_venda(venda_id, payload: dict):
     if venda_id in (None, ""):
         return False
@@ -501,7 +495,6 @@ def safe_update_venda(venda_id, payload: dict):
         if "PGRST205" in err_str or "schema cache" in err_str:
             return sqlite_update_record("vendas", venda_id, payload)
         return sqlite_update_record("vendas", venda_id, payload)
-
 
 def safe_delete_venda(venda_id):
     if venda_id in (None, ""):
@@ -524,9 +517,8 @@ def safe_delete_venda(venda_id):
 
     return True
 
-
 def atualizar_caixa_da_venda(venda_antiga: dict, venda_nova: dict | None = None, excluir: bool = False):
-    data_rec = venda_antiga.get("data_recebimento")
+    data_rec = venda_antiga.get("data_recebimento") or venda_antiga.get("data")
     codigo = str(venda_antiga.get("codigo_bone", venda_antiga.get("codigo", ""))).strip()
     cliente = str(venda_antiga.get("cliente", "")).strip()
     qtd = int(pd.to_numeric(venda_antiga.get("qtd", 1), errors="coerce") or 1)
@@ -540,7 +532,7 @@ def atualizar_caixa_da_venda(venda_antiga: dict, venda_nova: dict | None = None,
         if excluir:
             supabase.table("caixa").delete().eq("data", parse_date_str(data_rec)).eq("desc", desc_antiga).execute()
         elif venda_nova is not None:
-            data_nova = venda_nova.get("data_recebimento")
+            data_nova = venda_nova.get("data_recebimento") or venda_nova.get("data")
             v_bruto_n = float(venda_nova.get("valor_venda", 0) or 0)
             t_n = float(venda_nova.get("tarifa", 0) or 0)
             valor_novo = float(venda_nova.get("valor_recebido", v_bruto_n - t_n) or (v_bruto_n - t_n))
@@ -559,7 +551,6 @@ def atualizar_caixa_da_venda(venda_antiga: dict, venda_nova: dict | None = None,
                 supabase.table("caixa").delete().eq("data", parse_date_str(data_rec)).eq("desc", desc_antiga).execute()
     except Exception:
         pass
-
 
 def safe_upsert_produto(payload: dict):
     if not supabase:
@@ -843,12 +834,12 @@ def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, 
             if tot_c > 0:
                 lista_movimentos.append({"Data_Val": r["data_str"], "Valor_Num": -tot_c})
 
-    # 2. Recebimentos Líquidos das Vendas
+    # 2. Recebimentos Líquidos das Vendas (Regra rigorosa do Valor Líquido)
     if not df_vendas_in.empty:
         df_v_norm = normalizar_df_vendas(df_vendas_in)
         col_dt_rec = "data_recebimento" if "data_recebimento" in df_v_norm.columns else ("data_receb" if "data_receb" in df_v_norm.columns else "data")
         for _, r in df_v_norm.iterrows():
-            dt_v = r.get(col_dt_rec) or r.get("data")
+            dt_v = r.get(col_dt_rec) or r.get("data") or r.get("data_venda")
             val_v_calc = float(r.get("liquido_recebido_calc", 0.0))
             if val_v_calc > 0:
                 lista_movimentos.append({"Data_Val": parse_date_str(dt_v), "Valor_Num": val_v_calc})
@@ -1240,7 +1231,7 @@ elif "Pedidos" in menu:
                         except Exception as err_del_p:
                             st.error(f"Erro ao excluir no Supabase: {err_del_p}")
 
-                    st.session_state["flash_success"] = f"🗑️️ Item ID #{id_ped_edit} excluído com sucesso!"
+                    st.session_state["flash_success"] = f"🗑 Item ID #{id_ped_edit} excluído com sucesso!"
                     st.rerun()
 
     st.markdown("---")
@@ -1860,7 +1851,7 @@ elif "Vendas" in menu:
 
     st.markdown("---")
     st.subheader("📋 Histórico Detalhado de Vendas")
-    st.caption("As vendas são agrupadas por mês. Use ✏️ para editar cliente, valor bruto, tarifa e forma de pagamento, ou 🗑 para cancelar a venda e devolver a quantidade ao estoque.")
+    st.caption("As vendas são agrupadas por mês. Exibe explicitamente o Valor Bruto, a Tarifa e o Líquido Recebido. Use ✏️ para editar ou 🗑 para cancelar.")
 
     df_historico_vendas = fetch_data("vendas")
     if df_historico_vendas.empty:
@@ -1912,7 +1903,7 @@ elif "Vendas" in menu:
                     with ce1:
                         salvar_edicao = st.button("💾 Salvar Alterações", type="primary", use_container_width=True, key=f"salvar_edicao_{id_edicao}")
                     with ce2:
-                        cancelar_edicao = st.button("↩️ Cancelar", use_container_width=True, key=f"cancelar_edicao_{id_edicao}")
+                        cancelar_edicao = st.button("↩️️ Cancelar", use_container_width=True, key=f"cancelar_edicao_{id_edicao}")
 
                     if cancelar_edicao:
                         st.session_state.pop("editar_venda_id", None)
@@ -1945,6 +1936,20 @@ elif "Vendas" in menu:
                 continue
             st.markdown(f"#### 📅 Mês: {mes_hist.replace('-', '/')}")
             df_mes_hist = df_mes_hist.sort_values(by="_data_hist", ascending=False)
+
+            # Cabeçalho da Tabela Detalhada
+            h1, h2, h3, h4, h5, h6, h7, h8, h9, h10 = st.columns([1.1, 0.9, 1.6, 0.6, 0.9, 0.8, 0.9, 0.8, 0.5, 0.5], vertical_alignment="center")
+            with h1: st.markdown("**Data**")
+            with h2: st.markdown("**Código**")
+            with h3: st.markdown("**Cliente**")
+            with h4: st.markdown("**Qtd**")
+            with h5: st.markdown("**Valor Bruto**")
+            with h6: st.markdown("**Tarifa**")
+            with h7: st.markdown("**Líquido**")
+            with h8: st.markdown("**Pagto**")
+            with h9: st.markdown("**Edit**")
+            with h10: st.markdown("**Del**")
+            st.divider()
 
             for _, venda_row in df_mes_hist.iterrows():
                 venda_id = venda_row.get("id")
@@ -2199,6 +2204,10 @@ elif "Custos" in menu:
 
         if not df_v_tarifas.empty:
             df_v_tarifas["tarifa_num"] = get_numeric_series(df_v_tarifas, "tarifa")
+            if "tarifa_bancaria" in df_v_tarifas.columns:
+                tb_num = get_numeric_series(df_v_tarifas, "tarifa_bancaria")
+                df_v_tarifas["tarifa_num"] = df_v_tarifas["tarifa_num"].where(df_v_tarifas["tarifa_num"] > 0, tb_num)
+
             df_v_tarifa_com_valor = df_v_tarifas[df_v_tarifas["tarifa_num"] > 0].copy()
 
             if not df_v_tarifa_com_valor.empty:
@@ -2213,21 +2222,20 @@ elif "Custos" in menu:
                     df_mes_t = df_v_tarifa_com_valor[df_v_tarifa_com_valor["_mes_t"] == mes].sort_values(by="_data_t", ascending=False)
                     total_mes_t = df_mes_t["tarifa_num"].sum()
 
-                    st.markdown(f"#### 📅 Mês: {mes.replace('-', '/')} — Total de Tarifas: `R$ {total_mes_t:,.2f}`")
+                    st.markdown(f"#### 📅 Mês: {mes.replace('-', '/')} — Somatório Acumulado de Tarifas: `R$ {total_mes_t:,.2f}`")
 
                     lista_exib_t = []
                     for _, r in df_mes_t.iterrows():
                         lista_exib_t.append({
                             "Data": format_data_br(r.get("_data_t")),
-                            "Código Boné": str(r.get(col_cod_t, "")),
+                            "Código do Boné": str(r.get(col_cod_t, "")),
                             "Cliente": str(r.get("cliente", "")),
-                            "Forma Pagto": str(r.get("forma_pagto", "")),
                             "Valor da Tarifa": f"R$ {float(r.get('tarifa_num', 0)):,.2f}"
                         })
 
                     st.dataframe(pd.DataFrame(lista_exib_t), use_container_width=True, hide_index=True)
             else:
-                st.info("Nenhuma tarifa de venda registrada até o momento.")
+                st.info("Nenhuma tarifa de venda maior que zero registrada até o momento.")
         else:
             st.info("Nenhuma venda registrada.")
 
@@ -2260,12 +2268,12 @@ elif "Caixa" in menu or "Fluxo" in menu:
                     "Valor_Num": -tot_c
                 })
 
-    # 2. Recebimentos Líquidos das Vendas
+    # 2. Recebimentos Líquidos das Vendas (Utilizando rigorosamente o Valor Líquido: Valor Bruto - Tarifa)
     if not df_vendas.empty:
         df_v_norm = normalizar_df_vendas(df_vendas)
         col_dt_rec = "data_recebimento" if "data_recebimento" in df_v_norm.columns else ("data_receb" if "data_receb" in df_v_norm.columns else "data")
         for _, r in df_v_norm.iterrows():
-            dt_v = r.get(col_dt_rec) or r.get("data")
+            dt_v = r.get(col_dt_rec) or r.get("data") or r.get("data_venda")
             val_v_calc = float(r.get("liquido_recebido_calc", 0.0))
 
             cli = r.get("cliente") or r.get("nome_cliente") or ""
@@ -2347,6 +2355,7 @@ elif "Caixa" in menu or "Fluxo" in menu:
         df_extrato["Data_Raw"] = df_extrato["Data_Raw"].fillna(pd.Timestamp.now())
         df_extrato["Mes_Ano"] = df_extrato["Data_Raw"].dt.strftime("%Y-%m").fillna("Outros")
         
+        # Ordenação estritamente cronológica para garantir saldo acumulado contínuo entre meses
         df_extrato = df_extrato.sort_values(by="Data_Raw", ascending=True).reset_index(drop=True)
         
         df_extrato["Saldo_Acumulado"] = df_extrato["Valor_Num"].cumsum()
@@ -2354,6 +2363,8 @@ elif "Caixa" in menu or "Fluxo" in menu:
         df_extrato["Saldo Acumulado (R$)"] = df_extrato["Saldo_Acumulado"].apply(lambda v: f"R$ {v:,.2f}")
 
         meses_caixa = sorted(df_extrato["Mes_Ano"].unique(), reverse=True)
+        data_atual_sistema = datetime.date.today().strftime("%Y/%m/%d")
+
         for mes in meses_caixa:
             df_cx_mes = df_extrato[df_extrato["Mes_Ano"] == mes].copy()
             st.markdown(f"#### 📅 Mês: {mes}")
@@ -2362,7 +2373,7 @@ elif "Caixa" in menu or "Fluxo" in menu:
             
             saldo_final_mes = df_cx_mes["Saldo_Acumulado"].iloc[-1]
             row_saldo_final = pd.DataFrame([{
-                "Data": "—",
+                "Data": data_atual_sistema,
                 "Origem": "🏁 SALDO FINAL",
                 "Descrição": f"Saldo Acumulado Final do Período ({mes})",
                 "Tipo": "Saldo 💵",
@@ -2604,7 +2615,7 @@ elif "Gestão" in menu or "Dados" in menu:
     st.info("Seu banco de dados está sincronizado diretamente na nuvem do Supabase. Todos os cadastros e edições são mantidos permanentemente.")
 
     with st.expander("🔄 Restaurar / Recuperar Dados via Backup Planilha (.xlsx)"):
-        st.warning("⚠️ O envio de uma planilha de restauração substituirá ou atualizará os registros existentes correspondentes aos códigos e IDs.")
+        st.warning("⚠️️ O envio de uma planilha de restauração substituirá ou atualizará os registros existentes correspondentes aos códigos e IDs.")
         uploaded_backup = st.file_uploader("Carregar Arquivo de Backup para Restauração (.xlsx)", type=["xlsx"])
         
         if uploaded_backup is not None:
