@@ -1292,7 +1292,7 @@ elif "Pedidos" in menu:
                     "Produto": ["Produto", "tipo", "Categoria"],
                     "Preço Base": ["Preço Base", "Preco Base", "preco", "Preço", "Valor"],
                     "Total Item": ["Total Item", "total_item", "Total", "Valor Total"],
-                    "Status": ["Status", "status"],
+                    "Status": ["status"],
                     "Data": ["Data", "data", "Data da Criação", "data_criacao"]
                 }
 
@@ -1303,7 +1303,7 @@ elif "Pedidos" in menu:
                             mapa_colunas_p[destino] = alias
                             break
 
-                obrigatorias_p = ["Cor do Boné", "Arte Estampada", "Produto", "Preço Base", "Total Item", "Status", "Data"]
+                obrigatorias_p = ["Cor do Boné", "Arte Estampada", "Produto", "Preço Base", "Total Item", "Data"]
                 faltantes_p = [col for col in obrigatorias_p if col not in mapa_colunas_p]
 
                 if faltantes_p:
@@ -1559,7 +1559,7 @@ elif "Estoque" in menu:
         else:
             df_est["Estoque"] = 1
             
-        df_est["Status"] = df_est["Estoque"].apply(lambda q: "Disponível" if q > 0 else "Esgotado")
+        df_est = df_est[df_est["Estoque"] > 0].copy()
         df_est["custo_total_num"] = df_est["total_item_calc"]
 
         qtd_total_estoque = int(df_est["Estoque"].sum())
@@ -1619,7 +1619,7 @@ elif "Estoque" in menu:
         df_est_filtrado["Custo Total"] = df_est_filtrado["custo_total_num"].apply(lambda v: f"R$ {float(v):,.2f}")
 
         cols_est = [
-            "Status", "Código", "Cor do Boné", "Arte Estampada", "Cor da Estampa", 
+            "Código", "Cor do Boné", "Arte Estampada", "Cor da Estampa", 
             "Produto", "Estoque", "Custo Base", "Estampa Extra", "Matriz Bordado", "Custo Total"
         ]
 
