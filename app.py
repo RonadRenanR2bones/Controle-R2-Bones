@@ -533,7 +533,7 @@ def get_df_compra_mercadorias():
     })
     return df_cm
 
-# Função auxiliar global para obter o saldo acumulado final do Fluxo de Caixa (IMAGEM 4)
+# Função auxiliar global para obter o saldo acumulado final do Fluxo de Caixa
 def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, df_devolucoes_in):
     lista_movimentos = []
 
@@ -696,7 +696,6 @@ if "Dashboard" in menu:
                 qtds = get_numeric_series(df_v_cm, col_q, 1.0) if col_q else 1.0
                 total_cmv = float((df_v_cm["total_item_calc"] * qtds).sum())
 
-    # IMAGEM 4: Na caixa "SALDO EM CAIXA" vincular essa informação ao "saldo final" do menu Fluxo de Caixa
     saldo_caixa = calcular_saldo_final_fluxo_caixa(df_vendas, df_custos, df_aportes, df_devolucoes)
 
     total_qtd_vendida = 0
@@ -1165,7 +1164,6 @@ elif "Estoque" in menu:
     if not df_cm.empty:
         df_est = df_cm.copy()
         
-        # Vincular estoque atual com a tabela de produtos
         if not df_produtos.empty and "codigo" in df_produtos.columns:
             col_qtd_p = "qtd_estoque" if "qtd_estoque" in df_produtos.columns else ("qtd" if "qtd" in df_produtos.columns else "estoque")
             df_est = df_est.merge(df_produtos[["codigo", col_qtd_p]], left_on="Código", right_on="codigo", how="left")
@@ -1245,14 +1243,11 @@ elif "Vendas" in menu:
     st.subheader("🛒 Lançar Nova Venda")
     
     df_cm_estoque = get_df_compra_mercadorias()
-    
-    # IMAGEM 1: Apenas produtos com estoque disponível > 0 e limpa do seletor quando atinge 0 unidades
     map_estoque_disponivel = {}
     
     if not df_cm_estoque.empty:
         df_cm_estoque = df_cm_estoque[~df_cm_estoque["Código"].isin(CODIGOS_REMOVER)]
         
-        # Mapeia com a tabela de produtos
         if not df_produtos.empty and "codigo" in df_produtos.columns:
             col_q = "qtd_estoque" if "qtd_estoque" in df_produtos.columns else ("qtd" if "qtd" in df_produtos.columns else "estoque")
             df_cm_estoque = df_cm_estoque.merge(df_produtos[["codigo", col_q]], left_on="Código", right_on="codigo", how="left")
@@ -1260,7 +1255,6 @@ elif "Vendas" in menu:
         else:
             df_cm_estoque["qtd_disp"] = 1
 
-        # Filtra estritamente itens que possuem estoque > 0
         df_cm_disponivel = df_cm_estoque[df_cm_estoque["qtd_disp"] > 0]
         
         opts = []
@@ -1298,7 +1292,6 @@ elif "Vendas" in menu:
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        # IMAGEM 1: Limitar a quantidade máxima para venda conforme o estoque disponível
         qtd_venda = st.number_input(
             "Quantidade *", 
             min_value=1, 
@@ -1356,7 +1349,6 @@ elif "Vendas" in menu:
                 payload_venda["data_recebimento"] = dt_receb_str
 
             if safe_insert("vendas", payload_venda):
-                # IMAGEM 1: Reduz o estoque para que o item suma da opção caso alcance 0 unidades
                 dar_baixa_estoque_venda(codigo_sel.strip(), int(qtd_venda))
 
                 if dt_receb_str and val_receb_fmt > 0:
@@ -1440,7 +1432,6 @@ elif "Vendas" in menu:
             )
             df_pend_exib["v_a_receber_num"] = df_pend_exib["v_venda_num"] - df_pend_exib["v_tarifa_num"]
 
-            # IMAGEM 2: acrescentar colunas de "Tarifa" e "Líquido Recebido" colocadas após a coluna "Recebido"/"Valor de Venda"
             df_tabela_pend = pd.DataFrame({
                 "Data da Venda": df_pend_exib[col_d_v].apply(format_data_br) if col_d_v in df_pend_exib.columns else "",
                 "Código": df_pend_exib.get(col_c_b, ""),
@@ -1498,6 +1489,7 @@ elif "Vendas" in menu:
                     st.rerun()
 
     st.markdown("---")
+    # IMAGENS 3 E 4: Tabela do Histórico Detalhado de Vendas atualizada com "Tarifa" e "Líquido Recebido" após "Recebido/Valor de Venda"
     st.subheader("📋 Histórico Detalhado de Vendas")
     if not df_vendas.empty:
         df_v_exib = df_vendas.copy()
@@ -1514,14 +1506,16 @@ elif "Vendas" in menu:
             df_v_mes = df_v_exib[df_v_exib["Mes_Ano"] == mes]
             st.markdown(f"#### 📅 Mês: {mes}")
 
-            col_h = st.columns([1.5, 1.3, 2.2, 1.8, 1.8, 0.6, 0.6])
+            col_h = st.columns([1.3, 1.1, 1.8, 1.4, 1.3, 1.5, 1.5, 0.5, 0.5])
             col_h[0].markdown("**Data da Venda**")
             col_h[1].markdown("**Código**")
             col_h[2].markdown("**Cliente**")
-            col_h[3].markdown("**Recebido**")
-            col_h[4].markdown("**Forma de Pagto**")
-            col_h[5].markdown("**Editar**")
-            col_h[6].markdown("**Excluir**")
+            col_h[3].markdown("**Valor de Venda**")
+            col_h[4].markdown("**Tarifa**")
+            col_h[5].markdown("**Líquido Recebido**")
+            col_h[6].markdown("**Forma de Pagto**")
+            col_h[7].markdown("**Editar**")
+            col_h[8].markdown("**Excluir**")
             st.markdown("<hr style='margin: 2px 0 8px 0;'>", unsafe_allow_html=True)
 
             for idx, row in df_v_mes.iterrows():
@@ -1536,18 +1530,20 @@ elif "Vendas" in menu:
                 
                 c_pag_exib = str(row.get(col_pag, "PIX"))
 
-                c_linha = st.columns([1.5, 1.3, 2.2, 1.8, 1.8, 0.6, 0.6])
+                c_linha = st.columns([1.3, 1.1, 1.8, 1.4, 1.3, 1.5, 1.5, 0.5, 0.5])
                 c_linha[0].write(c_data_exib)
                 c_linha[1].write(c_cod_exib)
                 c_linha[2].write(c_cli_exib)
-                c_linha[3].write(f"R$ {c_receb_exib:,.2f}")
-                c_linha[4].write(c_pag_exib)
+                c_linha[3].write(f"R$ {c_val_exib:,.2f}")
+                c_linha[4].write(f"R$ {c_tarifa_exib:,.2f}")
+                c_linha[5].write(f"R$ {c_receb_exib:,.2f}")
+                c_linha[6].write(c_pag_exib)
                 
-                with c_linha[5]:
+                with c_linha[7]:
                     if st.button("✏️", key=f"btn_edit_row_{v_id}_{mes}", use_container_width=True):
                         st.session_state["editing_venda_id"] = v_id
                         st.rerun()
-                with c_linha[6]:
+                with c_linha[8]:
                     if st.button("🗑", key=f"btn_del_row_{v_id}_{mes}", use_container_width=True):
                         cod_prod_e = row.get("codigo_bone") or row.get("codigo") or row.get("codigo_produto")
                         qtd_venda_e = int(row.get("qtd") or row.get("quantidade") or 1)
@@ -1712,10 +1708,11 @@ elif "Custos" in menu:
 
             if st.form_submit_button("Adicionar Custo de Venda", use_container_width=True):
                 val_cv_fmt = round(float(val_cv), 2)
+                dt_cv_str = str(dt_cv)
                 
                 payload_cv = {
                     "subcategoria": "Custos de Venda",
-                    "data": str(dt_cv),
+                    "data": dt_cv_str,
                     "desc": desc_cv.strip(),
                     "tipo": tipo_cv,
                     "valor": val_cv_fmt
@@ -1723,7 +1720,7 @@ elif "Custos" in menu:
                 
                 if safe_insert("custos_avulsos", payload_cv):
                     safe_insert("caixa", {
-                        "data": str(dt_cv), 
+                        "data": dt_cv_str, 
                         "desc": f"[Custos de Venda] {desc_cv.strip()}", 
                         "tipo": tipo_cv, 
                         "valor": val_cv_fmt
@@ -1792,10 +1789,11 @@ elif "Custos" in menu:
 
             if st.form_submit_button("Adicionar Custo de Feira", use_container_width=True):
                 val_cf_fmt = round(float(val_cf), 2)
+                dt_cf_str = str(dt_cf)
                 
                 payload_cf = {
                     "subcategoria": "Feiras",
-                    "data": str(dt_cf),
+                    "data": dt_cf_str,
                     "desc": f"Feira: {feira_cf.strip()} - {desc_cf.strip()}",
                     "tipo": tipo_cf,
                     "valor": val_cf_fmt
@@ -1803,7 +1801,7 @@ elif "Custos" in menu:
                 
                 if safe_insert("custos_avulsos", payload_cf):
                     safe_insert("caixa", {
-                        "data": str(dt_cf), 
+                        "data": dt_cf_str, 
                         "desc": f"[Feira: {feira_cf.strip()}] {desc_cf.strip()}", 
                         "tipo": tipo_cf, 
                         "valor": val_cf_fmt
@@ -1977,21 +1975,24 @@ elif "Caixa" in menu or "Fluxo" in menu:
                     "Valor_Num": -val_c
                 })
 
-    # 4. Aporte e Devoluções de Sócios
+    # 4. Aporte e Devoluções de Sócios (IMAGENS 1 E 2: Garantia da data correta no Fluxo de Caixa)
     if not df_aportes.empty:
         for _, r in df_aportes.iterrows():
             val_ap = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
             tipo_ap = str(r.get("tipo", ""))
             socio = r.get("socio", "")
-            dt_ap_raw = r.get("data") or r.get("created_at") or r.get("data_aporte")
+            
+            # Busca dinâmica e estrita da data do aporte
+            dt_ap_raw = r.get("data") or r.get("data_aporte") or r.get("created_at")
+            dt_ap_str = parse_date_str(dt_ap_raw) if dt_ap_raw else datetime.date.today().strftime("%Y-%m-%d")
             
             if val_ap != 0:
                 is_devolucao = "devoluc" in tipo_ap.lower() or val_ap < 0
                 nome_op = "Devolução" if is_devolucao else "Aporte"
                 
                 lista_movimentos.append({
-                    "Data_Val": str(dt_ap_raw),
-                    "Data": format_data_br(dt_ap_raw),
+                    "Data_Val": dt_ap_str,
+                    "Data": format_data_br(dt_ap_str),
                     "Origem": "🤝 Aporte dos Sócios",
                     "Descrição": f"{nome_op} ({socio})",
                     "Tipo": "Saída 🔴" if is_devolucao else "Entrada 🟢",
@@ -2005,10 +2006,11 @@ elif "Caixa" in menu or "Fluxo" in menu:
             cod_dev = r.get("codigo", "")
             cli_dev = r.get("cliente", "")
             dt_dev_raw = r.get("data_devolucao")
+            dt_dev_str = parse_date_str(dt_dev_raw) if dt_dev_raw else datetime.date.today().strftime("%Y-%m-%d")
             if val_dev > 0:
                 lista_movimentos.append({
-                    "Data_Val": str(dt_dev_raw),
-                    "Data": format_data_br(dt_dev_raw),
+                    "Data_Val": dt_dev_str,
+                    "Data": format_data_br(dt_dev_str),
                     "Origem": "🔄 Devolução de Venda",
                     "Descrição": f"Devolução Venda {cod_dev} - Cliente: {cli_dev}",
                     "Tipo": "Saída 🔴",
@@ -2019,7 +2021,7 @@ elif "Caixa" in menu or "Fluxo" in menu:
         df_extrato = pd.DataFrame(lista_movimentos)
         
         df_extrato["Data_Raw"] = pd.to_datetime(df_extrato["Data_Val"], errors="coerce")
-        df_extrato["Data_Raw"] = df_extrato["Data_Raw"].fillna(pd.Timestamp("1970-01-01"))
+        df_extrato["Data_Raw"] = df_extrato["Data_Raw"].fillna(pd.Timestamp.now())
         df_extrato["Mes_Ano"] = df_extrato["Data_Raw"].dt.strftime("%Y-%m").fillna("Outros")
         
         df_extrato = df_extrato.sort_values(by="Data_Raw", ascending=True).reset_index(drop=True)
@@ -2035,7 +2037,6 @@ elif "Caixa" in menu or "Fluxo" in menu:
             
             cols_final = ["Data", "Origem", "Descrição", "Tipo", "Valor (R$)", "Saldo Acumulado (R$)"]
             
-            # IMAGEM 3: Adicionada linha com o Saldo Final ao final de cada período no extrato
             saldo_final_mes = df_cx_mes["Saldo_Acumulado"].iloc[-1]
             row_saldo_final = pd.DataFrame([{
                 "Data": "—",
@@ -2070,15 +2071,17 @@ elif "Aportes" in menu:
                 st.error("Informe um valor positivo para o Aporte!")
             else:
                 val_ap_fmt = round(float(val_ap), 2)
+                dt_ap_str = str(dt_ap)
                 payload_ap = {
-                    "data": str(dt_ap),
+                    "data": dt_ap_str,
+                    "data_aporte": dt_ap_str,
                     "socio": socio_ap,
                     "valor": val_ap_fmt,
                     "tipo": "Aporte"
                 }
                 if safe_insert("aportes", payload_ap):
                     safe_insert("caixa", {
-                        "data": str(dt_ap),
+                        "data": dt_ap_str,
                         "desc": f"Aporte ({socio_ap})",
                         "tipo": "Aporte de Sócio",
                         "valor": val_ap_fmt
@@ -2094,15 +2097,17 @@ elif "Aportes" in menu:
                 st.error("Informe um valor positivo para a Devolução!")
             else:
                 val_ap_fmt = round(float(val_ap), 2)
+                dt_ap_str = str(dt_ap)
                 payload_dev = {
-                    "data": str(dt_ap),
+                    "data": dt_ap_str,
+                    "data_aporte": dt_ap_str,
                     "socio": socio_ap,
                     "valor": -val_ap_fmt,
                     "tipo": "Devolução"
                 }
                 if safe_insert("aportes", payload_dev):
                     safe_insert("caixa", {
-                        "data": str(dt_ap),
+                        "data": dt_ap_str,
                         "desc": f"Devolução ({socio_ap})",
                         "tipo": "Devolução de Aporte",
                         "valor": -val_ap_fmt
@@ -2152,7 +2157,7 @@ elif "Aportes" in menu:
         if "editing_aporte_id" not in st.session_state:
             st.session_state["editing_aporte_id"] = None
 
-        col_dt_ap = "data" if "data" in df_aportes.columns else ("created_at" if "created_at" in df_aportes.columns else ("data_aporte" if "data_aporte" in df_aportes.columns else None))
+        col_dt_ap = "data" if "data" in df_aportes.columns else ("data_aporte" if "data_aporte" in df_aportes.columns else ("created_at" if "created_at" in df_aportes.columns else None))
         
         if col_dt_ap and not df_aportes.empty:
             df_aportes["Mes_Ano"] = pd.to_datetime(df_aportes[col_dt_ap], errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
@@ -2225,7 +2230,7 @@ elif "Aportes" in menu:
                                     st.rerun()
                     st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
         else:
-            st.info("Nenum aporte registrado com data válida até o momento.")
+            st.info("Nenhum aporte registrado com data válida até o momento.")
     else:
         st.info("Nenhum aporte ou devolução registrado no momento.")
 
