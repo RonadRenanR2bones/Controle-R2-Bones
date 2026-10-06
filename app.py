@@ -971,9 +971,9 @@ elif "Pedidos" in menu:
         if uploaded_ped_file is not None:
             try:
                 if uploaded_ped_file.name.endswith(".csv"):
-                    df_imp_ped = pd.read_csv(uploaded_ped_file)
+                    df_imp_ped = pd.read_csv(uploaded_ped_file, dtype=str)
                 else:
-                    df_imp_ped = pd.read_excel(uploaded_ped_file)
+                    df_imp_ped = pd.read_excel(uploaded_ped_file, dtype=str)
 
                 nome_sugerido = uploaded_ped_file.name.rsplit(".", 1)[0].replace("_", " ")
                 lote_input = st.text_input("Identificador / Lote do Pedido *", value=nome_sugerido, key="lote_imp_input")
@@ -995,8 +995,14 @@ elif "Pedidos" in menu:
                         v_extra = parse_money(row.get('Estampa Extra', row.get('valor_estampa_extra', 0.0)))
                         v_matriz = parse_money(row.get('Matriz Bordado', row.get('valor_matriz', 0.0)))
                         
-                        dt_raw = row.get('Data', row.get('data_criacao', datetime.date.today()))
-                        dt_str = parse_date_str(dt_raw)
+                        dt_raw = str(row.get('Data', row.get('data_criacao', ''))).strip()
+                        try:
+                            dt_obj = pd.to_datetime(dt_raw, format="%d/%m/%Y", errors="coerce")
+                            if pd.isna(dt_obj):
+                                dt_obj = pd.to_datetime(dt_raw, dayfirst=True, errors="coerce")
+                            dt_str = dt_obj.strftime("%Y-%m-%d") if pd.notna(dt_obj) else datetime.date.today().strftime("%Y-%m-%d")
+                        except Exception:
+                            dt_str = parse_date_str(dt_raw)
                         
                         st_val = str(row.get('Status', row.get('status', 'Em Produção'))).strip() or 'Em Produção'
                         obs_val = str(row.get('Observações', row.get('observacoes', ''))).strip() if pd.notna(row.get('Observações', row.get('observacoes'))) else ''
@@ -1649,7 +1655,7 @@ elif "Custos" in menu:
                                 st.rerun()
                         st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
             else:
-                st.info("Nenhum custo de feira registrado até o momento.")
+                st.info("Nenum custo de feira registrado até o momento.")
         else:
             st.info("Nenhum custo registrado.")
 
