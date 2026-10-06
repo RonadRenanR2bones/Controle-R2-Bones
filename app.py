@@ -171,7 +171,8 @@ def init_db():
             status TEXT,
             valor_estampa_extra REAL DEFAULT 0.0,
             valor_matriz REAL DEFAULT 0.0,
-            codigo_produto TEXT
+            codigo_produto TEXT,
+            total_item REAL
         )
     ''')
     c.execute("PRAGMA table_info(pedidos)")
@@ -182,6 +183,8 @@ def init_db():
         c.execute("ALTER TABLE pedidos ADD COLUMN valor_matriz REAL DEFAULT 0.0")
     if "codigo_produto" not in colunas_pedidos:
         c.execute("ALTER TABLE pedidos ADD COLUMN codigo_produto TEXT")
+    if "total_item" not in colunas_pedidos:
+        c.execute("ALTER TABLE pedidos ADD COLUMN total_item REAL")
 
     c.execute("UPDATE pedidos SET tipo = 'Básico' WHERE tipo = 'Simples'")
     c.execute('''
@@ -235,31 +238,50 @@ init_db()
 # FUNÇÕES ROBUSTAS DE TRATAMENTO E FORMATO DE DATAS (BR)
 # ----------------------------------------------------
 def parse_date_str(val):
-    if pd.isna(val) or val is None or str(val).strip() == "":
-        return datetime.date.today().strftime("%Y-%m-%d")
-    if isinstance(val, (datetime.date, datetime.datetime)):
-        return val.strftime("%Y-%m-%d")
-    if isinstance(val, pd.Timestamp):
-        return val.strftime("%Y-%m-%d")
-    s = str(val).strip()
+    """Normaliza datas de entrada, inclusive BR, para YYYY/MM/DD."""
+    hoje = datetime.date.today().strftime("%Y/%m/%d")
+    if val is None:
+        return hoje
     try:
-        dt = pd.to_datetime(s, dayfirst=True, format="%d/%m/%Y", errors="coerce")
-        if pd.isna(dt):
-            dt = pd.to_datetime(s, dayfirst=True, errors="coerce")
-        return dt.strftime("%Y-%m-%d") if pd.notna(dt) else datetime.date.today().strftime("%Y-%m-%d")
+        if pd.isna(val):
+            return hoje
     except Exception:
-        return s
+        pass
+    if isinstance(val, pd.Timestamp):
+        return val.strftime("%Y/%m/%d")
+    if isinstance(val, datetime.datetime):
+        return val.strftime("%Y/%m/%d")
+    if isinstance(val, datetime.date):
+        return val.strftime("%Y/%m/%d")
+    s = str(val).strip()
+    if not s or s.lower() in {"none", "nat", "nan", "null"}:
+        return hoje
+    formatos = ["%Y/%m/%d", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"]
+    for fmt in formatos:
+        try:
+            return datetime.datetime.strptime(s, fmt).strftime("%Y/%m/%d")
+        except ValueError:
+            pass
+    try:
+        dt = pd.to_datetime(s, dayfirst=True, errors="coerce")
+        return dt.strftime("%Y/%m/%d") if pd.notna(dt) else hoje
+    except Exception:
+        return hoje
+
 
 def format_data_br(val):
-    if not val or pd.isna(val) or str(val).strip().lower() in ["none", "nat", "nan", ""]:
+    """Nome legado: a exibição agora segue rigorosamente YYYY/MM/DD."""
+    if val is None:
         return ""
     try:
-        dt = pd.to_datetime(val, dayfirst=True, format="%d/%m/%Y", errors="coerce")
-        if pd.isna(dt):
-            dt = pd.to_datetime(val, dayfirst=True, errors="coerce")
-        return dt.strftime("%d/%m/%Y") if pd.notna(dt) else str(val)
+        if pd.isna(val):
+            return ""
     except Exception:
-        return str(val)
+        pass
+    s = str(val).strip()
+    if not s or s.lower() in {"none", "nat", "nan", "null"}:
+        return ""
+    return parse_date_str(val)
 
 def parse_money(val):
     if pd.isna(val) or val is None:
@@ -317,7 +339,33 @@ def normalizar_df_vendas(df: pd.DataFrame) -> pd.DataFrame:
 
     return df_res
 
+def sqlite_insert_record(table_name: str, payload: dict):
+    """Grava pedidos no SQLite usando somente colunas existentes."""
+    if table_name != "pedidos":
+        return False
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        cur.execute(f"PRAGMA table_info({table_name})")
+        cols = {row[1] for row in cur.fetchall()}
+        dados = {k: v for k, v in payload.items() if k in cols}
+        if not dados:
+            return False
+        colunas = list(dados.keys())
+        placeholders = ", ".join(["?"] * len(colunas))
+        cur.execute(f"INSERT INTO {table_name} ({', '.join(colunas)}) VALUES ({placeholders})", [dados[c] for c in colunas])
+        conn.commit()
+        return True
+    except Exception as exc:
+        st.error(f"Erro ao gravar localmente na tabela `{table_name}`: {exc}")
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
 def safe_insert(table_name: str, payload: dict):
+    """Insere no Supabase; se pedidos estiver ausente, usa SQLite local sem interromper o fluxo."""
     if not supabase:
         return False
     try:
@@ -325,18 +373,20 @@ def safe_insert(table_name: str, payload: dict):
         return True
     except Exception as err:
         err_str = str(err)
+        if "PGRST205" in err_str and table_name == "pedidos":
+            return sqlite_insert_record(table_name, payload)
         if "PGRST205" in err_str or "custos_avulsos" in err_str or "baixas_estoque" in err_str or "devolucoes_vendas" in err_str:
             if table_name == "custos_avulsos":
                 payload_copy = payload.copy()
                 payload_copy["id"] = len(st.session_state["custos_avulsos_local"]) + 1000
                 st.session_state["custos_avulsos_local"].append(payload_copy)
                 return True
-            elif table_name == "baixas_estoque":
+            if table_name == "baixas_estoque":
                 payload_copy = payload.copy()
                 payload_copy["id"] = len(st.session_state["baixas_estoque_local"]) + 1000
                 st.session_state["baixas_estoque_local"].append(payload_copy)
                 return True
-            elif table_name == "devolucoes_vendas":
+            if table_name == "devolucoes_vendas":
                 payload_copy = payload.copy()
                 payload_copy["id"] = len(st.session_state["devolucoes_venda_local"]) + 1000
                 st.session_state["devolucoes_venda_local"].append(payload_copy)
@@ -344,8 +394,9 @@ def safe_insert(table_name: str, payload: dict):
         if "Could not find the '" in err_str and "' column" in err_str:
             col_err = err_str.split("Could not find the '")[1].split("' column")[0]
             if col_err in payload:
-                del payload[col_err]
-                return safe_insert(table_name, payload)
+                payload_retry = payload.copy()
+                del payload_retry[col_err]
+                return safe_insert(table_name, payload_retry)
         st.error(f"Erro ao gravar na tabela `{table_name}`: {err}")
         return False
 
@@ -527,6 +578,9 @@ def get_df_compra_mercadorias():
         df_ped_ent["estampa_extra_num"] +
         df_ped_ent["matriz_num"]
     )
+    if "total_item" in df_ped_ent.columns:
+        total_importado = pd.to_numeric(df_ped_ent["total_item"], errors="coerce")
+        df_ped_ent["total_item_calc"] = total_importado.where(total_importado.notna(), df_ped_ent["total_item_calc"])
     
     col_dt = "data_criacao" if "data_criacao" in df_ped_ent.columns else "data"
     
@@ -867,7 +921,7 @@ elif "Pedidos" in menu:
                         dt_init_val = pd.to_datetime(parse_date_str(dados_p_edit.get("data_criacao"))).date()
                     except Exception:
                         pass
-                dt_p_m = st.date_input("Data da Criação *", dt_init_val, format="DD/MM/YYYY")
+                dt_p_m = st.date_input("Data da Criação *", dt_init_val, format="YYYY/MM/DD")
 
             obs_p_m = st.text_area("Observações do Pedido", value=str(dados_p_edit.get("observacoes", "")))
 
@@ -884,29 +938,25 @@ elif "Pedidos" in menu:
                     st.error("Preencha os campos obrigatórios (Lote, Cor e Arte)!")
                 else:
                     dt_p_str = parse_date_str(dt_p_m)
-                    conn = sqlite3.connect(DB_NAME)
-                    c = conn.cursor()
-                    c.execute('''
-                        INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, status, valor_estampa_extra, valor_matriz)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (lote_m.strip(), dt_p_str, cor_b_m.strip(), arte_m.strip(), cor_e_m.strip(), prod_m, preco_m, obs_p_m.strip(), "Em Produção", v_extra_m, v_matriz_m))
-                    conn.commit()
-                    conn.close()
-
+                    payload_pedido = {
+                        "lote_id": lote_m.strip(),
+                        "data_criacao": dt_p_str,
+                        "cor_bone": cor_b_m.strip(),
+                        "frase_arte": arte_m.strip(),
+                        "cor_linha": cor_e_m.strip(),
+                        "tipo": prod_m,
+                        "preco": preco_m,
+                        "observacoes": obs_p_m.strip(),
+                        "status": "Em Produção",
+                        "valor_estampa_extra": v_extra_m,
+                        "valor_matriz": v_matriz_m,
+                        "total_item": round(preco_m + v_extra_m + v_matriz_m, 2)
+                    }
                     if supabase:
-                        safe_insert("pedidos", {
-                            "lote_id": lote_m.strip(),
-                            "data_criacao": dt_p_str,
-                            "cor_bone": cor_b_m.strip(),
-                            "frase_arte": arte_m.strip(),
-                            "cor_linha": cor_e_m.strip(),
-                            "tipo": prod_m,
-                            "preco": preco_m,
-                            "observacoes": obs_p_m.strip(),
-                            "status": "Em Produção",
-                            "valor_estampa_extra": v_extra_m,
-                            "valor_matriz": v_matriz_m
-                        })
+                        if not safe_insert("pedidos", payload_pedido):
+                            st.stop()
+                    elif not sqlite_insert_record("pedidos", payload_pedido):
+                        st.stop()
 
                     st.session_state["flash_success"] = f"🎉 Item cadastrado no lote '{lote_m.strip()}' com sucesso!"
                     st.rerun()
@@ -921,9 +971,9 @@ elif "Pedidos" in menu:
                     conn = sqlite3.connect(DB_NAME)
                     c = conn.cursor()
                     c.execute('''
-                        UPDATE pedidos SET lote_id=?, data_criacao=?, cor_bone=?, frase_arte=?, cor_linha=?, tipo=?, preco=?, observacoes=?, valor_estampa_extra=?, valor_matriz=?
+                        UPDATE pedidos SET lote_id=?, data_criacao=?, cor_bone=?, frase_arte=?, cor_linha=?, tipo=?, preco=?, observacoes=?, valor_estampa_extra=?, valor_matriz=?, total_item=?
                         WHERE id=?
-                    ''', (lote_m.strip(), dt_p_str, cor_b_m.strip(), arte_m.strip(), cor_e_m.strip(), prod_m, preco_m, obs_p_m.strip(), v_extra_m, v_matriz_m, id_ped_edit))
+                    ''', (lote_m.strip(), dt_p_str, cor_b_m.strip(), arte_m.strip(), cor_e_m.strip(), prod_m, preco_m, obs_p_m.strip(), v_extra_m, v_matriz_m, round(preco_m + v_extra_m + v_matriz_m, 2), id_ped_edit))
                     conn.commit()
                     conn.close()
 
@@ -968,13 +1018,173 @@ elif "Pedidos" in menu:
 
     st.markdown("---")
 
-    df_ped = carregar_dataframe("SELECT id, lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes, codigo_produto FROM pedidos ORDER BY id DESC")
+    with st.expander("📥 Importar Pedido via Planilha Excel (.xlsx / .csv)", expanded=False):
+        st.markdown("**Colunas reconhecidas:** `Cor do Boné`, `Arte Estampada`, `Cor da Estampa`, `Produto`, `Preço Base`, `Total Item`, `Status` e `Data`. ")
+        st.caption("O lote informado abaixo será aplicado a todas as linhas importadas. Se a coluna `Lote` também existir no arquivo, ela terá prioridade linha a linha.")
+
+        c_imp1, c_imp2 = st.columns([2, 1])
+        with c_imp1:
+            lote_importacao = st.text_input(
+                "Identificador / Lote do Pedido *",
+                value="",
+                placeholder="Ex.: Pedido #06.10-2026",
+                key="lote_importacao_pedidos"
+            )
+        with c_imp2:
+            st.write("")
+            st.write("")
+            st.caption("Formato de data aceito: YYYY/MM/DD ou DD/MM/YYYY.")
+
+        modelo_pedido = pd.DataFrame([{
+            "Cor do Boné": "Preta",
+            "Arte Estampada": "Exemplo",
+            "Cor da Estampa": "Off White",
+            "Produto": "Básico",
+            "Preço Base": 29.00,
+            "Total Item": 29.00,
+            "Status": "Em Produção",
+            "Data": "2026/10/06"
+        }])
+        st.dataframe(modelo_pedido, use_container_width=True, hide_index=True)
+
+        output_p = io.BytesIO()
+        with pd.ExcelWriter(output_p, engine="openpyxl") as writer:
+            modelo_pedido.to_excel(writer, index=False, sheet_name="Modelo_Pedidos")
+        st.download_button(
+            "📥 Baixar Modelo de Importação de Pedidos (.xlsx)",
+            data=output_p.getvalue(),
+            file_name="Modelo_Importacao_Pedidos_R2.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
+        uploaded_p_file = st.file_uploader(
+            "Enviar arquivo de pedidos (.xlsx ou .csv)",
+            type=["xlsx", "csv"],
+            key="uploader_pedidos_final"
+        )
+
+        if uploaded_p_file is not None:
+            try:
+                if uploaded_p_file.name.lower().endswith(".csv"):
+                    df_imp_p = pd.read_csv(uploaded_p_file, dtype=str, sep=None, engine="python")
+                else:
+                    df_imp_p = pd.read_excel(uploaded_p_file, dtype=str)
+
+                # Normaliza apenas espaços e variações simples de cabeçalho.
+                df_imp_p.columns = [str(col).strip() for col in df_imp_p.columns]
+                aliases_pedidos = {
+                    "Cor do Boné": ["Cor do Boné", "Cor do Bone", "cor_bone", "Cor"],
+                    "Arte Estampada": ["Arte Estampada", "frase_arte", "Arte", "Frase"],
+                    "Cor da Estampa": ["Cor da Estampa", "cor_linha", "Cor Estampa"],
+                    "Produto": ["Produto", "tipo", "Categoria"],
+                    "Preço Base": ["Preço Base", "Preco Base", "preco", "Preço", "Valor"],
+                    "Total Item": ["Total Item", "total_item", "Total", "Valor Total"],
+                    "Status": ["Status", "status"],
+                    "Data": ["Data", "data", "Data da Criação", "data_criacao"]
+                }
+
+                mapa_colunas_p = {}
+                for destino, aliases in aliases_pedidos.items():
+                    for alias in aliases:
+                        if alias in df_imp_p.columns:
+                            mapa_colunas_p[destino] = alias
+                            break
+
+                obrigatorias_p = ["Cor do Boné", "Arte Estampada", "Produto", "Preço Base", "Total Item", "Status", "Data"]
+                faltantes_p = [col for col in obrigatorias_p if col not in mapa_colunas_p]
+
+                if faltantes_p:
+                    st.error("Colunas obrigatórias ausentes: " + ", ".join(faltantes_p))
+                else:
+                    df_preview_p = pd.DataFrame()
+                    for destino, origem in mapa_colunas_p.items():
+                        df_preview_p[destino] = df_imp_p[origem]
+                    if "Cor da Estampa" not in df_preview_p.columns:
+                        df_preview_p["Cor da Estampa"] = ""
+                    if "Lote" in df_imp_p.columns:
+                        df_preview_p["Lote"] = df_imp_p["Lote"]
+                    elif "lote_id" in df_imp_p.columns:
+                        df_preview_p["Lote"] = df_imp_p["lote_id"]
+
+                    st.markdown("##### 🔍 Pré-visualização dos Pedidos a Importar:")
+                    st.dataframe(df_preview_p, use_container_width=True, hide_index=True)
+
+                    if st.button("🚀 Confirmar Importação dos Pedidos", type="primary", use_container_width=True, key="btn_confirmar_importacao_pedidos"):
+                        lote_padrao = lote_importacao.strip() or os.path.splitext(uploaded_p_file.name)[0]
+                        count_p_imp = 0
+                        erros_p_imp = []
+
+                        for idx, row in df_imp_p.iterrows():
+                            try:
+                                cor_bone_imp = str(row.get(mapa_colunas_p["Cor do Boné"], "")).strip()
+                                arte_imp = str(row.get(mapa_colunas_p["Arte Estampada"], "")).strip()
+                                cor_estampa_imp = str(row.get(mapa_colunas_p.get("Cor da Estampa", ""), "")).strip() if "Cor da Estampa" in mapa_colunas_p else ""
+                                produto_imp = str(row.get(mapa_colunas_p["Produto"], "Básico")).strip() or "Básico"
+                                preco_imp = parse_money(row.get(mapa_colunas_p["Preço Base"], 0))
+                                total_imp = parse_money(row.get(mapa_colunas_p["Total Item"], preco_imp))
+                                status_imp = str(row.get(mapa_colunas_p["Status"], "Em Produção")).strip() or "Em Produção"
+                                data_imp = parse_date_str(row.get(mapa_colunas_p["Data"]))
+
+                                if not cor_bone_imp or not arte_imp:
+                                    raise ValueError("Cor do Boné e Arte Estampada são obrigatórios")
+
+                                lote_linha = lote_padrao
+                                col_lote_origem = "Lote" if "Lote" in df_imp_p.columns else ("lote_id" if "lote_id" in df_imp_p.columns else None)
+                                if col_lote_origem:
+                                    valor_lote_linha = str(row.get(col_lote_origem, "")).strip()
+                                    if valor_lote_linha and valor_lote_linha.lower() not in {"nan", "none", "null"}:
+                                        lote_linha = valor_lote_linha
+
+                                payload_imp_p = {
+                                    "lote_id": lote_linha,
+                                    "data_criacao": data_imp,
+                                    "cor_bone": cor_bone_imp,
+                                    "frase_arte": arte_imp,
+                                    "cor_linha": cor_estampa_imp,
+                                    "tipo": produto_imp,
+                                    "preco": preco_imp,
+                                    "total_item": total_imp,
+                                    "observacoes": "Importado via planilha",
+                                    "status": status_imp,
+                                    "valor_estampa_extra": 0.0,
+                                    "valor_matriz": 0.0
+                                }
+
+                                if supabase:
+                                    ok_imp = safe_insert("pedidos", payload_imp_p)
+                                else:
+                                    ok_imp = sqlite_insert_record("pedidos", payload_imp_p)
+
+                                if ok_imp:
+                                    count_p_imp += 1
+                                else:
+                                    erros_p_imp.append(f"Linha {idx + 2}: não foi possível salvar")
+                            except Exception as exc:
+                                erros_p_imp.append(f"Linha {idx + 2}: {exc}")
+
+                        if erros_p_imp:
+                            st.warning(f"{count_p_imp} item(ns) importado(s). Algumas linhas não foram salvas.")
+                            st.dataframe(pd.DataFrame({"Ocorrências": erros_p_imp}), use_container_width=True, hide_index=True)
+                        elif count_p_imp:
+                            st.session_state["flash_success"] = f"🎉 {count_p_imp} item(ns) importado(s) com sucesso no lote '{lote_padrao}'!"
+                            st.rerun()
+                        else:
+                            st.warning("Nenhum item válido foi encontrado para importação.")
+            except Exception as ex_p:
+                st.error(f"Erro ao processar planilha de pedidos: {ex_p}")
+
+    st.markdown("---")
+
+    df_ped = carregar_dataframe("SELECT id, lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, total_item, status, observacoes, codigo_produto FROM pedidos ORDER BY id DESC")
 
     if df_ped.empty:
         st.info("Nenhum pedido cadastrado no momento.")
     else:
         df_ped['lote_id'] = df_ped['lote_id'].fillna('Sem Lote Definido')
-        df_ped['total_item'] = df_ped['preco'] + df_ped['valor_estampa_extra'].fillna(0) + df_ped['valor_matriz'].fillna(0)
+        df_ped['total_item_calc'] = df_ped['preco'] + df_ped['valor_estampa_extra'].fillna(0) + df_ped['valor_matriz'].fillna(0)
+        df_ped['total_item'] = pd.to_numeric(df_ped['total_item'], errors='coerce')
+        df_ped['total_item'] = df_ped['total_item'].where(df_ped['total_item'].notna(), df_ped['total_item_calc'])
         df_ped["Mes_Ano"] = pd.to_datetime(df_ped["data_criacao"].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
 
         meses_pedidos = sorted(df_ped["Mes_Ano"].unique(), reverse=True)
@@ -1039,11 +1249,12 @@ elif "Pedidos" in menu:
                         )
 
                     with col_e2:
-                        dt_entrega_manual = st.date_input(
-                            "Data da Entrega / Aquisição *", 
-                            value=datetime.date.today(), 
-                            format="DD/MM/YYYY",
-                            key=f"dt_entrega_{lote}_{mes}"
+                        dt_entrega_manual = st.text_input(
+                            "Data da Entrega / Aquisição (opcional)",
+                            value="",
+                            placeholder="YYYY/MM/DD",
+                            key=f"dt_entrega_{lote}_{mes}",
+                            help="Se ficar em branco, será usada automaticamente a data atual ao marcar como Entregue."
                         )
                     
                     with col_e3:
@@ -1063,7 +1274,7 @@ elif "Pedidos" in menu:
                                     codigo_base_atual = gerar_proximo_codigo(codigo_base_atual)
                                     codigos_gerados.append(codigo_base_atual)
 
-                                    dt_aquisicao_item = parse_date_str(dt_entrega_manual)
+                                    dt_aquisicao_item = parse_date_str(dt_entrega_manual) if str(dt_entrega_manual).strip() else datetime.date.today().strftime("%Y/%m/%d")
 
                                     novo_prod = {
                                         "codigo": codigo_base_atual,
@@ -1092,7 +1303,7 @@ elif "Pedidos" in menu:
                                 
                                 set_ultimo_codigo_config(codigo_base_atual)
 
-                                st.session_state["flash_success"] = f"🎉 {len(codigos_gerados)} item(ns) entregue(s) com sucesso em {format_data_br(dt_entrega_manual)} e cadastrado(s) no estoque (Códigos: {', '.join(codigos_gerados)})!"
+                                st.session_state["flash_success"] = f"🎉 {len(codigos_gerados)} item(ns) entregue(s) com sucesso em {dt_aquisicao_item} e cadastrado(s) no estoque (Códigos: {', '.join(codigos_gerados)})!"
                                 st.rerun()
 
                     with col_e4:
@@ -1137,7 +1348,7 @@ elif "Estoque" in menu:
             df_est["Estoque"] = 1
             
         df_est["Status"] = df_est["Estoque"].apply(lambda q: "Disponível" if q > 0 else "Esgotado")
-        df_est["custo_total_num"] = df_est["preco_num"] + df_est["estampa_extra_num"] + df_est["matriz_num"]
+        df_est["custo_total_num"] = df_est["total_item_calc"]
 
         qtd_total_estoque = int(df_est["Estoque"].sum())
         st.markdown(f"#### 📊 **Quantidade Total em Estoque:** `{qtd_total_estoque} un`")
@@ -1150,7 +1361,7 @@ elif "Estoque" in menu:
                     cod_baixa = st.selectbox("Selecione a Mercadoria *", cods_disponiveis if cods_disponiveis else ["Sem itens"])
                 with cb_c2:
                     motivo_baixa = st.selectbox("Motivo da Baixa *", ["Perda", "Avaria", "Brinde", "Outro"])
-                    dt_baixa = st.date_input("Data da Baixa *", datetime.date.today(), format="DD/MM/YYYY")
+                    dt_baixa = st.date_input("Data da Baixa *", datetime.date.today(), format="YYYY/MM/DD")
                 with cb_c3:
                     obs_baixa = st.text_input("Observação / Justificativa")
                 
@@ -1262,10 +1473,10 @@ elif "Vendas" in menu:
         valor_venda = st.number_input("Valor de Venda (R$) *", min_value=0.0, value=0.0, step=5.0, format="%.2f")
         forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
     with c3:
-        data_venda = st.date_input("Data da Venda *", datetime.date.today(), format="DD/MM/YYYY")
+        data_venda = st.date_input("Data da Venda *", datetime.date.today(), format="YYYY/MM/DD")
         tarifa_bancaria = st.number_input("Tarifa Bancária (R$) (Opcional)", min_value=0.0, value=0.0, step=0.5, format="%.2f")
 
-    data_receb = st.date_input("Data de Recebimento (Opcional)", value=None, format="DD/MM/YYYY")
+    data_receb = st.date_input("Data de Recebimento (Opcional)", value=None, format="YYYY/MM/DD")
 
     valor_recebido = max(0.0, float(valor_venda) - float(tarifa_bancaria))
 
@@ -1440,7 +1651,7 @@ elif "Custos" in menu:
         with st.form("form_cv"):
             c1, c2, c3 = st.columns(3)
             with c1:
-                dt_cv = st.date_input("Data *", datetime.date.today(), format="DD/MM/YYYY")
+                dt_cv = st.date_input("Data *", datetime.date.today(), format="YYYY/MM/DD")
                 desc_cv = st.text_input("Descrição *")
             with c2:
                 tipo_cv = st.selectbox("Tipo de Despesa *", ["Brindes", "Embalagem", "Unboxing"])
@@ -1520,7 +1731,7 @@ elif "Custos" in menu:
         with st.form("form_cf"):
             c1, c2, c3 = st.columns(3)
             with c1:
-                dt_cf = st.date_input("Data *", datetime.date.today(), format="DD/MM/YYYY")
+                dt_cf = st.date_input("Data *", datetime.date.today(), format="YYYY/MM/DD")
                 feira_cf = st.text_input("Nome da Feira *")
             with c2:
                 desc_cf = st.text_input("Descrição *")
@@ -1773,7 +1984,7 @@ elif "Aportes" in menu:
     st.subheader("🤝 Registro de Aportes e Devoluções")
     c1, c2, c3 = st.columns(3)
     with c1:
-        dt_ap = st.date_input("Data *", datetime.date.today(), format="DD/MM/YYYY")
+        dt_ap = st.date_input("Data *", datetime.date.today(), format="YYYY/MM/DD")
     with c2:
         socio_ap = st.selectbox("Sócio *", ["", "Renan", "Ronald"], index=0)
     with c3:
@@ -1988,7 +2199,7 @@ elif "Gestão" in menu or "Dados" in menu:
         st.download_button(
             label="📥 Baixar Backup Geral (.xlsx)",
             data=excel_data,
-            file_name=f"Backup_Geral_R2_Bones_{datetime.date.today().strftime('%d_%m_%Y')}.xlsx",
+            file_name=f"Backup_Geral_R2_Bones_{datetime.date.today().strftime('%Y_%m_%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
