@@ -198,6 +198,7 @@ def init_db():
             valor_venda REAL DEFAULT 0.0,
             tarifa REAL DEFAULT 0.0,
             tarifa_bancaria REAL DEFAULT 0.0,
+            tarifa_cartao REAL DEFAULT 0.0,
             valor_recebido REAL DEFAULT 0.0,
             forma_pagto TEXT,
             data TEXT,
@@ -213,7 +214,7 @@ def init_db():
         "codigo_bone": "TEXT", "codigo": "TEXT", "cliente": "TEXT",
         "qtd": "INTEGER DEFAULT 1", "valor_venda": "REAL DEFAULT 0.0",
         "tarifa": "REAL DEFAULT 0.0", "tarifa_bancaria": "REAL DEFAULT 0.0",
-        "valor_recebido": "REAL DEFAULT 0.0",
+        "tarifa_cartao": "REAL DEFAULT 0.0", "valor_recebido": "REAL DEFAULT 0.0",
         "forma_pagto": "TEXT", "data": "TEXT", "data_venda": "TEXT",
         "data_recebimento": "TEXT", "custo": "REAL DEFAULT 0.0",
         "custo_unitario": "REAL DEFAULT 0.0"
@@ -363,15 +364,13 @@ def normalizar_df_vendas(df: pd.DataFrame) -> pd.DataFrame:
     col_v = "valor_venda" if "valor_venda" in df_res.columns else ("valor" if "valor" in df_res.columns else "valor_total")
     df_res["valor_bruto_calc"] = get_numeric_series(df_res, col_v)
     
-    tarifa_col = "tarifa" if "tarifa" in df_res.columns else ("tarifa_bancaria" if "tarifa_bancaria" in df_res.columns else None)
-    if tarifa_col:
-        t_vals = get_numeric_series(df_res, tarifa_col)
-        if "tarifa_bancaria" in df_res.columns and "tarifa" in df_res.columns:
-            tb_vals = get_numeric_series(df_res, "tarifa_bancaria")
-            t_vals = t_vals.where(t_vals > 0, tb_vals)
-        df_res["tarifa_calc"] = t_vals
-    else:
-        df_res["tarifa_calc"] = 0.0
+    # Leitura unificada e robusta de tarifas em qualquer uma das colunas equivalentes
+    t_vals = pd.Series([0.0] * len(df_res), index=df_res.index, dtype=float)
+    for t_col_cand in ["tarifa", "tarifa_bancaria", "tarifa_cartao"]:
+        if t_col_cand in df_res.columns:
+            vals_cand = get_numeric_series(df_res, t_col_cand)
+            t_vals = t_vals.where(t_vals > 0, vals_cand)
+    df_res["tarifa_calc"] = t_vals
 
     if "valor_recebido" in df_res.columns:
         val_rec_raw = get_numeric_series(df_res, "valor_recebido")
@@ -545,7 +544,7 @@ def atualizar_caixa_da_venda(venda_antiga: dict, venda_nova: dict | None = None,
         elif venda_nova is not None:
             data_nova = venda_nova.get("data_recebimento") or venda_nova.get("data")
             v_bruto_n = float(venda_nova.get("valor_venda", 0) or 0)
-            t_n = float(venda_nova.get("tarifa", venda_nova.get("tarifa_bancaria", 0)) or 0)
+            t_n = float(venda_nova.get("tarifa", venda_nova.get("tarifa_bancaria", venda_nova.get("tarifa_cartao", 0))) or 0)
             valor_novo = float(venda_nova.get("valor_recebido", v_bruto_n - t_n) or (v_bruto_n - t_n))
             codigo_novo = str(venda_nova.get("codigo_bone", codigo)).strip()
             cliente_novo = str(venda_nova.get("cliente", cliente)).strip()
@@ -1752,6 +1751,7 @@ elif "Vendas" in menu:
             tarifa_fmt = round(float(tarifa_venda), 2)
             val_liquido_fmt = round(valor_liquido_calc, 2)
 
+            # Salvamento simultâneo em todas as chaves de tarifa para compatibilidade total
             payload_venda = {
                 "codigo_bone": codigo_sel.strip(),
                 "codigo": codigo_sel.strip(),
@@ -1760,6 +1760,7 @@ elif "Vendas" in menu:
                 "valor_venda": val_bruto_fmt,
                 "tarifa": tarifa_fmt,
                 "tarifa_bancaria": tarifa_fmt,
+                "tarifa_cartao": tarifa_fmt,
                 "valor_recebido": val_liquido_fmt,
                 "forma_pagto": forma_pagto,
                 "data": data_atual_str,
@@ -1812,7 +1813,7 @@ elif "Vendas" in menu:
                         cod_v = str(row.get('Código', row.get('codigo', ''))).strip()
                         qtd_v = int(pd.to_numeric(row.get('Quantidade', row.get('qtd', 1)), errors='coerce') or 1)
                         val_v = parse_money(row.get('Valor Bruto', row.get('valor_venda', row.get('valor', 0.0))))
-                        tarifa_v = parse_money(row.get('Tarifa', row.get('tarifa', row.get('tarifa_bancaria', 0.0))))
+                        tarifa_v = parse_money(row.get('Tarifa', row.get('tarifa', row.get('tarifa_bancaria', row.get('tarifa_cartao', 0.0)))))
                         val_liq_v = max(0.0, val_v - tarifa_v)
                         
                         cli_v = str(row.get('Nome do Cliente', row.get('cliente', ''))).strip()
@@ -1826,6 +1827,7 @@ elif "Vendas" in menu:
                             "valor_venda": val_v,
                             "tarifa": tarifa_v,
                             "tarifa_bancaria": tarifa_v,
+                            "tarifa_cartao": tarifa_v,
                             "valor_recebido": val_liq_v,
                             "forma_pagto": pag_v,
                             "data": data_atual_str,
@@ -1877,7 +1879,16 @@ elif "Vendas" in menu:
                     c_ed1, c_ed2, c_ed3, c_ed4 = st.columns(4)
                     cliente_atual = str(venda_edit.get("cliente", "") or "")
                     bruto_atual = parse_money(venda_edit.get("valor_venda", venda_edit.get("valor", 0.0)))
-                    tarifa_atual = parse_money(venda_edit.get("tarifa", venda_edit.get("tarifa_bancaria", 0.0)))
+                    
+                    # Recuperação unificada da tarifa na edição
+                    tarifa_atual = 0.0
+                    for t_c in ["tarifa", "tarifa_bancaria", "tarifa_cartao"]:
+                        if t_c in venda_edit and pd.notna(venda_edit[t_c]):
+                            val_t_cand = parse_money(venda_edit[t_c])
+                            if val_t_cand > 0:
+                                tarifa_atual = val_t_cand
+                                break
+
                     forma_atual = str(venda_edit.get("forma_pagto", "PIX") or "PIX")
                     formas_pagto = ["PIX", "Cartão", "Dinheiro", "Brinde"]
                     if forma_atual and forma_atual not in formas_pagto:
@@ -1914,6 +1925,7 @@ elif "Vendas" in menu:
                                 "valor_venda": round(float(bruto_editado), 2),
                                 "tarifa": round(float(tarifa_editada), 2),
                                 "tarifa_bancaria": round(float(tarifa_editada), 2),
+                                "tarifa_cartao": round(float(tarifa_editada), 2),
                                 "valor_recebido": round(liq_editado_calc, 2),
                                 "forma_pagto": forma_editada
                             }
@@ -1952,7 +1964,9 @@ elif "Vendas" in menu:
                 cliente = str(venda_row.get("cliente", "") or "").strip()
                 qtd = int(pd.to_numeric(venda_row.get("qtd", 1), errors="coerce") or 1)
                 valor_bruto = parse_money(venda_row.get("valor_venda", venda_row.get("valor", 0.0)))
-                tarifa_val = parse_money(venda_row.get("tarifa", venda_row.get("tarifa_bancaria", 0.0)))
+                
+                # Leitura normalizada da tarifa para exibição exata no histórico
+                tarifa_val = float(venda_row.get("tarifa_calc", 0.0))
                 valor_liquido = max(0.0, valor_bruto - tarifa_val)
                 forma = str(venda_row.get("forma_pagto", "") or "")
                 data_hist = str(venda_row.get("_data_hist", ""))
@@ -2017,24 +2031,23 @@ elif "Contas a Receber" in menu:
                 v_cli = str(r.get("cliente") or "")
                 v_qtd = int(pd.to_numeric(r.get("qtd", 1), errors="coerce") or 1)
                 v_bruto = parse_money(r.get("valor_venda", r.get("valor", 0.0)))
-                v_tarifa = parse_money(r.get("tarifa", r.get("tarifa_bancaria", 0.0)))
+                v_tarifa = float(r.get("tarifa_calc", 0.0))
                 v_liq = float(r.get("liquido_recebido_calc", v_bruto - v_tarifa))
                 v_pagto = str(r.get("forma_pagto", ""))
 
+                resumo_cr_str = f"👉 Valor Bruto: R$ {v_bruto:,.2f} | 🏷 Tarifa: R$ {v_tarifa:,.2f} | 💵 Valor Líquido: R$ {v_liq:,.2f}"
+
                 with st.container(border=True):
-                    rc1, rc2, rc3, rc4 = st.columns([3, 2, 2, 2])
+                    rc1, rc2, rc3 = st.columns([3, 4, 2])
                     with rc1:
                         st.markdown(f"**Venda ID #{v_id}** | Data: `{v_data}`")
                         st.write(f"Código: `{v_cod}` | Cliente: **{v_cli}** ({v_qtd}un)")
+                        st.write(f"Pagamento: {v_pagto}")
                     with rc2:
-                        st.write(f"Bruto: R$ {v_bruto:,.2f}")
-                        st.write(f"Tarifa: R$ {v_tarifa:,.2f}")
-                        st.markdown(f"**Líquido: R$ {v_liq:,.2f}**")
+                        st.markdown(resumo_cr_str)
                     with rc3:
                         key_input_rec = f"dt_rec_cr_{v_id}"
                         dt_receb_input = st.date_input("Data de Recebimento", datetime.date.today(), format="YYYY/MM/DD", key=key_input_rec)
-                    with rc4:
-                        st.write("")
                         if st.button("✅ Confirmar Recebimento", key=f"btn_rec_cr_{v_id}", use_container_width=True, type="primary"):
                             dt_rec_str = parse_date_str(dt_receb_input)
                             payload_upd = {
@@ -2061,7 +2074,7 @@ elif "Contas a Receber" in menu:
                 lista_rec_exib = []
                 for _, r in df_recebidas.iterrows():
                     v_bruto_r = parse_money(r.get('valor_venda', 0))
-                    v_tarifa_r = parse_money(r.get('tarifa', 0))
+                    v_tarifa_r = float(r.get('tarifa_calc', 0.0))
                     v_liq_r = float(r.get('liquido_recebido_calc', 0))
                     resumo_rec_str = f"👉 Valor Bruto: R$ {v_bruto_r:,.2f} | 🏷 Tarifa: R$ {v_tarifa_r:,.2f} | 💵 Valor Líquido: R$ {v_liq_r:,.2f}"
                     lista_rec_exib.append({
@@ -2284,14 +2297,8 @@ elif "Custos" in menu:
             df_v_tarifas = carregar_vendas_local()
 
         if not df_v_tarifas.empty:
-            t_col = "tarifa" if "tarifa" in df_v_tarifas.columns else ("tarifa_bancaria" if "tarifa_bancaria" in df_v_tarifas.columns else None)
-            if t_col:
-                df_v_tarifas["tarifa_num"] = get_numeric_series(df_v_tarifas, t_col)
-                if "tarifa_bancaria" in df_v_tarifas.columns and "tarifa" in df_v_tarifas.columns:
-                    tb_num = get_numeric_series(df_v_tarifas, "tarifa_bancaria")
-                    df_v_tarifas["tarifa_num"] = df_v_tarifas["tarifa_num"].where(df_v_tarifas["tarifa_num"] > 0, tb_num)
-            else:
-                df_v_tarifas["tarifa_num"] = 0.0
+            df_v_tarifas = normalizar_df_vendas(df_v_tarifas)
+            df_v_tarifas["tarifa_num"] = df_v_tarifas["tarifa_calc"]
 
             df_v_tarifa_com_valor = df_v_tarifas[df_v_tarifas["tarifa_num"] > 0].copy()
 
