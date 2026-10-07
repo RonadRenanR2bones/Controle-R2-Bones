@@ -1,4 +1,5 @@
 import datetime
+import calendar
 import base64
 import io
 import os
@@ -1763,7 +1764,7 @@ elif "Vendas" in menu:
                 "forma_pagto": forma_pagto,
                 "data": data_atual_str,
                 "data_venda": data_atual_str,
-                "data_recebimento": None, # Fica pendente para o menu Contas a Receber
+                "data_recebimento": None,
                 "custo": custo_total_cm,
                 "custo_unitario": custo_total_cm
             }
@@ -1845,7 +1846,7 @@ elif "Vendas" in menu:
 
     st.markdown("---")
     st.subheader("📋 Histórico Detalhado de Vendas")
-    st.caption("As vendas são agrupadas por mês. Exibe explicitamente o Valor Bruto, a Tarifa e o Líquido Recebido. Use ✏️ para editar ou 🗑 para cancelar.")
+    st.caption("As vendas são agrupadas por mês. Exibe a coluna dinâmica com Valor Bruto, Tarifa e Líquido Recebido. Use ✏️ para editar ou 🗑 para cancelar.")
 
     df_historico_vendas = fetch_data("vendas")
     if df_historico_vendas.empty:
@@ -1933,18 +1934,16 @@ elif "Vendas" in menu:
             st.markdown(f"#### 📅 Mês: {mes_hist.replace('-', '/')}")
             df_mes_hist = df_mes_hist.sort_values(by="_data_hist", ascending=False)
 
-            # Cabeçalho da Tabela Detalhada
-            h1, h2, h3, h4, h5, h6, h7, h8, h9, h10 = st.columns([1.1, 0.9, 1.6, 0.6, 0.9, 0.8, 0.9, 0.8, 0.5, 0.5], vertical_alignment="center")
+            # Cabeçalho da Tabela Detalhada com coluna de resumo financeiro unificada
+            h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([1.1, 0.9, 1.6, 0.6, 4.2, 0.8, 0.5, 0.5], vertical_alignment="center")
             with h1: st.markdown("**Data**")
             with h2: st.markdown("**Código**")
             with h3: st.markdown("**Cliente**")
             with h4: st.markdown("**Qtd**")
-            with h5: st.markdown("**Valor Bruto**")
-            with h6: st.markdown("**Tarifa**")
-            with h7: st.markdown("**Líquido**")
-            with h8: st.markdown("**Pagto**")
-            with h9: st.markdown("**Edit**")
-            with h10: st.markdown("**Del**")
+            with h5: st.markdown("**Resumo Financeiro**")
+            with h6: st.markdown("**Pagto**")
+            with h7: st.markdown("**Edit**")
+            with h8: st.markdown("**Del**")
             st.divider()
 
             for _, venda_row in df_mes_hist.iterrows():
@@ -1958,7 +1957,9 @@ elif "Vendas" in menu:
                 forma = str(venda_row.get("forma_pagto", "") or "")
                 data_hist = str(venda_row.get("_data_hist", ""))
 
-                r1, r2, r3, r4, r5, r6, r7, r8, r9, r10 = st.columns([1.1, 0.9, 1.6, 0.6, 0.9, 0.8, 0.9, 0.8, 0.5, 0.5], vertical_alignment="center")
+                resumo_financeiro_str = f"👉 Valor Bruto: R$ {valor_bruto:,.2f} | 🏷 Tarifa: R$ {tarifa_val:,.2f} | 💵 Valor Líquido: R$ {valor_liquido:,.2f}"
+
+                r1, r2, r3, r4, r5, r6, r7, r8 = st.columns([1.1, 0.9, 1.6, 0.6, 4.2, 0.8, 0.5, 0.5], vertical_alignment="center")
                 with r1:
                     st.write(f"**{data_hist}**")
                 with r2:
@@ -1968,18 +1969,14 @@ elif "Vendas" in menu:
                 with r4:
                     st.write(f"{qtd}un")
                 with r5:
-                    st.write(f"R$ {valor_bruto:,.2f}")
+                    st.markdown(resumo_financeiro_str)
                 with r6:
-                    st.write(f"R$ {tarifa_val:,.2f}")
-                with r7:
-                    st.write(f"**R$ {valor_liquido:,.2f}**")
-                with r8:
                     st.write(f"{forma or '-'}")
-                with r9:
+                with r7:
                     if st.button("✏️", key=f"editar_venda_{venda_id}", help="Editar venda"):
                         st.session_state["editar_venda_id"] = venda_id
                         st.rerun()
-                with r10:
+                with r8:
                     if st.button("🗑", key=f"excluir_venda_{venda_id}", help="Excluir / Cancelar venda"):
                         qtd_estorno = max(1, qtd)
                         if estornar_estoque(codigo, qtd_estorno):
@@ -2005,7 +2002,6 @@ elif "Contas a Receber" in menu:
         df_cr = normalizar_df_vendas(df_cr)
         col_dt_rec_cr = "data_recebimento" if "data_recebimento" in df_cr.columns else None
         
-        # Filtrar apenas vendas pendentes (onde data_recebimento é vazia / nula)
         if col_dt_rec_cr:
             df_pendentes = df_cr[df_cr[col_dt_rec_cr].isna() | df_cr[col_dt_rec_cr].astype(str).str.strip().isin(["", "None", "nan", "NaT"])].copy()
         else:
@@ -2035,7 +2031,6 @@ elif "Contas a Receber" in menu:
                         st.write(f"Tarifa: R$ {v_tarifa:,.2f}")
                         st.markdown(f"**Líquido: R$ {v_liq:,.2f}**")
                     with rc3:
-                        # Atribuição da chave separadamente (sem operador := no argumento)
                         key_input_rec = f"dt_rec_cr_{v_id}"
                         dt_receb_input = st.date_input("Data de Recebimento", datetime.date.today(), format="YYYY/MM/DD", key=key_input_rec)
                     with rc4:
@@ -2047,7 +2042,6 @@ elif "Contas a Receber" in menu:
                                 "valor_recebido": round(v_liq, 2)
                             }
                             if safe_update_venda(v_id, payload_upd):
-                                # Lançar no caixa
                                 safe_insert("caixa", {
                                     "data": dt_rec_str,
                                     "desc": f"Venda {v_cod} ({v_qtd}un) - {v_cli}",
@@ -2066,15 +2060,17 @@ elif "Contas a Receber" in menu:
             if not df_recebidas.empty:
                 lista_rec_exib = []
                 for _, r in df_recebidas.iterrows():
+                    v_bruto_r = parse_money(r.get('valor_venda', 0))
+                    v_tarifa_r = parse_money(r.get('tarifa', 0))
+                    v_liq_r = float(r.get('liquido_recebido_calc', 0))
+                    resumo_rec_str = f"👉 Valor Bruto: R$ {v_bruto_r:,.2f} | 🏷 Tarifa: R$ {v_tarifa_r:,.2f} | 💵 Valor Líquido: R$ {v_liq_r:,.2f}"
                     lista_rec_exib.append({
                         "ID": r.get("id"),
                         "Data Venda": format_data_br(r.get("data_venda") or r.get("data")),
                         "Data Recebimento": format_data_br(r.get("data_recebimento")),
                         "Código": str(r.get("codigo_bone") or r.get("codigo") or ""),
                         "Cliente": str(r.get("cliente") or ""),
-                        "Valor Bruto": f"R$ {parse_money(r.get('valor_venda', 0)):,.2f}",
-                        "Tarifa": f"R$ {parse_money(r.get('tarifa', 0)):,.2f}",
-                        "Valor Líquido": f"R$ {float(r.get('liquido_recebido_calc', 0)):,.2f}"
+                        "Resumo Financeiro": resumo_rec_str
                     })
                 st.dataframe(pd.DataFrame(lista_rec_exib), use_container_width=True, hide_index=True)
             else:
@@ -2449,11 +2445,9 @@ elif "Caixa" in menu or "Fluxo" in menu:
         # Ordenação cronológica rigorosa: do mais antigo para o mais recente
         df_extrato = df_extrato.sort_values(by="Data_Raw", ascending=True).reset_index(drop=True)
         
-        # Calcular saldo acumulado contínuo global
         df_extrato["Saldo_Acumulado"] = df_extrato["Valor_Num"].cumsum()
         
-        meses_caixa = sorted(df_extrato["Mes_Ano"].unique(), reverse=False) # Do mais antigo para o mais recente
-        data_atual_sistema = datetime.date.today().strftime("%Y/%m/%d")
+        meses_caixa = sorted(df_extrato["Mes_Ano"].unique(), reverse=False)
         
         saldo_acumulado_anterior = 0.0
 
@@ -2461,7 +2455,6 @@ elif "Caixa" in menu or "Fluxo" in menu:
             df_cx_mes = df_extrato[df_extrato["Mes_Ano"] == mes].copy()
             st.markdown(f"#### 📅 Mês: {mes.replace('-', '/')}")
             
-            # Linha de Saldo Inicial para o mês (se houver saldo anterior)
             linhas_mes_exib = []
             if saldo_acumulado_anterior != 0.0:
                 linhas_mes_exib.append({
@@ -2488,9 +2481,16 @@ elif "Caixa" in menu or "Fluxo" in menu:
             saldo_final_mes = running_mes
             saldo_acumulado_anterior = saldo_final_mes
             
-            # Linha de Saldo Final com a data atual formatada
+            # Cálculo automático do último dia do mês correspondente (ex: 2026/09/30, 2026/10/31)
+            try:
+                ano_m, mes_m = map(int, mes.split("-"))
+                ultimo_dia_num = calendar.monthrange(ano_m, mes_m)[1]
+                data_ultimo_dia_mes = f"{mes}/{ultimo_dia_num:02d}"
+            except Exception:
+                data_ultimo_dia_mes = f"{mes}/30"
+
             linhas_mes_exib.append({
-                "Data": data_atual_sistema,
+                "Data": data_ultimo_dia_mes,
                 "Origem": "🏁 SALDO FINAL",
                 "Descrição": f"Saldo Acumulado Final do Período ({mes})",
                 "Tipo": "Saldo 💵",
