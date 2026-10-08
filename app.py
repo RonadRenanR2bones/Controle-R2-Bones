@@ -431,7 +431,7 @@ def normalizar_df_vendas(df: pd.DataFrame) -> pd.DataFrame:
 
     return df_res
 
-def sqlite_insert_record(table_name: str, payload: dict):
+def sqlite_insert_record(table_name: str, payload: dict, replace: bool = False):
     conn = None
     try:
         conn = sqlite3.connect(DB_NAME, timeout=30.0)
@@ -443,8 +443,9 @@ def sqlite_insert_record(table_name: str, payload: dict):
             return False
         colunas = list(dados.keys())
         placeholders = ", ".join(["?"] * len(colunas))
+        cmd = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE"
         cur.execute(
-            f"INSERT INTO {table_name} ({', '.join(colunas)}) VALUES ({placeholders})",
+            f"{cmd} INTO {table_name} ({', '.join(colunas)}) VALUES ({placeholders})",
             [dados[c] for c in colunas]
         )
         conn.commit()
@@ -499,12 +500,15 @@ def sqlite_delete_record(table_name: str, record_id):
         if conn is not None:
             conn.close()
 
-def safe_insert(table_name: str, payload: dict):
-    sqlite_insert_record(table_name, payload)
+def safe_insert(table_name: str, payload: dict, replace: bool = False):
+    sqlite_insert_record(table_name, payload, replace=replace)
     if not supabase:
         return True
     try:
-        supabase.table(table_name).insert(payload).execute()
+        if replace and table_name == "produtos":
+            supabase.table(table_name).upsert(payload, on_conflict="codigo").execute()
+        else:
+            supabase.table(table_name).insert(payload).execute()
         return True
     except Exception as err:
         err_str = str(err)
@@ -513,7 +517,7 @@ def safe_insert(table_name: str, payload: dict):
             if col_err in payload:
                 payload_retry = payload.copy()
                 del payload_retry[col_err]
-                return safe_insert(table_name, payload_retry)
+                return safe_insert(table_name, payload_retry, replace=replace)
         return True
 
 def safe_update_venda(venda_id, payload: dict):
@@ -582,7 +586,7 @@ def safe_upsert_produto(payload: dict):
             "matriz_bordado": payload.get("matriz_bordado", 0.0),
             "data_aquisicao": payload.get("data_aquisicao", "")
         }
-    sqlite_insert_record("produtos", payload)
+    sqlite_insert_record("produtos", payload, replace=True)
     if not supabase:
         return True
     try:
@@ -1045,7 +1049,6 @@ if "Dashboard" in menu:
                 if cor_col in df_m.columns:
                     qtd_col = "qtd_x" if "qtd_x" in df_m.columns else ("qtd" if "qtd" in df_m.columns else "qtd_y")
                     agrup_cor = df_m.groupby(cor_col)[qtd_col].sum().reset_index()
-                    # Ordenar por ordem alfabética da cor
                     agrup_cor = agrup_cor.sort_values(by=cor_col, ascending=True)
                     fig2 = px.pie(agrup_cor, names=cor_col, values=qtd_col, hole=0.45, color_discrete_sequence=px.colors.qualitative.Pastel)
                     st.plotly_chart(fig2, use_container_width=True)
@@ -1204,14 +1207,12 @@ if "Dashboard" in menu:
             total_despesas_feira = float(df_f_filtro["valor"].apply(parse_money).sum())
             df_despesas_feira_filtrada = df_f_filtro
 
-        # ALTERAÇÃO SOLICITADA: Buscar no menu Vendas o Nome do Cliente igual ao nome da feira
         total_faturado_feira = 0.0
         if not df_vendas.empty and "cliente" in df_vendas.columns:
             df_vendas_norm_f = normalizar_df_vendas(df_vendas)
             if feira_sel != "TODAS":
                 df_vendas_feira = df_vendas_norm_f[df_vendas_norm_f["cliente"].astype(str).str.strip().str.lower() == feira_sel.strip().lower()]
             else:
-                # Se for TODAS, considera todas as vendas ou você pode somar todas se preferir. Vamos somar as que correspondem a feiras ou todas se TODAS.
                 df_vendas_feira = df_vendas_norm_f
             total_faturado_feira = float(df_vendas_feira["valor_bruto_calc"].sum())
 
@@ -1708,8 +1709,8 @@ elif "Pedidos" in menu:
                                             "data_aquisicao": dt_aquisicao_item
                                         }
 
-                                        # Inserção segura na tabela produtos via SQLite e Supabase
-                                        sqlite_insert_record("produtos", novo_prod)
+                                        # Inserção segura via REPLACE para evitar conflitos de UNIQUE constraint no codigo
+                                        sqlite_insert_record("produtos", novo_prod, replace=True)
                                         if supabase:
                                             try:
                                                 supabase.table("produtos").upsert(novo_prod, on_conflict="codigo").execute()
@@ -2445,7 +2446,6 @@ elif "Custos" in menu:
                 df_m_mes = df_m[df_m["Mes_Ano"] == mes]
                 total_mes_merc = df_m_mes["total_item_calc"].sum()
                 
-                # MELHORIA SOLICITADA: Accordion por mês mostrando custo total fechado e transações ao expandir
                 with st.expander(f"📅 Mês: {mes.replace('-', '/')} — Custo Total: R$ {total_mes_merc:,.2f}", expanded=False):
                     agrup_data = df_m_mes.groupby("Data").agg({
                         "qtd_num": "sum",
@@ -2517,7 +2517,6 @@ elif "Custos" in menu:
                     df_cv_mes = df_cv_exib[df_cv_exib["Mes_Ano"] == mes]
                     total_mes_cv = df_cv_mes["valor"].apply(parse_money).sum()
                     
-                    # MELHORIA SOLICITADA: Accordion por mês com custo total fechado
                     with st.expander(f"📅 Mês: {mes.replace('-', '/')} — Custo Total: R$ {total_mes_cv:,.2f}", expanded=False):
                         for idx, row in df_cv_mes.iterrows():
                             c_id = row.get("id")
@@ -2602,7 +2601,6 @@ elif "Custos" in menu:
                     df_cf_mes = df_cf_exib[df_cf_exib["Mes_Ano"] == mes]
                     total_mes_cf = df_cf_mes["valor"].apply(parse_money).sum()
                     
-                    # MELHORIA SOLICITADA: Accordion por mês com custo total fechado
                     with st.expander(f"📅 Mês: {mes.replace('-', '/')} — Custo Total: R$ {total_mes_cf:,.2f}", expanded=False):
                         for idx, row in df_cf_mes.iterrows():
                             f_id = row.get("id")
@@ -2934,13 +2932,11 @@ elif "Aportes" in menu:
             for mes in meses_aportes:
                 df_ap_mes = df_aportes[df_aportes["Mes_Ano"] == mes].copy()
                 
-                # Calcular total aportado e devolvido no mês para exibir a diferença no título do accordion
                 df_ap_mes["val_num"] = get_numeric_series(df_ap_mes, "valor")
                 aporte_mes_total = df_ap_mes[df_ap_mes["val_num"] > 0]["val_num"].sum()
                 devolucao_mes_total = abs(df_ap_mes[df_ap_mes["val_num"] < 0]["val_num"].sum())
                 dif_mes = aporte_mes_total - devolucao_mes_total
                 
-                # MELHORIA SOLICITADA: Accordion por mês mostrando a diferença entre aporte e devolução na visualização fechada
                 with st.expander(f"📅 Mês: {mes.replace('-', '/')} — Diferença Líquida (Aportes - Devoluções): R$ {dif_mes:,.2f}", expanded=False):
                     for idx, row in df_ap_mes.iterrows():
                         ap_id = row.get("id")
