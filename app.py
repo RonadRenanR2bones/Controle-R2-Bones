@@ -274,7 +274,7 @@ init_db()
 # FUNÇÕES ROBUSTAS DE TRATAMENTO E FORMATO DE DATAS (YYYY/MM/DD)
 # ----------------------------------------------------
 def parse_date_str(val):
-    """Normaliza datas de entrada para o formato estrito YYYY/MM/DD."""
+    """Normaliza datas de entrada para o formato estrito YYYY/MM/DD[cite: 1]."""
     hoje = datetime.date.today().strftime("%Y/%m/%d")
     if val is None:
         return hoje
@@ -305,7 +305,7 @@ def parse_date_str(val):
         return hoje
 
 def format_data_br(val):
-    """Exibição rigorosa em YYYY/MM/DD."""
+    """Exibição rigorosa em YYYY/MM/DD[cite: 1]."""
     if val is None:
         return ""
     try:
@@ -364,7 +364,6 @@ def normalizar_df_vendas(df: pd.DataFrame) -> pd.DataFrame:
     col_v = "valor_venda" if "valor_venda" in df_res.columns else ("valor" if "valor" in df_res.columns else "valor_total")
     df_res["valor_bruto_calc"] = get_numeric_series(df_res, col_v)
     
-    # Leitura unificada e robusta de tarifas em qualquer uma das colunas equivalentes
     t_vals = pd.Series([0.0] * len(df_res), index=df_res.index, dtype=float)
     for t_col_cand in ["tarifa", "tarifa_bancaria", "tarifa_cartao"]:
         if t_col_cand in df_res.columns:
@@ -1751,7 +1750,6 @@ elif "Vendas" in menu:
             tarifa_fmt = round(float(tarifa_venda), 2)
             val_liquido_fmt = round(valor_liquido_calc, 2)
 
-            # Salvamento simultâneo em todas as chaves de tarifa para compatibilidade total
             payload_venda = {
                 "codigo_bone": codigo_sel.strip(),
                 "codigo": codigo_sel.strip(),
@@ -1880,7 +1878,6 @@ elif "Vendas" in menu:
                     cliente_atual = str(venda_edit.get("cliente", "") or "")
                     bruto_atual = parse_money(venda_edit.get("valor_venda", venda_edit.get("valor", 0.0)))
                     
-                    # Recuperação unificada da tarifa na edição
                     tarifa_atual = 0.0
                     for t_c in ["tarifa", "tarifa_bancaria", "tarifa_cartao"]:
                         if t_c in venda_edit and pd.notna(venda_edit[t_c]):
@@ -1946,7 +1943,6 @@ elif "Vendas" in menu:
             st.markdown(f"#### 📅 Mês: {mes_hist.replace('-', '/')}")
             df_mes_hist = df_mes_hist.sort_values(by="_data_hist", ascending=False)
 
-            # Cabeçalho da Tabela Detalhada com coluna de resumo financeiro unificada
             h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([1.1, 0.9, 1.6, 0.6, 4.2, 0.8, 0.5, 0.5], vertical_alignment="center")
             with h1: st.markdown("**Data**")
             with h2: st.markdown("**Código**")
@@ -1965,7 +1961,6 @@ elif "Vendas" in menu:
                 qtd = int(pd.to_numeric(venda_row.get("qtd", 1), errors="coerce") or 1)
                 valor_bruto = parse_money(venda_row.get("valor_venda", venda_row.get("valor", 0.0)))
                 
-                # Leitura normalizada da tarifa para exibição exata no histórico
                 tarifa_val = float(venda_row.get("tarifa_calc", 0.0))
                 valor_liquido = max(0.0, valor_bruto - tarifa_val)
                 forma = str(venda_row.get("forma_pagto", "") or "")
@@ -2006,11 +2001,155 @@ elif "Vendas" in menu:
 
 elif "Contas a Receber" in menu:
     st.subheader("💰 Contas a Receber")
-    st.markdown("Gerencie as vendas realizadas que aguardam confirmação de recebimento. Ao confirmar o recebimento, o valor líquido correspondente será lançado automaticamente no Fluxo de Caixa.")
+    st.markdown("Gerencie as vendas realizadas que aguardam confirmação de recebimento[cite: 1]. Ao confirmar o recebimento, o valor líquido correspondente será lançado automaticamente no Fluxo de Caixa.")
 
     df_cr = fetch_data("vendas")
     if df_cr.empty:
         df_cr = carregar_vendas_local()
+
+    # Seção de Importação por Planilha Excel/CSV para Contas a Receber
+    with st.expander("📥 Importar Contas a Receber via Planilha (.xlsx / .csv)", expanded=False):
+        st.markdown("**Colunas reconhecidas:** `Código do Boné`, `Nome do Cliente`, `Quantidade`, `Valor Bruto`, `Tarifa`, `Data da Venda`, `Data de Vencimento`, `Forma de Pagto`[cite: 1].")
+        st.caption("Permite importar novas contas a receber em lote validando os campos e salvando automaticamente[cite: 1].")
+
+        # Gerador do Modelo de Planilha específico para Contas a Receber
+        modelo_cr = pd.DataFrame([{
+            "Código do Boné": "BL-0001",
+            "Nome do Cliente": "Maria Oliveira",
+            "Quantidade": 1,
+            "Valor Bruto": 90.00,
+            "Tarifa": 3.00,
+            "Data da Venda": "2026/10/01",
+            "Data de Vencimento": "2026/10/10",
+            "Forma de Pagto": "Cartão"
+        }])
+        st.dataframe(modelo_cr, use_container_width=True, hide_index=True)
+
+        output_cr_mod = io.BytesIO()
+        with pd.ExcelWriter(output_cr_mod, engine="openpyxl") as writer:
+            modelo_cr.to_excel(writer, index=False, sheet_name="Modelo_Contas_Receber")
+        st.download_button(
+            "📥 Baixar Modelo de Planilha de Contas a Receber (.xlsx)",
+            data=output_cr_mod.getvalue(),
+            file_name="Modelo_Importacao_Contas_a_Receber_R2.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
+        uploaded_cr_file = st.file_uploader(
+            "Enviar arquivo de contas a receber (.xlsx ou .csv)",
+            type=["xlsx", "csv"],
+            key="uploader_contas_receber_final"
+        )
+
+        if uploaded_cr_file is not None:
+            try:
+                if uploaded_cr_file.name.lower().endswith(".csv"):
+                    df_imp_cr = pd.read_csv(uploaded_cr_file, dtype=str, sep=None, engine="python")
+                else:
+                    df_imp_cr = pd.read_excel(uploaded_cr_file, dtype=str)
+
+                df_imp_cr.columns = [str(col).strip() for col in df_imp_cr.columns]
+                
+                # Mapeamento de colunas flexível (Aliases)
+                aliases_cr = {
+                    "Código do Boné": ["Código do Boné", "Codigo do Bone", "Código", "codigo", "codigo_bone"],
+                    "Nome do Cliente": ["Nome do Cliente", "Cliente", "cliente", "Nome"],
+                    "Quantidade": ["Quantidade", "qtd", "Qtd"],
+                    "Valor Bruto": ["Valor Bruto", "valor_venda", "valor", "Valor"],
+                    "Tarifa": ["Tarifa", "tarifa", "tarifa_bancaria", "tarifa_cartao"],
+                    "Data da Venda": ["Data da Venda", "data_venda", "data", "Data"],
+                    "Data de Vencimento": ["Data de Vencimento", "data_vencimento", "vencimento"],
+                    "Forma de Pagto": ["Forma de Pagto", "forma_pagto", "Forma de Pagamento", "Pagamento"]
+                }
+
+                mapa_colunas_cr = {}
+                for destino, aliases in aliases_cr.items():
+                    for alias in aliases:
+                        if alias in df_imp_cr.columns:
+                            mapa_colunas_cr[destino] = alias
+                            break
+
+                obrigatorias_cr = ["Nome do Cliente", "Valor Bruto"]
+                faltantes_cr = [col for col in obrigatorias_cr if col not in mapa_colunas_cr]
+
+                if faltantes_cr:
+                    st.error("Colunas obrigatórias ausentes na planilha: " + ", ".join(faltantes_cr))
+                else:
+                    # Montar pré-visualização robusta
+                    df_preview_cr = pd.DataFrame()
+                    for destino, origem in mapa_colunas_cr.items():
+                        df_preview_cr[destino] = df_imp_cr[origem]
+
+                    st.markdown("##### 🔍 Pré-visualização dos Dados de Contas a Receber:")
+                    st.dataframe(df_preview_cr, use_container_width=True, hide_index=True)
+
+                    if st.button("🚀 Confirmar Importação de Contas a Receber", type="primary", use_container_width=True, key="btn_confirmar_importacao_cr"):
+                        count_cr_imp = 0
+                        erros_cr_imp = []
+
+                        def get_cr_val(r, keys, default=""):
+                            for k in keys:
+                                if k in r and pd.notna(r[k]):
+                                    val = str(r[k]).strip()
+                                    if val.lower() not in {"nan", "none", "null", ""}:
+                                        return val
+                            return default
+
+                        for idx, row in df_imp_cr.iterrows():
+                            try:
+                                cli_cr = get_cr_val(row, [mapa_colunas_cr.get("Nome do Cliente", "Nome do Cliente"), "Nome do Cliente", "cliente", "Cliente"])
+                                if not cli_cr:
+                                    raise ValueError("Nome do Cliente é obrigatório")
+
+                                cod_cr = get_cr_val(row, [mapa_colunas_cr.get("Código do Boné", "Código do Boné"), "Código do Boné", "codigo", "codigo_bone"], "BL-GERAL")
+                                qtd_cr = int(pd.to_numeric(row.get(mapa_colunas_cr.get("Quantidade", "Quantidade"), row.get("Quantidade", 1)), errors="coerce") or 1)
+                                bruto_cr = parse_money(row.get(mapa_colunas_cr.get("Valor Bruto", "Valor Bruto"), row.get("Valor Bruto", 0.0)))
+                                tarifa_cr = parse_money(row.get(mapa_colunas_cr.get("Tarifa", "Tarifa"), row.get("Tarifa", 0.0)))
+                                liquido_cr = max(0.0, bruto_cr - tarifa_cr)
+
+                                data_venda_raw = get_cr_val(row, [mapa_colunas_cr.get("Data da Venda", "Data da Venda"), "Data da Venda", "data", "data_venda"], datetime.date.today().strftime("%Y/%m/%d"))
+                                data_venda_str = parse_date_str(data_venda_raw)
+
+                                forma_pagto_cr = get_cr_val(row, [mapa_colunas_cr.get("Forma de Pagto", "Forma de Pagto"), "Forma de Pagto", "forma_pagto"], "PIX")
+
+                                payload_imp_cr = {
+                                    "codigo_bone": cod_cr,
+                                    "codigo": cod_cr,
+                                    "cliente": cli_cr,
+                                    "qtd": qtd_cr,
+                                    "valor_venda": bruto_cr,
+                                    "tarifa": tarifa_cr,
+                                    "tarifa_bancaria": tarifa_cr,
+                                    "tarifa_cartao": tarifa_cr,
+                                    "valor_recebido": liquido_cr,
+                                    "forma_pagto": forma_pagto_cr,
+                                    "data": data_venda_str,
+                                    "data_venda": data_venda_str,
+                                    "data_recebimento": None,
+                                    "custo": bruto_cr,
+                                    "custo_unitario": bruto_cr
+                                }
+
+                                if safe_insert("vendas", payload_imp_cr):
+                                    count_cr_imp += 1
+                                else:
+                                    erros_cr_imp.append(f"Linha {idx + 2}: falha ao salvar no banco")
+                            except Exception as exc_cr:
+                                erros_cr_imp.append(f"Linha {idx + 2}: {exc_cr}")
+
+                        if erros_cr_imp:
+                            st.warning(f"{count_cr_imp} registro(s) importado(s). Algumas linhas apresentaram erros.")
+                            st.dataframe(pd.DataFrame({"Erros": erros_cr_imp}), use_container_width=True, hide_index=True)
+                        elif count_cr_imp:
+                            st.session_state["flash_success"] = f"🎉 {count_cr_imp} contas a receber importadas com sucesso[cite: 1]!"
+                            st.rerun()
+                        else:
+                            st.warning("Nenhum registro válido encontrado para importação.")
+            except Exception as ex_file_cr:
+                st.error(f"Erro ao processar arquivo de contas a receber: {ex_file_cr}")
+
+    st.markdown("---")
 
     if not df_cr.empty:
         df_cr = normalizar_df_vendas(df_cr)
@@ -2449,13 +2588,10 @@ elif "Caixa" in menu or "Fluxo" in menu:
         df_extrato["Data_Raw"] = df_extrato["Data_Raw"].fillna(pd.Timestamp.now())
         df_extrato["Mes_Ano"] = df_extrato["Data_Raw"].dt.strftime("%Y-%m").fillna("Outros")
         
-        # Ordenação cronológica rigorosa: do mais antigo para o mais recente
         df_extrato = df_extrato.sort_values(by="Data_Raw", ascending=True).reset_index(drop=True)
-        
         df_extrato["Saldo_Acumulado"] = df_extrato["Valor_Num"].cumsum()
         
         meses_caixa = sorted(df_extrato["Mes_Ano"].unique(), reverse=False)
-        
         saldo_acumulado_anterior = 0.0
 
         for mes in meses_caixa:
@@ -2488,7 +2624,6 @@ elif "Caixa" in menu or "Fluxo" in menu:
             saldo_final_mes = running_mes
             saldo_acumulado_anterior = saldo_final_mes
             
-            # Cálculo automático do último dia do mês correspondente (ex: 2026/09/30, 2026/10/31)
             try:
                 ano_m, mes_m = map(int, mes.split("-"))
                 ultimo_dia_num = calendar.monthrange(ano_m, mes_m)[1]
