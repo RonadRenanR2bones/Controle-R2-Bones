@@ -187,7 +187,11 @@ def init_db():
     if "total_item" not in colunas_pedidos:
         c.execute("ALTER TABLE pedidos ADD COLUMN total_item REAL")
 
-    c.execute("UPDATE pedidos SET tipo = 'Básico' WHERE tipo = 'Simples'")
+    try:
+        c.execute("UPDATE pedidos SET tipo = 'Básico' WHERE tipo = 'Simples'")
+    except Exception:
+        pass
+
     c.execute('''
         CREATE TABLE IF NOT EXISTS vendas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -234,7 +238,10 @@ def init_db():
             comprovante_path TEXT
         )
     ''')
-    c.execute("UPDATE pedidos SET status = 'Em Produção' WHERE status = 'Pendente'")
+    try:
+        c.execute("UPDATE pedidos SET status = 'Em Produção' WHERE status = 'Pendente'")
+    except Exception:
+        pass
     
     c.execute('''
         CREATE TABLE IF NOT EXISTS configuracoes (
@@ -426,7 +433,7 @@ def sqlite_update_record(table_name: str, record_id, payload: dict):
         conn.commit()
         return cur.rowcount > 0
     except Exception as exc:
-        st.error(f"Erro ao atualizar localmente a tabela `{table_name}`: {exc}")
+        st.error(f"Erro ao atualizar localmente na tabela `{table_name}`: {exc}")
         return False
     finally:
         if conn is not None:
@@ -2007,12 +2014,10 @@ elif "Contas a Receber" in menu:
     if df_cr.empty:
         df_cr = carregar_vendas_local()
 
-    # Seção de Importação por Planilha Excel/CSV para Contas a Receber
     with st.expander("📥 Importar Contas a Receber via Planilha (.xlsx / .csv)", expanded=False):
         st.markdown("**Colunas reconhecidas:** `Código do Boné`, `Nome do Cliente`, `Quantidade`, `Valor Bruto`, `Tarifa`, `Data da Venda`, `Data de Vencimento`, `Forma de Pagto`[cite: 1].")
         st.caption("Permite importar novas contas a receber em lote validando os campos e salvando automaticamente[cite: 1].")
 
-        # Gerador do Modelo de Planilha específico para Contas a Receber
         modelo_cr = pd.DataFrame([{
             "Código do Boné": "BL-0001",
             "Nome do Cliente": "Maria Oliveira",
@@ -2051,7 +2056,6 @@ elif "Contas a Receber" in menu:
 
                 df_imp_cr.columns = [str(col).strip() for col in df_imp_cr.columns]
                 
-                # Mapeamento de colunas flexível (Aliases)
                 aliases_cr = {
                     "Código do Boné": ["Código do Boné", "Codigo do Bone", "Código", "codigo", "codigo_bone"],
                     "Nome do Cliente": ["Nome do Cliente", "Cliente", "cliente", "Nome"],
@@ -2076,7 +2080,6 @@ elif "Contas a Receber" in menu:
                 if faltantes_cr:
                     st.error("Colunas obrigatórias ausentes na planilha: " + ", ".join(faltantes_cr))
                 else:
-                    # Montar pré-visualização robusta
                     df_preview_cr = pd.DataFrame()
                     for destino, origem in mapa_colunas_cr.items():
                         df_preview_cr[destino] = df_imp_cr[origem]
