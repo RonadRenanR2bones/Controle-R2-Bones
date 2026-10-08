@@ -963,8 +963,16 @@ st.markdown("<br>", unsafe_allow_html=True)
 # 5. Módulos do Sistema
 
 if "Dashboard" in menu:
-    st.subheader("📈 Dashboard Executivo")
+    st.subheader("📈 Dashboard Executivo Avançado")
     
+    tab_d1, tab_d2, tab_d3, tab_d4 = st.tabs([
+        "Visão Geral & Faturamento", 
+        "Lucratividade por Peça", 
+        "Giro de Estoque & Ruptura", 
+        "Feiras & Eventos"
+    ])
+    
+    # Preparação de dados gerais para o dashboard
     col_v_val = "valor_venda" if "valor_venda" in df_vendas.columns else ("valor" if "valor" in df_vendas.columns else ("valor_total" if "valor_total" in df_vendas.columns else None))
     total_faturado = float(df_vendas[col_v_val].sum()) if not df_vendas.empty and col_v_val else 0.0
     
@@ -987,61 +995,247 @@ if "Dashboard" in menu:
         if col_q_venda:
             total_qtd_vendida = int(get_numeric_series(df_vendas, col_q_venda).sum())
 
-    k1, k2, k3, k4 = st.columns(4)
-    with k1:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
-    with k2:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV TOTAL <span class="tooltip-icon" title="Custo das mercadorias vendidas obtido do menu Compra de Mercadoria">ℹ</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
-    with k3:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo final vindo do menu Fluxo de Caixa">ℹ</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
-    with k4:
-        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Quantidade Vendida <span class="tooltip-icon" title="Quantidade total de peças/bonés faturados nas vendas">ℹ</span></div><div class="kpi-value">{total_qtd_vendida} un</div></div>', unsafe_allow_html=True)
+    # --- ABA 1: Visão Geral & Faturamento ---
+    with tab_d1:
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
+        with k2:
+            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV TOTAL <span class="tooltip-icon" title="Custo das mercadorias vendidas obtido do menu Compra de Mercadoria">ℹ</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
+        with k3:
+            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo final vindo do menu Fluxo de Caixa">ℹ</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
+        with k4:
+            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Quantidade Vendida <span class="tooltip-icon" title="Quantidade total de peças/bonés faturados nas vendas">ℹ</span></div><div class="kpi-value">{total_qtd_vendida} un</div></div>', unsafe_allow_html=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    col_d_venda = "data" if "data" in df_vendas.columns else ("data_venda" if "data_venda" in df_vendas.columns else None)
-    meses_disponiveis = ["TODOS"]
-    if not df_vendas.empty and col_d_venda:
-        df_vendas["mes_ano"] = pd.to_datetime(df_vendas[col_d_venda].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m")
-        meses_disponiveis.extend(sorted(df_vendas["mes_ano"].dropna().unique().tolist()))
-    
-    mes_sel = st.selectbox("📅 Selecionar Período / Mês:", list(set(meses_disponiveis)))
-    
-    df_vendas_fil = df_vendas.copy()
-    if mes_sel != "TODOS" and not df_vendas_fil.empty and col_d_venda:
-        df_vendas_fil["mes_temp"] = pd.to_datetime(df_vendas_fil[col_d_venda].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m")
-        df_vendas_fil = df_vendas_fil[df_vendas_fil["mes_temp"] == mes_sel]
+        st.markdown("<br>", unsafe_allow_html=True)
         
-    g1, g2 = st.columns(2)
-    with g1:
-        st.markdown("#### 🟢 Faturamento vs. 🔴 CMV")
-        if not df_vendas_fil.empty and col_d_venda and col_v_val:
-            df_vendas_fil["mes"] = pd.to_datetime(df_vendas_fil[col_d_venda].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m")
-            y_cols = [col_v_val]
-            if "custo" in df_vendas_fil.columns:
-                y_cols.append("custo")
-            agrup = df_vendas_fil.groupby("mes")[y_cols].sum().reset_index()
-            fig1 = px.bar(agrup, x="mes", y=y_cols, barmode="group",
-                          color_discrete_sequence=["#10b981", "#ef4444"], template="plotly_white")
-            st.plotly_chart(fig1, use_container_width=True)
-        else:
-            st.info("Sem dados suficientes para gerar o gráfico.")
-
-    with g2:
-        st.markdown("#### 🎨 Cores Mais Vendidas")
-        c_v_col = "codigo_bone" if "codigo_bone" in df_vendas_fil.columns else ("codigo" if "codigo" in df_vendas_fil.columns else "codigo_produto")
-        if not df_vendas_fil.empty and c_v_col in df_vendas_fil.columns and not df_produtos.empty:
-            df_m = df_vendas_fil.merge(df_produtos, left_on=c_v_col, right_on="codigo", how="left")
-            cor_col = "cor" if "cor" in df_m.columns else "cor_x"
-            if cor_col in df_m.columns:
-                qtd_col = "qtd_x" if "qtd_x" in df_m.columns else ("qtd" if "qtd" in df_m.columns else "qtd_y")
-                agrup_cor = df_m.groupby(cor_col)[qtd_col].sum().reset_index()
-                fig2 = px.pie(agrup_cor, names=cor_col, values=qtd_col, hole=0.45, color_discrete_sequence=px.colors.qualitative.Pastel)
-                st.plotly_chart(fig2, use_container_width=True)
+        col_d_venda = "data" if "data" in df_vendas.columns else ("data_venda" if "data_venda" in df_vendas.columns else None)
+        meses_disponiveis = ["TODOS"]
+        if not df_vendas.empty and col_d_venda:
+            df_vendas["mes_ano"] = pd.to_datetime(df_vendas[col_d_venda].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m")
+            meses_disponiveis.extend(sorted(df_vendas["mes_ano"].dropna().unique().tolist()))
+        
+        mes_sel = st.selectbox("📅 Selecionar Período / Mês (Aba 1):", list(set(meses_disponiveis)))
+        
+        df_vendas_fil = df_vendas.copy()
+        if mes_sel != "TODOS" and not df_vendas_fil.empty and col_d_venda:
+            df_vendas_fil["mes_temp"] = pd.to_datetime(df_vendas_fil[col_d_venda].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m")
+            df_vendas_fil = df_vendas_fil[df_vendas_fil["mes_temp"] == mes_sel]
+            
+        g1, g2 = st.columns(2)
+        with g1:
+            st.markdown("#### 🟢 Faturamento vs. 🔴 CMV")
+            if not df_vendas_fil.empty and col_d_venda and col_v_val:
+                df_vendas_fil["mes"] = pd.to_datetime(df_vendas_fil[col_d_venda].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m")
+                y_cols = [col_v_val]
+                if "custo" in df_vendas_fil.columns:
+                    y_cols.append("custo")
+                agrup = df_vendas_fil.groupby("mes")[y_cols].sum().reset_index()
+                fig1 = px.bar(agrup, x="mes", y=y_cols, barmode="group",
+                              color_discrete_sequence=["#10b981", "#ef4444"], template="plotly_white")
+                st.plotly_chart(fig1, use_container_width=True)
             else:
-                st.info("Sem informação de cor cadastrada.")
+                st.info("Sem dados suficientes para gerar o gráfico.")
+
+        with g2:
+            st.markdown("#### 🎨 Cores / Modelos Mais Vendidos")
+            c_v_col = "codigo_bone" if "codigo_bone" in df_vendas_fil.columns else ("codigo" if "codigo" in df_vendas_fil.columns else "codigo_produto")
+            if not df_vendas_fil.empty and c_v_col in df_vendas_fil.columns and not df_produtos.empty:
+                df_m = df_vendas_fil.merge(df_produtos, left_on=c_v_col, right_on="codigo", how="left")
+                cor_col = "cor" if "cor" in df_m.columns else "cor_x"
+                if cor_col in df_m.columns:
+                    qtd_col = "qtd_x" if "qtd_x" in df_m.columns else ("qtd" if "qtd" in df_m.columns else "qtd_y")
+                    agrup_cor = df_m.groupby(cor_col)[qtd_col].sum().reset_index()
+                    fig2 = px.pie(agrup_cor, names=cor_col, values=qtd_col, hole=0.45, color_discrete_sequence=px.colors.qualitative.Pastel)
+                    st.plotly_chart(fig2, use_container_width=True)
+                else:
+                    st.info("Sem informação de cor cadastrada.")
+            else:
+                st.info("Nenhuma venda registrada.")
+
+    # --- ABA 2: Lucratividade por Peça ---
+    with tab_d2:
+        st.markdown("#### 💎 Lucratividade Detalhada por Venda e Peça")
+        
+        df_lucro = pd.DataFrame()
+        if not df_vendas.empty:
+            df_l_base = normalizar_df_vendas(df_vendas).copy()
+            df_cm_ref = get_df_compra_mercadorias()
+            c_v_col = "codigo_bone" if "codigo_bone" in df_l_base.columns else ("codigo" if "codigo" in df_l_base.columns else "codigo_produto")
+            
+            if not df_cm_ref.empty and c_v_col in df_l_base.columns:
+                df_l_cruzado = df_l_base.merge(df_cm_ref, left_on=c_v_col, right_on="Código", how="left")
+                df_l_cruzado["preco_base_un"] = df_l_cruzado["preco_num"].fillna(0.0)
+                df_l_cruzado["estampa_extra_un"] = df_l_cruzado["estampa_extra_num"].fillna(0.0)
+                df_l_cruzado["matriz_bordado_un"] = df_l_cruzado["matriz_num"].fillna(0.0)
+                df_l_cruzado["cmv_unitario"] = df_l_cruzado["preco_base_un"] + df_l_cruzado["estampa_extra_un"] + df_l_cruzado["matriz_bordado_un"]
+                
+                qtd_col_l = "qtd" if "qtd" in df_l_cruzado.columns else 1
+                df_l_cruzado["qtd_num"] = get_numeric_series(df_l_cruzado, qtd_col_l, 1.0)
+                df_l_cruzado["cmv_total"] = df_l_cruzado["cmv_unitario"] * df_l_cruzado["qtd_num"]
+                
+                # Valor Líquido Recebido já desconta as taxas/tarifas
+                df_l_cruzado["lucro_liquido_total"] = df_l_cruzado["liquido_recebido_calc"] - df_l_cruzado["cmv_total"]
+                df_l_cruzado["lucro_unitario"] = df_l_cruzado["lucro_liquido_total"] / df_l_cruzado["qtd_num"].replace(0, 1)
+                
+                df_lucro = df_l_cruzado
+            else:
+                df_lucro = df_l_base
+                df_lucro["cmv_total"] = 0.0
+                df_lucro["lucro_liquido_total"] = df_lucro["liquido_recebido_calc"]
+                df_lucro["lucro_unitario"] = df_lucro["liquido_recebido_calc"]
+                df_lucro["Arte Estampada"] = "Peça Geral"
+
+        margem_media_global = 0.0
+        lucro_liquido_total_val = 0.0
+        if not df_lucro.empty:
+            lucro_liquido_total_val = float(df_lucro["lucro_liquido_total"].sum())
+            faturamento_total_lucro = float(df_lucro["valor_bruto_calc"].sum())
+            if faturamento_total_lucro > 0:
+                margem_media_global = (lucro_liquido_total_val / faturamento_total_lucro) * 100.0
+
+        lk1, lk2 = st.columns(2)
+        with lk1:
+            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Margem de Lucro Média Global</div><div class="kpi-value">{margem_media_global:.2f}%</div></div>', unsafe_allow_html=True)
+        with lk2:
+            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Lucro Líquido Total</div><div class="kpi-value">R$ {lucro_liquido_total_val:,.2f}</div></div>', unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        if not df_lucro.empty:
+            lg1, lg2 = st.columns(2)
+            with lg1:
+                st.markdown("#### 🏆 Itens / Artes Mais Lucrativos")
+                col_arte_l = "Arte Estampada" if "Arte Estampada" in df_lucro.columns else "cliente"
+                agrup_arte = df_lucro.groupby(col_arte_l)["lucro_liquido_total"].sum().reset_index().sort_values(by="lucro_liquido_total", ascending=False).head(8)
+                fig_lucro_bar = px.bar(agrup_arte, x=col_arte_l, y="lucro_liquido_total", text_auto=".2f",
+                                       color="lucro_liquido_total", color_continuous_scale="greens", template="plotly_white")
+                st.plotly_chart(fig_lucro_bar, use_container_width=True)
+
+            with lg2:
+                st.markdown("#### 📋 Tabela Detalhada de Lucratividade por Venda")
+                df_tabela_lucro = pd.DataFrame({
+                    "ID": df_lucro.get("id"),
+                    "Cliente": df_lucro.get("cliente"),
+                    "Código": df_lucro.get("codigo_bone") if "codigo_bone" in df_lucro.columns else df_lucro.get("codigo"),
+                    "Valor Bruto": df_lucro.get("valor_bruto_calc", 0).apply(lambda x: f"R$ {x:,.2f}"),
+                    "CMV Total": df_lucro.get("cmv_total", 0).apply(lambda x: f"R$ {x:,.2f}"),
+                    "Tarifas": df_lucro.get("tarifa_calc", 0).apply(lambda x: f"R$ {x:,.2f}"),
+                    "Lucro Líquido": df_lucro.get("lucro_liquido_total", 0).apply(lambda x: f"R$ {x:,.2f}")
+                })
+                st.dataframe(df_tabela_lucro, use_container_width=True, hide_index=True)
         else:
-            st.info("Nenhuma venda registrada.")
+            st.info("Sem dados de vendas suficientes para calcular a lucratividade.")
+
+    # --- ABA 3: Giro de Estoque & Ruptura ---
+    with tab_d3:
+        st.markdown("#### 📦 Giro de Estoque, Baixas e Alerta de Ruptura")
+        
+        df_cm_estoque_tab3 = get_df_compra_mercadorias()
+        qtd_total_est_aba3 = 0
+        itens_ruptura = []
+        
+        if not df_cm_estoque_tab3.empty:
+            df_est_tab3 = df_cm_estoque_tab3.copy()
+            if not df_produtos.empty and "codigo" in df_produtos.columns:
+                col_q_p3 = "qtd_estoque" if "qtd_estoque" in df_produtos.columns else ("qtd" if "qtd" in df_produtos.columns else "estoque")
+                df_est_tab3 = df_est_tab3.merge(df_produtos[["codigo", col_q_p3]], left_on="Código", right_on="codigo", how="left")
+                df_est_tab3["Estoque_Atual"] = pd.to_numeric(df_est_tab3[col_q_p3], errors="coerce").fillna(1).astype(int)
+            else:
+                df_est_tab3["Estoque_Atual"] = 1
+                
+            qtd_total_est_aba3 = int(df_est_tab3[df_est_tab3["Estoque_Atual"] > 0]["Estoque_Atual"].sum())
+            itens_ruptura = df_est_tab3[(df_est_tab3["Estoque_Atual"] <= 2) & (df_est_tab3["Estoque_Atual"] > 0)].to_dict(orient="records")
+
+        ek1, ek2 = st.columns(2)
+        with ek1:
+            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Quantidade Total em Estoque</div><div class="kpi-value">{qtd_total_est_aba3} un</div></div>', unsafe_allow_html=True)
+        with ek2:
+            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">Itens com Estoque Baixo ($\le 2$ un)</div><div class="kpi-value">{len(itens_ruptura)} itens</div></div>', unsafe_allow_html=True)
+
+        if itens_ruptura:
+            st.warning("⚠ **Alerta de Ruptura / Estoque Baixo:** Os seguintes itens estão com 2 unidades ou menos em estoque:")
+            df_ruptura_exib = pd.DataFrame(itens_ruptura)[["Código", "Cor do Boné", "Arte Estampada", "Estoque_Atual"]]
+            st.dataframe(df_ruptura_exib, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.markdown("##### 🔻 Resumo Integrado de Baixas de Estoque (Perda, Avaria, Brinde)")
+        df_baixas_tab3 = fetch_data("baixas_estoque")
+        if not df_baixas_tab3.empty:
+            st.dataframe(df_baixas_tab3, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhuma baixa de estoque registrada com motivos de perda, avaria ou brinde.")
+
+        st.markdown("---")
+        st.markdown("##### 📊 Tabela de Rastreio de Giro (Frequência de Saída)")
+        if not df_vendas.empty and not df_cm_estoque_tab3.empty:
+            c_v_col = "codigo_bone" if "codigo_bone" in df_vendas.columns else ("codigo" if "codigo" in df_vendas.columns else "codigo_produto")
+            col_q_v = "qtd" if "qtd" in df_vendas.columns else "quantidade"
+            df_giro = df_vendas.groupby(c_v_col)[col_q_v].sum().reset_index().rename(columns={col_q_v: "Qtd_Saidas_Vendas", c_v_col: "Código"})
+            df_giro_completo = df_cm_estoque_tab3.merge(df_giro, on="Código", how="left").fillna({"Qtd_Saidas_Vendas": 0})
+            st.dataframe(df_giro_completo[["Código", "Cor do Boné", "Arte Estampada", "Produto", "Qtd_Saidas_Vendas"]], use_container_width=True, hide_index=True)
+        else:
+            st.info("Dados insuficientes para calcular o giro de vendas.")
+
+    # --- ABA 4: Feiras & Eventos (Ex: Feirarte) ---
+    with tab_d4:
+        st.markdown("#### 🎪 Feiras & Eventos (Análise de ROI / Feirarte)")
+        
+        df_custos_ev = fetch_data("custos_avulsos")
+        feiras_disponiveis = ["TODAS"]
+        if not df_custos_ev.empty:
+            subcat_c = df_custos_ev.get("subcategoria", pd.Series([""] * len(df_custos_ev))).fillna("").astype(str)
+            df_feiras_raw = df_custos_ev[subcat_c.str.contains("feira", case=False, na=False)]
+            if not df_feiras_raw.empty and "desc" in df_feiras_raw.columns:
+                # Extrair nome da feira da descrição formatada "Feira: [Nome] - [Desc]"
+                nomes_f = df_feiras_raw["desc"].astype(str).apply(lambda x: x.split(" - ")[0].replace("Feira: ", "").strip() if "Feira: " in x else "Geral")
+                feiras_disponiveis.extend(sorted(nomes_f.unique().tolist()))
+
+        feira_sel = st.selectbox("🎪 Selecionar Feira / Evento:", list(set(feiras_disponiveis)))
+
+        total_despesas_feira = 0.0
+        df_despesas_feira_filtrada = pd.DataFrame()
+        
+        if not df_custos_ev.empty:
+            subcat_c = df_custos_ev.get("subcategoria", pd.Series([""] * len(df_custos_ev))).fillna("").astype(str)
+            df_f_filtro = df_custos_ev[subcat_c.str.contains("feira", case=False, na=False)].copy()
+            if feira_sel != "TODAS":
+                df_f_filtro = df_f_filtro[df_f_filtro["desc"].astype(str).str.contains(feira_sel, case=False, na=False)]
+            
+            total_despesas_feira = float(df_f_filtro["valor"].apply(parse_money).sum())
+            df_despesas_feira_filtrada = df_f_filtro
+
+        # Faturamento estimado ou associado (caso queira cruzar com vendas no período)
+        total_faturado_feira = float(df_vendas["valor_venda"].sum()) if not df_vendas.empty and "valor_venda" in df_vendas.columns else 0.0
+        roi_feira = total_faturado_feira - total_despesas_feira
+
+        fk1, fk2, fk3 = st.columns(3)
+        with fk1:
+            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Total Faturado no Período</div><div class="kpi-value">R$ {total_faturado_feira:,.2f}</div></div>', unsafe_allow_html=True)
+        with fk2:
+            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">Total Despesas Operacionais</div><div class="kpi-value">R$ {total_despesas_feira:,.2f}</div></div>', unsafe_allow_html=True)
+        with fk3:
+            cor_roi = "#10b981" if roi_feira >= 0 else "#ef4444"
+            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: {cor_roi};"><div class="kpi-title">Saldo / ROI do Evento</div><div class="kpi-value">R$ {roi_feira:,.2f}</div></div>', unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        fg1, fg2 = st.columns(2)
+        with fg1:
+            st.markdown("#### 🥧 Peso de Cada Tipo de Despesa da Feira")
+            if not df_despesas_feira_filtrada.empty:
+                df_pie_feira = df_despesas_feira_filtrada.groupby("tipo")["valor"].sum().reset_index()
+                fig_feira_pie = px.pie(df_pie_feira, names="tipo", values="valor", hole=0.4, color_discrete_sequence=px.colors.qualitative.Set3)
+                st.plotly_chart(fig_feira_pie, use_container_width=True)
+            else:
+                st.info("Sem despesas cadastradas para esta feira.")
+
+        with fg2:
+            st.markdown("#### 📋 Lançamentos de Despesas da Feira")
+            if not df_despesas_feira_filtrada.empty:
+                st.dataframe(df_despesas_feira_filtrada[["data", "tipo", "desc", "valor"]], use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhum lançamento encontrado.")
 
 elif "Compra de Mercadorias" in menu:
     st.subheader("🛍 Relatório de Compra de Mercadorias")
@@ -1825,6 +2019,32 @@ elif "Vendas" in menu:
             df_historico_vendas["_data_hist"] = datetime.date.today().strftime("%Y/%m/%d")
             df_historico_vendas["_mes_hist"] = datetime.date.today().strftime("%Y-%m")
 
+        # --- ROTINA DE SELEÇÃO EM LOTE PARA EXCLUSÃO (MELHORIA SOLICITADA) ---
+        with st.expander("🛠 Seleção e Exclusão em Lote de Vendas", expanded=False):
+            ids_vendas_disp = df_historico_vendas["id"].tolist()
+            vendas_selecionadas_lote = st.multiselect(
+                "Selecione as vendas para exclusão em lote:",
+                options=ids_vendas_disp,
+                format_func=lambda x: f"Venda ID #{x} - Cliente: {df_historico_vendas[df_historico_vendas['id'] == x]['cliente'].values[0] if not df_historico_vendas[df_historico_vendas['id'] == x].empty else ''}"
+            )
+            if st.button("🗑 Excluir Vendas Selecionadas em Lote", type="primary"):
+                if not vendas_selecionadas_lote:
+                    st.warning("Nenhuma venda selecionada.")
+                else:
+                    count_del = 0
+                    for v_id_del in vendas_selecionadas_lote:
+                        row_del = df_historico_vendas[df_historico_vendas["id"] == v_id_del]
+                        if not row_del.empty:
+                            r_d_dict = row_del.iloc[0].to_dict()
+                            cod_est = str(r_d_dict.get(col_codigo_hist, ""))
+                            qtd_est = int(pd.to_numeric(r_d_dict.get("qtd", 1), errors="coerce") or 1)
+                            estornar_estoque(cod_est, qtd_est)
+                            if safe_delete_venda(v_id_del):
+                                atualizar_caixa_da_venda(r_d_dict, excluir=True)
+                                count_del += 1
+                    st.session_state["flash_success"] = f"🗑 {count_del} venda(s) excluída(s) em lote com sucesso e itens estornados ao estoque!"
+                    st.rerun()
+
         meses_hist = [m for m in sorted(df_historico_vendas["_mes_hist"].dropna().unique().tolist(), reverse=True)]
         if not meses_hist:
             meses_hist = [datetime.date.today().strftime("%Y-%m")]
@@ -2390,7 +2610,7 @@ elif "Custos" in menu:
 
 elif "Caixa" in menu or "Fluxo" in menu:
     st.subheader("💰 Extrato Consolidado de Fluxo de Caixa")
-    st.markdown("As entradas de vendas aparecem exclusivamente após a confirmação do recebimento no módulo **Contas a Receber**.")
+    st.markdown("As entradas de vendas aparecem exclusivamente após a confirmação do recebimento no módulo **Contas a Receber**. Cada mês é exibido em um componente expansivo (accordion/collapse).")
     
     lista_movimentos = []
 
@@ -2514,52 +2734,64 @@ elif "Caixa" in menu or "Fluxo" in menu:
 
         for mes in meses_caixa:
             df_cx_mes = df_extrato[df_extrato["Mes_Ano"] == mes].copy()
-            st.markdown(f"#### 📅 Mês: {mes.replace('-', '/')}")
             
-            linhas_mes_exib = []
-            if saldo_acumulado_anterior != 0.0:
-                linhas_mes_exib.append({
-                    "Data": f"{mes}/01",
-                    "Origem": "🟢 SALDO INICIAL",
-                    "Descrição": f"Saldo transportado do mês anterior",
-                    "Tipo": "Saldo 💵",
-                    "Valor (R$)": f"R$ {saldo_acumulado_anterior:,.2f}",
-                    "Saldo Acumulado (R$)": f"R$ {saldo_acumulado_anterior:,.2f}"
-                })
-            
-            running_mes = saldo_acumulado_anterior
+            # Pré-cálculo do saldo final do mês para exibição no resumo fechado do accordion
+            running_mes_calc = saldo_acumulado_anterior
             for _, r_m in df_cx_mes.iterrows():
-                running_mes += r_m["Valor_Num"]
-                linhas_mes_exib.append({
-                    "Data": r_m["Data"],
-                    "Origem": r_m["Origem"],
-                    "Descrição": r_m["Descrição"],
-                    "Tipo": r_m["Tipo"],
-                    "Valor (R$)": f"R$ {r_m['Valor_Num']:,.2f}",
-                    "Saldo Acumulado (R$)": f"R$ {running_mes:,.2f}"
-                })
-            
-            saldo_final_mes = running_mes
-            saldo_acumulado_anterior = saldo_final_mes
-            
-            try:
-                ano_m, mes_m = map(int, mes.split("-"))
-                ultimo_dia_num = calendar.monthrange(ano_m, mes_m)[1]
-                data_ultimo_dia_mes = f"{mes}/{ultimo_dia_num:02d}"
-            except Exception:
-                data_ultimo_dia_mes = f"{mes}/30"
+                running_mes_calc += r_m["Valor_Num"]
+            saldo_final_mes_val = running_mes_calc
 
-            linhas_mes_exib.append({
-                "Data": data_ultimo_dia_mes,
-                "Origem": "🏁 SALDO FINAL",
-                "Descrição": f"Saldo Acumulado Final do Período ({mes})",
-                "Tipo": "Saldo 💵",
-                "Valor (R$)": f"R$ {saldo_final_mes:,.2f}",
-                "Saldo Acumulado (R$)": f"R$ {saldo_final_mes:,.2f}"
-            })
+            # --- MELHORIA SOLICITADA: Componente expansivo (accordion/collapse) por mês ---
+            titulo_accordion = f"📅 Mês: {mes.replace('-', '/')} — Saldo Final: R$ {saldo_final_mes_val:,.2f}"
             
-            df_cx_mes_exib = pd.DataFrame(linhas_mes_exib)
-            st.dataframe(df_cx_mes_exib, use_container_width=True, hide_index=True)
+            with st.expander(titulo_accordion, expanded=False):
+                linhas_mes_exib = []
+                if saldo_acumulado_anterior != 0.0:
+                    linhas_mes_exib.append({
+                        "Data": f"{mes}/01",
+                        "Origem": "🟢 SALDO INICIAL",
+                        "Descrição": f"Saldo transportado do mês anterior",
+                        "Tipo": "Saldo 💵",
+                        "Valor (R$)": f"R$ {saldo_acumulado_anterior:,.2f}",
+                        "Saldo Acumulado (R$)": f"R$ {saldo_acumulado_anterior:,.2f}"
+                    })
+                
+                running_mes = saldo_acumulado_anterior
+                for _, r_m in df_cx_mes.iterrows():
+                    running_mes += r_m["Valor_Num"]
+                    linhas_mes_exib.append({
+                        "Data": r_m["Data"],
+                        "Origem": r_m["Origem"],
+                        "Descrição": r_m["Descrição"],
+                        "Tipo": r_m["Tipo"],
+                        "Valor (R$)": f"R$ {r_m['Valor_Num']:,.2f}",
+                        "Saldo Acumulado (R$)": f"R$ {running_mes:,.2f}"
+                    })
+                
+                saldo_final_mes = running_mes
+                saldo_acumulado_anterior = saldo_final_mes
+                
+                try:
+                    ano_m, mes_m = map(int, mes.split("-"))
+                    ultimo_dia_num = calendar.monthrange(ano_m, mes_m)[1]
+                    data_ultimo_dia_mes = f"{mes}/{ultimo_dia_num:02d}"
+                except Exception:
+                    data_ultimo_dia_mes = f"{mes}/30"
+
+                linhas_mes_exib.append({
+                    "Data": data_ultimo_dia_mes,
+                    "Origem": "🏁 SALDO FINAL",
+                    "Descrição": f"Saldo Acumulado Final do Período ({mes})",
+                    "Tipo": "Saldo 💵",
+                    "Valor (R$)": f"R$ {saldo_final_mes:,.2f}",
+                    "Saldo Acumulado (R$)": f"R$ {saldo_final_mes:,.2f}"
+                })
+                
+                df_cx_mes_exib = pd.DataFrame(linhas_mes_exib)
+                st.dataframe(df_cx_mes_exib, use_container_width=True, hide_index=True)
+        
+            # Atualiza o acumulado mesmo se o expander estiver fechado
+            saldo_acumulado_anterior = saldo_final_mes_val
     else:
         st.info("Nenhuma movimentação registrada no fluxo de caixa.")
 
