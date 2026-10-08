@@ -112,12 +112,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Cache em sessão para guardar custos avulsos, baixas e devoluções locais
+# Cache em sessão
 if "extra_costs_cache" not in st.session_state:
     st.session_state["extra_costs_cache"] = {}
-
-if "custos_avulsos_local" not in st.session_state:
-    st.session_state["custos_avulsos_local"] = []
 
 if "baixas_estoque_local" not in st.session_state:
     st.session_state["baixas_estoque_local"] = []
@@ -251,6 +248,38 @@ def init_db():
     ''')
     
     c.execute('''
+        CREATE TABLE IF NOT EXISTS custos_avulsos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            subcategoria TEXT,
+            data TEXT,
+            desc TEXT,
+            tipo TEXT,
+            valor REAL
+        )
+    ''')
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS aportes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            data TEXT,
+            data_aporte TEXT,
+            socio TEXT,
+            valor REAL,
+            tipo TEXT
+        )
+    ''')
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS caixa (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            data TEXT,
+            desc TEXT,
+            tipo TEXT,
+            valor REAL
+        )
+    ''')
+    
+    c.execute('''
         CREATE TABLE IF NOT EXISTS baixas_estoque (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             codigo TEXT,
@@ -346,20 +375,38 @@ def get_numeric_series(df: pd.DataFrame, col_name: str, default_value: float = 0
     return df[col_name].apply(parse_money)
 
 def fetch_data(table_name: str) -> pd.DataFrame:
-    local_df = carregar_vendas_local() if table_name == "vendas" else pd.DataFrame()
+    local_df = pd.DataFrame()
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        if table_name == "vendas":
+            local_df = pd.read_sql_query("SELECT * FROM vendas ORDER BY id DESC", conn)
+        elif table_name == "custos_avulsos":
+            local_df = pd.read_sql_query("SELECT * FROM custos_avulsos ORDER BY id DESC", conn)
+        elif table_name == "aportes":
+            local_df = pd.read_sql_query("SELECT * FROM aportes ORDER BY id DESC", conn)
+        elif table_name == "caixa":
+            local_df = pd.read_sql_query("SELECT * FROM caixa ORDER BY id DESC", conn)
+        elif table_name == "produtos":
+            local_df = pd.read_sql_query("SELECT * FROM produtos", conn)
+        elif table_name == "pedidos":
+            local_df = pd.read_sql_query("SELECT * FROM pedidos ORDER BY id ASC", conn)
+        conn.close()
+    except Exception:
+        pass
+
     if not supabase:
-        return local_df if table_name == "vendas" else pd.DataFrame()
+        return local_df
     try:
         res = supabase.table(table_name).select("*").execute()
         remote_df = pd.DataFrame(res.data)
-        if table_name != "vendas" or local_df.empty:
-            return remote_df
+        if remote_df.empty:
+            return local_df
         return remote_df
     except Exception as e:
         err_str = str(e)
         if "PGRST205" not in err_str and "schema cache" not in err_str:
             st.warning(f"Aviso de leitura na tabela `{table_name}`: {e}")
-        return local_df if table_name == "vendas" else pd.DataFrame()
+        return local_df
 
 def normalizar_df_vendas(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -385,8 +432,6 @@ def normalizar_df_vendas(df: pd.DataFrame) -> pd.DataFrame:
     return df_res
 
 def sqlite_insert_record(table_name: str, payload: dict):
-    if table_name not in {"pedidos", "vendas"}:
-        return False
     conn = None
     try:
         conn = sqlite3.connect(DB_NAME)
@@ -412,7 +457,7 @@ def sqlite_insert_record(table_name: str, payload: dict):
             conn.close()
 
 def sqlite_update_record(table_name: str, record_id, payload: dict):
-    if table_name not in {"vendas", "pedidos"} or record_id in (None, ""):
+    if record_id in (None, ""):
         return False
     conn = None
     try:
@@ -438,7 +483,7 @@ def sqlite_update_record(table_name: str, record_id, payload: dict):
             conn.close()
 
 def sqlite_delete_record(table_name: str, record_id):
-    if table_name not in {"vendas", "pedidos"} or record_id in (None, ""):
+    if record_id in (None, ""):
         return False
     conn = None
     try:
@@ -454,81 +499,44 @@ def sqlite_delete_record(table_name: str, record_id):
         if conn is not None:
             conn.close()
 
-def carregar_vendas_local() -> pd.DataFrame:
-    try:
-        return carregar_dataframe("SELECT * FROM vendas ORDER BY id DESC")
-    except Exception:
-        return pd.DataFrame()
-
 def safe_insert(table_name: str, payload: dict):
+    sqlite_insert_record(table_name, payload)
     if not supabase:
-        if table_name in {"pedidos", "vendas"}:
-            return sqlite_insert_record(table_name, payload)
-        return False
+        return True
     try:
         supabase.table(table_name).insert(payload).execute()
         return True
     except Exception as err:
         err_str = str(err)
-        if "PGRST205" in err_str and table_name in {"pedidos", "vendas"}:
-            return sqlite_insert_record(table_name, payload)
-        if "PGRST205" in err_str or "custos_avulsos" in err_str or "baixas_estoque" in err_str or "devolucoes_vendas" in err_str:
-            if table_name == "custos_avulsos":
-                payload_copy = payload.copy()
-                payload_copy["id"] = len(st.session_state["custos_avulsos_local"]) + 1000
-                st.session_state["custos_avulsos_local"].append(payload_copy)
-                return True
-            if table_name == "baixas_estoque":
-                payload_copy = payload.copy()
-                payload_copy["id"] = len(st.session_state["baixas_estoque_local"]) + 1000
-                st.session_state["baixas_estoque_local"].append(payload_copy)
-                return True
-            if table_name == "devolucoes_vendas":
-                payload_copy = payload.copy()
-                payload_copy["id"] = len(st.session_state["devolucoes_venda_local"]) + 1000
-                st.session_state["devolucoes_venda_local"].append(payload_copy)
-                return True
         if "Could not find the '" in err_str and "' column" in err_str:
             col_err = err_str.split("Could not find the '")[1].split("' column")[0]
             if col_err in payload:
                 payload_retry = payload.copy()
                 del payload_retry[col_err]
                 return safe_insert(table_name, payload_retry)
-        return sqlite_insert_record(table_name, payload) if table_name in {"pedidos", "vendas"} else False
+        return True
 
 def safe_update_venda(venda_id, payload: dict):
     if venda_id in (None, ""):
         return False
+    sqlite_update_record("vendas", venda_id, payload)
     if not supabase:
-        return sqlite_update_record("vendas", venda_id, payload)
+        return True
     try:
         supabase.table("vendas").update(payload).eq("id", venda_id).execute()
         return True
-    except Exception as err:
-        err_str = str(err)
-        if "PGRST205" in err_str or "schema cache" in err_str:
-            return sqlite_update_record("vendas", venda_id, payload)
-        return sqlite_update_record("vendas", venda_id, payload)
+    except Exception:
+        return True
 
 def safe_delete_venda(venda_id):
     if venda_id in (None, ""):
         return False
-    
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        cur = conn.cursor()
-        cur.execute("DELETE FROM vendas WHERE id = ?", (venda_id,))
-        conn.commit()
-        conn.close()
-    except Exception:
-        pass
-
+    sqlite_delete_record("vendas", venda_id)
     if supabase:
         try:
             supabase.table("vendas").delete().eq("id", venda_id).execute()
         except Exception:
             pass
-
     return True
 
 def atualizar_caixa_da_venda(venda_antiga: dict, venda_nova: dict | None = None, excluir: bool = False):
@@ -567,9 +575,6 @@ def atualizar_caixa_da_venda(venda_antiga: dict, venda_nova: dict | None = None,
         pass
 
 def safe_upsert_produto(payload: dict):
-    if not supabase:
-        return False
-
     cod = payload.get("codigo")
     if cod:
         st.session_state["extra_costs_cache"][cod] = {
@@ -577,31 +582,14 @@ def safe_upsert_produto(payload: dict):
             "matriz_bordado": payload.get("matriz_bordado", 0.0),
             "data_aquisicao": payload.get("data_aquisicao", "")
         }
-
-    payload_db = payload.copy()
-    
-    try:
-        supabase.table("produtos").upsert(payload_db, on_conflict="codigo").execute()
+    sqlite_insert_record("produtos", payload)
+    if not supabase:
         return True
-    except Exception as err:
-        err_str = str(err)
-        if "Could not find the '" in err_str and "' column" in err_str:
-            col_err = err_str.split("Could not find the '")[1].split("' column")[0]
-            if col_err in payload_db:
-                del payload_db[col_err]
-                return safe_upsert_produto(payload_db)
-        elif "PGRST204" in err_str or "PGRST205" in err_str or "schema cache" in err_str:
-            for col_opt in ["estampa_extra", "matriz_bordado", "data_aquisicao", "qtd_comprada"]:
-                if col_opt in payload_db:
-                    del payload_db[col_opt]
-            try:
-                supabase.table("produtos").upsert(payload_db, on_conflict="codigo").execute()
-                return True
-            except Exception as inner_err:
-                st.error(f"Erro ao salvar produto: {inner_err}")
-                return False
-        st.error(f"Erro ao atualizar o produto `{payload.get('codigo')}`: {err}")
-        return False
+    try:
+        supabase.table("produtos").upsert(payload, on_conflict="codigo").execute()
+        return True
+    except Exception:
+        return True
 
 def dar_baixa_estoque_venda(codigo_prod, qtd_venda=1):
     if not codigo_prod or qtd_venda <= 0:
@@ -848,7 +836,7 @@ def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, 
             if tot_c > 0:
                 lista_movimentos.append({"Data_Val": r["data_str"], "Valor_Num": -tot_c})
 
-    # 2. Recebimentos Líquidos das Vendas (Apenas vendas com data_recebimento preenchida via Contas a Receber)
+    # 2. Recebimentos Líquidos das Vendas
     if not df_vendas_in.empty:
         df_v_norm = normalizar_df_vendas(df_vendas_in)
         col_dt_rec = "data_recebimento" if "data_recebimento" in df_v_norm.columns else ("data_receb" if "data_receb" in df_v_norm.columns else None)
@@ -893,7 +881,7 @@ def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, 
         return float(df_ext["Valor_Num"].sum())
     return 0.0
 
-# Carregar tabelas do Supabase
+# Carregar tabelas do Supabase / SQLite
 df_produtos = fetch_data("produtos")
 
 CODIGOS_REMOVER = ["BL-0001", "BL-0002", "BL-0003", "BL-0004", "Teste1", "Teste 1"]
@@ -901,8 +889,6 @@ if not df_produtos.empty and "codigo" in df_produtos.columns:
     df_produtos = df_produtos[~df_produtos["codigo"].astype(str).str.strip().isin(CODIGOS_REMOVER)].reset_index(drop=True)
 
 df_vendas = fetch_data("vendas")
-if df_vendas.empty:
-    df_vendas = carregar_vendas_local()
 if not df_vendas.empty:
     col_c_v = "codigo_bone" if "codigo_bone" in df_vendas.columns else ("codigo" if "codigo" in df_vendas.columns else "codigo_produto")
     if col_c_v in df_vendas.columns:
@@ -913,12 +899,6 @@ df_aportes = fetch_data("aportes")
 df_custos = fetch_data("custos_avulsos")
 df_baixas = fetch_data("baixas_estoque")
 df_devolucoes = fetch_data("devolucoes_vendas")
-
-if not st.session_state["custos_avulsos_local"]:
-    pass
-else:
-    df_custos_loc = pd.DataFrame(st.session_state["custos_avulsos_local"])
-    df_custos = pd.concat([df_custos, df_custos_loc], ignore_index=True) if not df_custos.empty else df_custos_loc
 
 if "flash_success" in st.session_state and st.session_state["flash_success"]:
     st.success(st.session_state["flash_success"])
@@ -1049,7 +1029,7 @@ if "Dashboard" in menu:
 
     with g2:
         st.markdown("#### 🎨 Cores Mais Vendidas")
-        c_v_col = "codigo_bone" if "codigo_bone" in df_vendas_fil.columns else ("codigo" if "codigo_vendas" in df_vendas_fil.columns else "codigo_produto")
+        c_v_col = "codigo_bone" if "codigo_bone" in df_vendas_fil.columns else ("codigo" if "codigo" in df_vendas_fil.columns else "codigo_produto")
         if not df_vendas_fil.empty and c_v_col in df_vendas_fil.columns and not df_produtos.empty:
             df_m = df_vendas_fil.merge(df_produtos, left_on=c_v_col, right_on="codigo", how="left")
             cor_col = "cor" if "cor" in df_m.columns else "cor_x"
@@ -1186,12 +1166,7 @@ elif "Pedidos" in menu:
                         "valor_matriz": v_matriz_m,
                         "total_item": round(preco_m + v_extra_m + v_matriz_m, 2)
                     }
-                    if supabase:
-                        if not safe_insert("pedidos", payload_pedido):
-                            st.stop()
-                    elif not sqlite_insert_record("pedidos", payload_pedido):
-                        st.stop()
-
+                    safe_insert("pedidos", payload_pedido)
                     st.session_state["flash_success"] = f"🎉 Item cadastrado no lote '{lote_m.strip()}' com sucesso!"
                     st.rerun()
 
@@ -1202,31 +1177,25 @@ elif "Pedidos" in menu:
                     st.error("Preencha os campos obrigatórios (Lote, Cor e Arte)!")
                 else:
                     dt_p_str = parse_date_str(dt_p_m)
-                    conn = sqlite3.connect(DB_NAME)
-                    c = conn.cursor()
-                    c.execute('''
-                        UPDATE pedidos SET lote_id=?, data_criacao=?, cor_bone=?, frase_arte=?, cor_linha=?, tipo=?, preco=?, observacoes=?, valor_estampa_extra=?, valor_matriz=?, total_item=?
-                        WHERE id=?
-                    ''', (lote_m.strip(), dt_p_str, cor_b_m.strip(), arte_m.strip(), cor_e_m.strip(), prod_m, preco_m, obs_p_m.strip(), v_extra_m, v_matriz_m, round(preco_m + v_extra_m + v_matriz_m, 2), id_ped_edit))
-                    conn.commit()
-                    conn.close()
-
+                    payload_upd_p = {
+                        "lote_id": lote_m.strip(),
+                        "data_criacao": dt_p_str,
+                        "cor_bone": cor_b_m.strip(),
+                        "frase_arte": arte_m.strip(),
+                        "cor_linha": cor_e_m.strip(),
+                        "tipo": prod_m,
+                        "preco": preco_m,
+                        "observacoes": obs_p_m.strip(),
+                        "valor_estampa_extra": v_extra_m,
+                        "valor_matriz": v_matriz_m,
+                        "total_item": round(preco_m + v_extra_m + v_matriz_m, 2)
+                    }
+                    sqlite_update_record("pedidos", id_ped_edit, payload_upd_p)
                     if supabase:
                         try:
-                            supabase.table("pedidos").update({
-                                "lote_id": lote_m.strip(),
-                                "data_criacao": dt_p_str,
-                                "cor_bone": cor_b_m.strip(),
-                                "frase_arte": arte_m.strip(),
-                                "cor_linha": cor_e_m.strip(),
-                                "tipo": prod_m,
-                                "preco": preco_m,
-                                "observacoes": obs_p_m.strip(),
-                                "valor_estampa_extra": v_extra_m,
-                                "valor_matriz": v_matriz_m
-                            }).eq("id", id_ped_edit).execute()
-                        except Exception as err_upd:
-                            st.error(f"Erro ao atualizar no Supabase: {err_upd}")
+                            supabase.table("pedidos").update(payload_upd_p).eq("id", id_ped_edit).execute()
+                        except Exception:
+                            pass
 
                     st.session_state["flash_success"] = f"🎉 Item ID #{id_ped_edit} atualizado com sucesso!"
                     st.rerun()
@@ -1235,17 +1204,12 @@ elif "Pedidos" in menu:
                 if not is_edit_ped or not id_ped_edit:
                     st.error("Selecione um item existente para excluir!")
                 else:
-                    conn = sqlite3.connect(DB_NAME)
-                    c = conn.cursor()
-                    c.execute("DELETE FROM pedidos WHERE id = ?", (id_ped_edit,))
-                    conn.commit()
-                    conn.close()
-
+                    sqlite_delete_record("pedidos", id_ped_edit)
                     if supabase:
                         try:
                             supabase.table("pedidos").delete().eq("id", id_ped_edit).execute()
-                        except Exception as err_del_p:
-                            st.error(f"Erro ao excluir no Supabase: {err_del_p}")
+                        except Exception:
+                            pass
 
                     st.session_state["flash_success"] = f"🗑 Item ID #{id_ped_edit} excluído com sucesso!"
                     st.rerun()
@@ -1407,12 +1371,7 @@ elif "Pedidos" in menu:
                                     "status": status_imp
                                 }
 
-                                if supabase:
-                                    ok_imp = safe_insert("pedidos", payload_imp_p)
-                                else:
-                                    ok_imp = sqlite_insert_record("pedidos", payload_imp_p)
-
-                                if ok_imp:
+                                if safe_insert("pedidos", payload_imp_p):
                                     count_p_imp += 1
                                 else:
                                     erros_p_imp.append(f"Linha {idx + 2}: não foi possível salvar")
@@ -1854,8 +1813,6 @@ elif "Vendas" in menu:
     st.caption("As vendas são agrupadas por mês. Exibe a coluna dinâmica com Valor Bruto, Tarifa e Líquido Recebido. Use ✏️ para editar ou 🗑 para cancelar.")
 
     df_historico_vendas = fetch_data("vendas")
-    if df_historico_vendas.empty:
-        df_historico_vendas = carregar_vendas_local()
 
     if not df_historico_vendas.empty:
         df_historico_vendas = normalizar_df_vendas(df_historico_vendas)
@@ -2009,8 +1966,6 @@ elif "Contas a Receber" in menu:
     st.markdown("Gerencie as vendas realizadas que aguardam confirmação de recebimento. Ao confirmar o recebimento, o valor líquido correspondente será lançado automaticamente no Fluxo de Caixa.")
 
     df_cr = fetch_data("vendas")
-    if df_cr.empty:
-        df_cr = carregar_vendas_local()
 
     with st.expander("📥 Importar Contas a Receber via Planilha (.xlsx / .csv)", expanded=False):
         st.markdown("**Colunas reconhecidas:** `Código do Boné`, `Nome do Cliente`, `Quantidade`, `Valor Bruto`, `Tarifa`, `Data da Venda`, `Data de Vencimento`, `Forma de Pagto`.")
@@ -2233,7 +2188,7 @@ elif "Contas a Receber" in menu:
 
 elif "Custos" in menu:
     st.subheader("💵 Gerenciamento de Custos e Despesas")
-    sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷 Custos de Venda", "🎪 Feiras", "💳 Tarifas"], horizontal=True)
+    sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷 Custos / Despesas", "🎪 Feiras"], horizontal=True)
 
     if "Mercadorias" in sub_tab:
         df_cm = get_df_compra_mercadorias()
@@ -2268,45 +2223,47 @@ elif "Custos" in menu:
         else:
             st.info("Nenhuma aquisição de mercadoria registrada no momento.")
 
-    elif "Venda" in sub_tab:
+    elif "Custos / Despesas" in sub_tab:
         with st.form("form_cv"):
             c1, c2, c3 = st.columns(3)
             with c1:
                 dt_cv = st.date_input("Data *", datetime.date.today(), format="YYYY/MM/DD")
                 desc_cv = st.text_input("Descrição *")
             with c2:
-                tipo_cv = st.selectbox("Tipo de Despesa *", ["Brindes", "Embalagem", "Unboxing"])
+                tipos_despesa_sorted = sorted(["Embalagem", "Impostos", "Infraestrutura", "Materiais de Consumo", "Unboxing"])
+                tipo_cv = st.selectbox("Tipo de Despesa *", tipos_despesa_sorted)
             with c3:
                 val_cv = st.number_input("Valor (R$) *", min_value=0.01, value=10.0, format="%.2f")
 
-            if st.form_submit_button("Adicionar Custo de Venda", use_container_width=True):
+            if st.form_submit_button("Adicionar Custo / Despesa", use_container_width=True):
                 val_cv_fmt = round(float(val_cv), 2)
                 dt_cv_str = parse_date_str(dt_cv)
                 
                 payload_cv = {
-                    "subcategoria": "Custos de Venda",
+                    "subcategoria": "Custos / Despesas",
                     "data": dt_cv_str,
                     "desc": desc_cv.strip(),
                     "tipo": tipo_cv,
                     "valor": val_cv_fmt
                 }
                 
-                if safe_insert("custos_avulsos", payload_cv):
-                    safe_insert("caixa", {
-                        "data": dt_cv_str, 
-                        "desc": f"[Custos de Venda] {desc_cv.strip()}", 
-                        "tipo": tipo_cv, 
-                        "valor": val_cv_fmt
-                    })
-                    st.session_state["flash_success"] = "Custo de Venda registrado com sucesso!"
-                    st.rerun()
+                safe_insert("custos_avulsos", payload_cv)
+                safe_insert("caixa", {
+                    "data": dt_cv_str, 
+                    "desc": f"[Custos / Despesas] {desc_cv.strip()}", 
+                    "tipo": tipo_cv, 
+                    "valor": val_cv_fmt
+                })
+                st.session_state["flash_success"] = "Custo / Despesa registrado com sucesso!"
+                st.rerun()
 
         st.markdown("---")
-        st.markdown("##### 📋 Demonstrativo de Custos de Venda Lançados")
+        st.markdown("##### 📋 Demonstrativo de Custos / Despesas Lançados")
         
-        if not df_custos.empty:
-            subcat_col = df_custos.get("subcategoria", pd.Series([""] * len(df_custos))).fillna("").astype(str)
-            df_cv_exib = df_custos[subcat_col.str.contains("venda", case=False, na=False)].copy()
+        df_custos_atualizado = fetch_data("custos_avulsos")
+        if not df_custos_atualizado.empty:
+            subcat_col = df_custos_atualizado.get("subcategoria", pd.Series([""] * len(df_custos_atualizado))).fillna("").astype(str)
+            df_cv_exib = df_custos_atualizado[subcat_col.str.contains("Custos / Despesas", case=False, na=False)].copy()
             
             if not df_cv_exib.empty:
                 df_cv_exib["Mes_Ano"] = pd.to_datetime(df_cv_exib["data"].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
@@ -2334,17 +2291,17 @@ elif "Custos" in menu:
                             st.write(f"**Valor:** R$ {c_vl:,.2f}")
                         with col5:
                             if st.button("🗑 Excluir", key=f"del_cv_{c_id}_{mes}", use_container_width=True):
+                                sqlite_delete_record("custos_avulsos", c_id)
                                 if supabase:
                                     try:
                                         supabase.table("custos_avulsos").delete().eq("id", c_id).execute()
                                     except Exception:
                                         pass
-                                st.session_state["custos_avulsos_local"] = [item for item in st.session_state["custos_avulsos_local"] if item.get("id") != c_id]
-                                st.session_state["flash_success"] = "Custo de venda excluído!"
+                                st.session_state["flash_success"] = "Custo / Despesa excluído!"
                                 st.rerun()
                         st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
             else:
-                st.info("Nenhum custo de venda registrado até o momento.")
+                st.info("Nenhum custo ou despesa registrado até o momento.")
         else:
             st.info("Nenhum custo registrado.")
 
@@ -2356,7 +2313,8 @@ elif "Custos" in menu:
                 feira_cf = st.text_input("Nome da Feira *")
             with c2:
                 desc_cf = st.text_input("Descrição *")
-                tipo_cf = st.selectbox("Tipo de Despesa *", ["Alimentação", "Decoração", "Instalação", "Taxa de Inscrição", "Transporte"])
+                tipos_feiras_sorted = sorted(["Alimentação", "Decoração", "Instalação", "Taxa de Inscrição", "Transporte"])
+                tipo_cf = st.selectbox("Tipo de Despesa *", tipos_feiras_sorted)
             with c3:
                 val_cf = st.number_input("Valor (R$) *", min_value=0.01, value=50.0, format="%.2f")
 
@@ -2372,22 +2330,23 @@ elif "Custos" in menu:
                     "valor": val_cf_fmt
                 }
                 
-                if safe_insert("custos_avulsos", payload_cf):
-                    safe_insert("caixa", {
-                        "data": dt_cf_str, 
-                        "desc": f"[Feira: {feira_cf.strip()}] {desc_cf.strip()}", 
-                        "tipo": tipo_cf, 
-                        "valor": val_cf_fmt
-                    })
-                    st.session_state["flash_success"] = "Custo de Feira registrado com sucesso!"
-                    st.rerun()
+                safe_insert("custos_avulsos", payload_cf)
+                safe_insert("caixa", {
+                    "data": dt_cf_str, 
+                    "desc": f"[Feira: {feira_cf.strip()}] {desc_cf.strip()}", 
+                    "tipo": tipo_cf, 
+                    "valor": val_cf_fmt
+                })
+                st.session_state["flash_success"] = "Custo de Feira registrado com sucesso!"
+                st.rerun()
 
         st.markdown("---")
         st.markdown("##### 📋 Demonstrativo de Custos de Feiras Lançados")
         
-        if not df_custos.empty:
-            subcat_col = df_custos.get("subcategoria", pd.Series([""] * len(df_custos))).fillna("").astype(str)
-            df_cf_exib = df_custos[subcat_col.str.contains("feira", case=False, na=False)].copy()
+        df_custos_atualizado = fetch_data("custos_avulsos")
+        if not df_custos_atualizado.empty:
+            subcat_col = df_custos_atualizado.get("subcategoria", pd.Series([""] * len(df_custos_atualizado))).fillna("").astype(str)
+            df_cf_exib = df_custos_atualizado[subcat_col.str.contains("feira", case=False, na=False)].copy()
             
             if not df_cf_exib.empty:
                 df_cf_exib["Mes_Ano"] = pd.to_datetime(df_cf_exib["data"].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
@@ -2415,12 +2374,12 @@ elif "Custos" in menu:
                             st.write(f"**Valor:** R$ {f_vl:,.2f}")
                         with col5:
                             if st.button("🗑 Excluir", key=f"del_cf_{f_id}_{mes}", use_container_width=True):
+                                sqlite_delete_record("custos_avulsos", f_id)
                                 if supabase:
                                     try:
                                         supabase.table("custos_avulsos").delete().eq("id", f_id).execute()
                                     except Exception:
                                         pass
-                                st.session_state["custos_avulsos_local"] = [item for item in st.session_state["custos_avulsos_local"] if item.get("id") != f_id]
                                 st.session_state["flash_success"] = "Custo de feira excluído!"
                                 st.rerun()
                         st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
@@ -2428,48 +2387,6 @@ elif "Custos" in menu:
                 st.info("Nenhum custo de feira registrado até o momento.")
         else:
             st.info("Nenhum custo registrado.")
-
-    elif "Tarifas" in sub_tab:
-        st.markdown("##### 💳 Demonstrativo Detalhado de Tarifas Descontadas nas Vendas")
-        
-        df_v_tarifas = fetch_data("vendas")
-        if df_v_tarifas.empty:
-            df_v_tarifas = carregar_vendas_local()
-
-        if not df_v_tarifas.empty:
-            df_v_tarifas = normalizar_df_vendas(df_v_tarifas)
-            df_v_tarifas["tarifa_num"] = df_v_tarifas["tarifa_calc"]
-
-            df_v_tarifa_com_valor = df_v_tarifas[df_v_tarifas["tarifa_num"] > 0].copy()
-
-            if not df_v_tarifa_com_valor.empty:
-                col_dt_t = "data_venda" if "data_venda" in df_v_tarifa_com_valor.columns else ("data" if "data" in df_v_tarifa_com_valor.columns else None)
-                col_cod_t = "codigo_bone" if "codigo_bone" in df_v_tarifa_com_valor.columns else ("codigo" if "codigo" in df_v_tarifa_com_valor.columns else "codigo_produto")
-
-                df_v_tarifa_com_valor["_data_t"] = df_v_tarifa_com_valor[col_dt_t].apply(parse_date_str) if col_dt_t else datetime.date.today().strftime("%Y/%m/%d")
-                df_v_tarifa_com_valor["_mes_t"] = pd.to_datetime(df_v_tarifa_com_valor["_data_t"], format="%Y/%m/%d", errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
-
-                meses_t = sorted(df_v_tarifa_com_valor["_mes_t"].unique(), reverse=True)
-                for mes in meses_t:
-                    df_mes_t = df_v_tarifa_com_valor[df_v_tarifa_com_valor["_mes_t"] == mes].sort_values(by="_data_t", ascending=False)
-                    total_mes_t = df_mes_t["tarifa_num"].sum()
-
-                    st.markdown(f"#### 📅 Mês: {mes.replace('-', '/')} — Somatório Acumulado de Tarifas: `R$ {total_mes_t:,.2f}`")
-
-                    lista_exib_t = []
-                    for _, r in df_mes_t.iterrows():
-                        lista_exib_t.append({
-                            "Data": format_data_br(r.get("_data_t")),
-                            "Código do Boné": str(r.get(col_cod_t, "")),
-                            "Cliente": str(r.get("cliente", "")),
-                            "Valor da Tarifa": f"R$ {float(r.get('tarifa_num', 0)):,.2f}"
-                        })
-
-                    st.dataframe(pd.DataFrame(lista_exib_t), use_container_width=True, hide_index=True)
-            else:
-                st.info("Nenhuma tarifa de venda maior que zero registrada até o momento.")
-        else:
-            st.info("Nenhuma venda registrada.")
 
 elif "Caixa" in menu or "Fluxo" in menu:
     st.subheader("💰 Extrato Consolidado de Fluxo de Caixa")
@@ -2501,7 +2418,7 @@ elif "Caixa" in menu or "Fluxo" in menu:
                     "Valor_Num": -tot_c
                 })
 
-    # 2. Recebimentos Líquidos das Vendas (Apenas via Contas a Receber / data_recebimento preenchida)
+    # 2. Recebimentos Líquidos das Vendas
     if not df_vendas.empty:
         df_v_norm = normalizar_df_vendas(df_vendas)
         col_dt_rec = "data_recebimento" if "data_recebimento" in df_v_norm.columns else None
@@ -2523,13 +2440,13 @@ elif "Caixa" in menu or "Fluxo" in menu:
                         "Valor_Num": val_v_calc
                     })
 
-    # 3. Custos de Venda e Custos das Feiras
+    # 3. Custos Avulsos e Feiras
     if not df_custos.empty:
         for _, r in df_custos.iterrows():
             val_c = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
             sub_c = str(r.get("subcategoria", "Custos"))
             desc_c = r.get("desc") or r.get("descricao") or "Despesa Avulsa"
-            origem_tag = "🏷 Custos de Venda" if "venda" in sub_c.lower() else ("🎪 Custos de Feiras" if "feira" in sub_c.lower() else f"💵 Custos ({sub_c})")
+            origem_tag = "🏷 Custos / Despesas" if "custos" in sub_c.lower() or "venda" in sub_c.lower() else ("🎪 Custos de Feiras" if "feira" in sub_c.lower() else f"💵 Custos ({sub_c})")
             if val_c > 0:
                 dt_c_str = parse_date_str(r.get("data"))
                 lista_movimentos.append({
@@ -2673,15 +2590,15 @@ elif "Aportes" in menu:
                     "valor": val_ap_fmt,
                     "tipo": "Aporte"
                 }
-                if safe_insert("aportes", payload_ap):
-                    safe_insert("caixa", {
-                        "data": dt_ap_str,
-                        "desc": f"Aporte ({socio_ap})",
-                        "tipo": "Aporte de Sócio",
-                        "valor": val_ap_fmt
-                    })
-                    st.session_state["flash_success"] = f"Aporte de R$ {val_ap_fmt:,.2f} registrado com sucesso!"
-                    st.rerun()
+                safe_insert("aportes", payload_ap)
+                safe_insert("caixa", {
+                    "data": dt_ap_str,
+                    "desc": f"Aporte ({socio_ap})",
+                    "tipo": "Aporte de Sócio",
+                    "valor": val_ap_fmt
+                })
+                st.session_state["flash_success"] = f"Aporte de R$ {val_ap_fmt:,.2f} registrado com sucesso!"
+                st.rerun()
 
     with col_btn2:
         if st.button("🔄 Devolução de Aporte", use_container_width=True):
@@ -2699,15 +2616,15 @@ elif "Aportes" in menu:
                     "valor": -val_ap_fmt,
                     "tipo": "Devolução"
                 }
-                if safe_insert("aportes", payload_dev):
-                    safe_insert("caixa", {
-                        "data": dt_ap_str,
-                        "desc": f"Devolução ({socio_ap})",
-                        "tipo": "Devolução de Aporte",
-                        "valor": -val_ap_fmt
-                    })
-                    st.session_state["flash_success"] = f"Devolução de R$ {val_ap_fmt:,.2f} registrada com sucesso!"
-                    st.rerun()
+                safe_insert("aportes", payload_dev)
+                safe_insert("caixa", {
+                    "data": dt_ap_str,
+                    "desc": f"Devolução ({socio_ap})",
+                    "tipo": "Devolução de Aporte",
+                    "valor": -val_ap_fmt
+                })
+                st.session_state["flash_success"] = f"Devolução de R$ {val_ap_fmt:,.2f} registrada com sucesso!"
+                st.rerun()
 
     st.markdown("---")
     st.subheader("📊 Resumo Consolidado por Sócio")
@@ -2789,8 +2706,12 @@ elif "Aportes" in menu:
                             st.rerun()
                     with c6:
                         if st.button("🗑", key=f"del_ap_{ap_id}_{mes}", use_container_width=True):
+                            sqlite_delete_record("aportes", ap_id)
                             if supabase:
-                                supabase.table("aportes").delete().eq("id", ap_id).execute()
+                                try:
+                                    supabase.table("aportes").delete().eq("id", ap_id).execute()
+                                except Exception:
+                                    pass
                             st.session_state["flash_success"] = f"Registro ID #{ap_id} excluído com sucesso!"
                             st.rerun()
 
@@ -2811,12 +2732,17 @@ elif "Aportes" in menu:
                             with btn_s_ap:
                                 if st.form_submit_button("💾 Salvar Alterações", use_container_width=True, type="primary"):
                                     val_final = float(novo_val) if novo_tipo == "Aporte" else -float(novo_val)
+                                    payload_upd_ap = {
+                                        "socio": novo_socio,
+                                        "tipo": novo_tipo,
+                                        "valor": val_final
+                                    }
+                                    sqlite_update_record("aportes", ap_id, payload_upd_ap)
                                     if supabase:
-                                        supabase.table("aportes").update({
-                                            "socio": novo_socio,
-                                            "tipo": novo_tipo,
-                                            "valor": val_final
-                                        }).eq("id", ap_id).execute()
+                                        try:
+                                            supabase.table("aportes").update(payload_upd_ap).eq("id", ap_id).execute()
+                                        except Exception:
+                                            pass
                                     st.session_state["editing_aporte_id"] = None
                                     st.session_state["flash_success"] = "Registro atualizado com sucesso!"
                                     st.rerun()
