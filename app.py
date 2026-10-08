@@ -146,13 +146,13 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 def carregar_dataframe(query, params=None):
-    conn = sqlite3.connect(DB_NAME, timeout=30.0)
+    conn = sqlite3.connect(DB_NAME)
     df = pd.read_sql_query(query, conn, params=params)
     conn.close()
     return df
 
 def init_db():
-    conn = sqlite3.connect(DB_NAME, timeout=30.0)
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute('''
         CREATE TABLE IF NOT EXISTS pedidos (
@@ -377,7 +377,7 @@ def get_numeric_series(df: pd.DataFrame, col_name: str, default_value: float = 0
 def fetch_data(table_name: str) -> pd.DataFrame:
     local_df = pd.DataFrame()
     try:
-        conn = sqlite3.connect(DB_NAME, timeout=30.0)
+        conn = sqlite3.connect(DB_NAME)
         if table_name == "vendas":
             local_df = pd.read_sql_query("SELECT * FROM vendas ORDER BY id DESC", conn)
         elif table_name == "custos_avulsos":
@@ -434,7 +434,7 @@ def normalizar_df_vendas(df: pd.DataFrame) -> pd.DataFrame:
 def sqlite_insert_record(table_name: str, payload: dict):
     conn = None
     try:
-        conn = sqlite3.connect(DB_NAME, timeout=30.0)
+        conn = sqlite3.connect(DB_NAME)
         cur = conn.cursor()
         cur.execute(f"PRAGMA table_info({table_name})")
         cols = {row[1] for row in cur.fetchall()}
@@ -461,7 +461,7 @@ def sqlite_update_record(table_name: str, record_id, payload: dict):
         return False
     conn = None
     try:
-        conn = sqlite3.connect(DB_NAME, timeout=30.0)
+        conn = sqlite3.connect(DB_NAME)
         cur = conn.cursor()
         cur.execute(f"PRAGMA table_info({table_name})")
         cols = {row[1] for row in cur.fetchall()}
@@ -487,7 +487,7 @@ def sqlite_delete_record(table_name: str, record_id):
         return False
     conn = None
     try:
-        conn = sqlite3.connect(DB_NAME, timeout=30.0)
+        conn = sqlite3.connect(DB_NAME)
         cur = conn.cursor()
         cur.execute(f"DELETE FROM {table_name} WHERE id = ?", (record_id,))
         conn.commit()
@@ -609,7 +609,7 @@ def dar_baixa_estoque_venda(codigo_prod, qtd_venda=1):
 
     conn = None
     try:
-        conn = sqlite3.connect(DB_NAME, timeout=30.0)
+        conn = sqlite3.connect(DB_NAME)
         cur = conn.cursor()
         cur.execute("PRAGMA table_info(produtos)")
         cols = {row[1] for row in cur.fetchall()}
@@ -648,7 +648,7 @@ def estornar_estoque(codigo_prod, qtd_estorno):
 
     conn = None
     try:
-        conn = sqlite3.connect(DB_NAME, timeout=30.0)
+        conn = sqlite3.connect(DB_NAME)
         cur = conn.cursor()
         cur.execute("PRAGMA table_info(produtos)")
         cols = {row[1] for row in cur.fetchall()}
@@ -731,7 +731,7 @@ def get_ultimo_codigo_config():
         except Exception:
             pass
     try:
-        conn = sqlite3.connect(DB_NAME, timeout=30.0)
+        conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         c.execute("SELECT valor_b64 FROM configuracoes WHERE chave = 'ultimo_codigo_bone'")
         row = c.fetchone()
@@ -753,7 +753,7 @@ def set_ultimo_codigo_config(novo_codigo):
         except Exception as e:
             st.error(f"Erro ao salvar configuração do código no Supabase: {e}")
     try:
-        conn = sqlite3.connect(DB_NAME, timeout=30.0)
+        conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         c.execute("INSERT OR REPLACE INTO configuracoes (chave, valor_b64) VALUES ('ultimo_codigo_bone', ?)", (novo_codigo,))
         conn.commit()
@@ -963,14 +963,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 # 5. Módulos do Sistema
 
 if "Dashboard" in menu:
-    st.subheader("📈 Dashboard Executivo Avançado")
-    
-    tab_d1, tab_d2, tab_d3, tab_d4 = st.tabs([
-        "Visão Geral & Faturamento", 
-        "Lucratividade por Peça", 
-        "Giro de Estoque & Ruptura", 
-        "Feiras & Eventos"
-    ])
+    st.subheader("📈 Dashboard Executivo")
     
     col_v_val = "valor_venda" if "valor_venda" in df_vendas.columns else ("valor" if "valor" in df_vendas.columns else ("valor_total" if "valor_total" in df_vendas.columns else None))
     total_faturado = float(df_vendas[col_v_val].sum()) if not df_vendas.empty and col_v_val else 0.0
@@ -994,256 +987,61 @@ if "Dashboard" in menu:
         if col_q_venda:
             total_qtd_vendida = int(get_numeric_series(df_vendas, col_q_venda).sum())
 
-    # --- ABA 1: Visão Geral & Faturamento ---
-    with tab_d1:
-        k1, k2, k3, k4 = st.columns(4)
-        with k1:
-            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
-        with k2:
-            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV TOTAL <span class="tooltip-icon" title="Custo das mercadorias vendidas obtido do menu Compra de Mercadoria">ℹ</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
-        with k3:
-            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo final vindo do menu Fluxo de Caixa">ℹ</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
-        with k4:
-            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Quantidade Vendida <span class="tooltip-icon" title="Quantidade total de peças/bonés faturados nas vendas">ℹ</span></div><div class="kpi-value">{total_qtd_vendida} un</div></div>', unsafe_allow_html=True)
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Faturamento Total <span class="tooltip-icon" title="Soma total de todas as vendas confirmadas">ℹ</span></div><div class="kpi-value">R$ {total_faturado:,.2f}</div></div>', unsafe_allow_html=True)
+    with k2:
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">CMV TOTAL <span class="tooltip-icon" title="Custo das mercadorias vendidas obtido do menu Compra de Mercadoria">ℹ</span></div><div class="kpi-value">R$ {total_cmv:,.2f}</div></div>', unsafe_allow_html=True)
+    with k3:
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #f59e0b;"><div class="kpi-title">Saldo em Caixa <span class="tooltip-icon" title="Saldo final vindo do menu Fluxo de Caixa">ℹ</span></div><div class="kpi-value">R$ {saldo_caixa:,.2f}</div></div>', unsafe_allow_html=True)
+    with k4:
+        st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Quantidade Vendida <span class="tooltip-icon" title="Quantidade total de peças/bonés faturados nas vendas">ℹ</span></div><div class="kpi-value">{total_qtd_vendida} un</div></div>', unsafe_allow_html=True)
 
-        st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    col_d_venda = "data" if "data" in df_vendas.columns else ("data_venda" if "data_venda" in df_vendas.columns else None)
+    meses_disponiveis = ["TODOS"]
+    if not df_vendas.empty and col_d_venda:
+        df_vendas["mes_ano"] = pd.to_datetime(df_vendas[col_d_venda].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m")
+        meses_disponiveis.extend(sorted(df_vendas["mes_ano"].dropna().unique().tolist()))
+    
+    mes_sel = st.selectbox("📅 Selecionar Período / Mês:", list(set(meses_disponiveis)))
+    
+    df_vendas_fil = df_vendas.copy()
+    if mes_sel != "TODOS" and not df_vendas_fil.empty and col_d_venda:
+        df_vendas_fil["mes_temp"] = pd.to_datetime(df_vendas_fil[col_d_venda].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m")
+        df_vendas_fil = df_vendas_fil[df_vendas_fil["mes_temp"] == mes_sel]
         
-        col_d_venda = "data" if "data" in df_vendas.columns else ("data_venda" if "data_venda" in df_vendas.columns else None)
-        meses_disponiveis = ["TODOS"]
-        if not df_vendas.empty and col_d_venda:
-            df_vendas["mes_ano"] = pd.to_datetime(df_vendas[col_d_venda].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m")
-            meses_disponiveis.extend(sorted(df_vendas["mes_ano"].dropna().unique().tolist()))
-        
-        mes_sel = st.selectbox("📅 Selecionar Período / Mês (Aba 1):", list(set(meses_disponiveis)))
-        
-        df_vendas_fil = df_vendas.copy()
-        if mes_sel != "TODOS" and not df_vendas_fil.empty and col_d_venda:
-            df_vendas_fil["mes_temp"] = pd.to_datetime(df_vendas_fil[col_d_venda].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m")
-            df_vendas_fil = df_vendas_fil[df_vendas_fil["mes_temp"] == mes_sel]
-            
-        g1, g2 = st.columns(2)
-        with g1:
-            st.markdown("#### 🟢 Faturamento vs. 🔴 CMV")
-            if not df_vendas_fil.empty and col_d_venda and col_v_val:
-                df_vendas_fil["mes"] = pd.to_datetime(df_vendas_fil[col_d_venda].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m")
-                y_cols = [col_v_val]
-                if "custo" in df_vendas_fil.columns:
-                    y_cols.append("custo")
-                agrup = df_vendas_fil.groupby("mes")[y_cols].sum().reset_index()
-                fig1 = px.bar(agrup, x="mes", y=y_cols, barmode="group",
-                              color_discrete_sequence=["#10b981", "#ef4444"], template="plotly_white")
-                st.plotly_chart(fig1, use_container_width=True)
-            else:
-                st.info("Sem dados suficientes para gerar o gráfico.")
-
-        with g2:
-            st.markdown("#### 🎨 Cores / Modelos Mais Vendidos (Ordem Alfabética)")
-            c_v_col = "codigo_bone" if "codigo_bone" in df_vendas_fil.columns else ("codigo" if "codigo" in df_vendas_fil.columns else "codigo_produto")
-            if not df_vendas_fil.empty and c_v_col in df_vendas_fil.columns and not df_produtos.empty:
-                df_m = df_vendas_fil.merge(df_produtos, left_on=c_v_col, right_on="codigo", how="left")
-                cor_col = "cor" if "cor" in df_m.columns else "cor_x"
-                if cor_col in df_m.columns:
-                    qtd_col = "qtd_x" if "qtd_x" in df_m.columns else ("qtd" if "qtd" in df_m.columns else "qtd_y")
-                    agrup_cor = df_m.groupby(cor_col)[qtd_col].sum().reset_index()
-                    # Ordenar por ordem alfabética da cor
-                    agrup_cor = agrup_cor.sort_values(by=cor_col, ascending=True)
-                    fig2 = px.pie(agrup_cor, names=cor_col, values=qtd_col, hole=0.45, color_discrete_sequence=px.colors.qualitative.Pastel)
-                    st.plotly_chart(fig2, use_container_width=True)
-                else:
-                    st.info("Sem informação de cor cadastrada.")
-            else:
-                st.info("Nenhuma venda registrada.")
-
-    # --- ABA 2: Lucratividade por Peça ---
-    with tab_d2:
-        st.markdown("#### 💎 Lucratividade Detalhada por Venda e Peça")
-        
-        df_lucro = pd.DataFrame()
-        if not df_vendas.empty:
-            df_l_base = normalizar_df_vendas(df_vendas).copy()
-            df_cm_ref = get_df_compra_mercadorias()
-            c_v_col = "codigo_bone" if "codigo_bone" in df_l_base.columns else ("codigo" if "codigo" in df_l_base.columns else "codigo_produto")
-            
-            if not df_cm_ref.empty and c_v_col in df_l_base.columns:
-                df_l_cruzado = df_l_base.merge(df_cm_ref, left_on=c_v_col, right_on="Código", how="left")
-                df_l_cruzado["preco_base_un"] = df_l_cruzado["preco_num"].fillna(0.0)
-                df_l_cruzado["estampa_extra_un"] = df_l_cruzado["estampa_extra_num"].fillna(0.0)
-                df_l_cruzado["matriz_bordado_un"] = df_l_cruzado["matriz_num"].fillna(0.0)
-                df_l_cruzado["cmv_unitario"] = df_l_cruzado["preco_base_un"] + df_l_cruzado["estampa_extra_un"] + df_l_cruzado["matriz_bordado_un"]
-                
-                qtd_col_l = "qtd" if "qtd" in df_l_cruzado.columns else 1
-                df_l_cruzado["qtd_num"] = get_numeric_series(df_l_cruzado, qtd_col_l, 1.0)
-                df_l_cruzado["cmv_total"] = df_l_cruzado["cmv_unitario"] * df_l_cruzado["qtd_num"]
-                
-                df_l_cruzado["lucro_liquido_total"] = df_l_cruzado["liquido_recebido_calc"] - df_l_cruzado["cmv_total"]
-                df_l_cruzado["lucro_unitario"] = df_l_cruzado["lucro_liquido_total"] / df_l_cruzado["qtd_num"].replace(0, 1)
-                
-                df_lucro = df_l_cruzado
-            else:
-                df_lucro = df_l_base
-                df_lucro["cmv_total"] = 0.0
-                df_lucro["lucro_liquido_total"] = df_lucro["liquido_recebido_calc"]
-                df_lucro["lucro_unitario"] = df_lucro["liquido_recebido_calc"]
-                df_lucro["Arte Estampada"] = "Peça Geral"
-
-        margem_media_global = 0.0
-        lucro_liquido_total_val = 0.0
-        if not df_lucro.empty:
-            lucro_liquido_total_val = float(df_lucro["lucro_liquido_total"].sum())
-            faturamento_total_lucro = float(df_lucro["valor_bruto_calc"].sum())
-            if faturamento_total_lucro > 0:
-                margem_media_global = (lucro_liquido_total_val / faturamento_total_lucro) * 100.0
-
-        lk1, lk2 = st.columns(2)
-        with lk1:
-            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Margem de Lucro Média Global</div><div class="kpi-value">{margem_media_global:.2f}%</div></div>', unsafe_allow_html=True)
-        with lk2:
-            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Lucro Líquido Total</div><div class="kpi-value">R$ {lucro_liquido_total_val:,.2f}</div></div>', unsafe_allow_html=True)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        if not df_lucro.empty:
-            lg1, lg2 = st.columns(2)
-            with lg1:
-                st.markdown("#### 🏆 Itens / Artes Mais Lucrativos")
-                col_arte_l = "Arte Estampada" if "Arte Estampada" in df_lucro.columns else "cliente"
-                agrup_arte = df_lucro.groupby(col_arte_l)["lucro_liquido_total"].sum().reset_index().sort_values(by="lucro_liquido_total", ascending=False).head(8)
-                fig_lucro_bar = px.bar(agrup_arte, x=col_arte_l, y="lucro_liquido_total", text_auto=".2f",
-                                       color="lucro_liquido_total", color_continuous_scale="greens", template="plotly_white")
-                st.plotly_chart(fig_lucro_bar, use_container_width=True)
-
-            with lg2:
-                st.markdown("#### 📋 Tabela Detalhada de Lucratividade por Venda")
-                df_tabela_lucro = pd.DataFrame({
-                    "ID": df_lucro.get("id"),
-                    "Cliente": df_lucro.get("cliente"),
-                    "Código": df_lucro.get("codigo_bone") if "codigo_bone" in df_lucro.columns else df_lucro.get("codigo"),
-                    "Valor Bruto": df_lucro.get("valor_bruto_calc", 0).apply(lambda x: f"R$ {x:,.2f}"),
-                    "CMV Total": df_lucro.get("cmv_total", 0).apply(lambda x: f"R$ {x:,.2f}"),
-                    "Tarifas": df_lucro.get("tarifa_calc", 0).apply(lambda x: f"R$ {x:,.2f}"),
-                    "Lucro Líquido": df_lucro.get("lucro_liquido_total", 0).apply(lambda x: f"R$ {x:,.2f}")
-                })
-                st.dataframe(df_tabela_lucro, use_container_width=True, hide_index=True)
+    g1, g2 = st.columns(2)
+    with g1:
+        st.markdown("#### 🟢 Faturamento vs. 🔴 CMV")
+        if not df_vendas_fil.empty and col_d_venda and col_v_val:
+            df_vendas_fil["mes"] = pd.to_datetime(df_vendas_fil[col_d_venda].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m")
+            y_cols = [col_v_val]
+            if "custo" in df_vendas_fil.columns:
+                y_cols.append("custo")
+            agrup = df_vendas_fil.groupby("mes")[y_cols].sum().reset_index()
+            fig1 = px.bar(agrup, x="mes", y=y_cols, barmode="group",
+                          color_discrete_sequence=["#10b981", "#ef4444"], template="plotly_white")
+            st.plotly_chart(fig1, use_container_width=True)
         else:
-            st.info("Sem dados de vendas suficientes para calcular a lucratividade.")
+            st.info("Sem dados suficientes para gerar o gráfico.")
 
-    # --- ABA 3: Giro de Estoque & Ruptura ---
-    with tab_d3:
-        st.markdown("#### 📦 Giro de Estoque, Baixas e Alerta de Ruptura")
-        
-        df_cm_estoque_tab3 = get_df_compra_mercadorias()
-        qtd_total_est_aba3 = 0
-        itens_ruptura = []
-        
-        if not df_cm_estoque_tab3.empty:
-            df_est_tab3 = df_cm_estoque_tab3.copy()
-            if not df_produtos.empty and "codigo" in df_produtos.columns:
-                col_q_p3 = "qtd_estoque" if "qtd_estoque" in df_produtos.columns else ("qtd" if "qtd" in df_produtos.columns else "estoque")
-                df_est_tab3 = df_est_tab3.merge(df_produtos[["codigo", col_q_p3]], left_on="Código", right_on="codigo", how="left")
-                df_est_tab3["Estoque_Atual"] = pd.to_numeric(df_est_tab3[col_q_p3], errors="coerce").fillna(1).astype(int)
+    with g2:
+        st.markdown("#### 🎨 Cores Mais Vendidas")
+        c_v_col = "codigo_bone" if "codigo_bone" in df_vendas_fil.columns else ("codigo" if "codigo" in df_vendas_fil.columns else "codigo_produto")
+        if not df_vendas_fil.empty and c_v_col in df_vendas_fil.columns and not df_produtos.empty:
+            df_m = df_vendas_fil.merge(df_produtos, left_on=c_v_col, right_on="codigo", how="left")
+            cor_col = "cor" if "cor" in df_m.columns else "cor_x"
+            if cor_col in df_m.columns:
+                qtd_col = "qtd_x" if "qtd_x" in df_m.columns else ("qtd" if "qtd" in df_m.columns else "qtd_y")
+                agrup_cor = df_m.groupby(cor_col)[qtd_col].sum().reset_index()
+                fig2 = px.pie(agrup_cor, names=cor_col, values=qtd_col, hole=0.45, color_discrete_sequence=px.colors.qualitative.Pastel)
+                st.plotly_chart(fig2, use_container_width=True)
             else:
-                df_est_tab3["Estoque_Atual"] = 1
-                
-            qtd_total_est_aba3 = int(df_est_tab3[df_est_tab3["Estoque_Atual"] > 0]["Estoque_Atual"].sum())
-            itens_ruptura = df_est_tab3[(df_est_tab3["Estoque_Atual"] <= 2) & (df_est_tab3["Estoque_Atual"] > 0)].to_dict(orient="records")
-
-        ek1, ek2 = st.columns(2)
-        with ek1:
-            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #3b82f6;"><div class="kpi-title">Quantidade Total em Estoque</div><div class="kpi-value">{qtd_total_est_aba3} un</div></div>', unsafe_allow_html=True)
-        with ek2:
-            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">Itens com Estoque Baixo ($\le 2$ un)</div><div class="kpi-value">{len(itens_ruptura)} itens</div></div>', unsafe_allow_html=True)
-
-        if itens_ruptura:
-            st.warning("⚠ **Alerta de Ruptura / Estoque Baixo:** Os seguintes itens estão com 2 unidades ou menos em estoque:")
-            df_ruptura_exib = pd.DataFrame(itens_ruptura)[["Código", "Cor do Boné", "Arte Estampada", "Estoque_Atual"]]
-            st.dataframe(df_ruptura_exib, use_container_width=True, hide_index=True)
-
-        st.markdown("---")
-        st.markdown("##### 🔻 Resumo Integrado de Baixas de Estoque (Perda, Avaria, Brinde)")
-        df_baixas_tab3 = fetch_data("baixas_estoque")
-        if not df_baixas_tab3.empty:
-            st.dataframe(df_baixas_tab3, use_container_width=True, hide_index=True)
+                st.info("Sem informação de cor cadastrada.")
         else:
-            st.info("Nenhuma baixa de estoque registrada com motivos de perda, avaria ou brinde.")
-
-        st.markdown("---")
-        st.markdown("##### 📊 Tabela de Rastreio de Giro (Frequência de Saída)")
-        if not df_vendas.empty and not df_cm_estoque_tab3.empty:
-            c_v_col = "codigo_bone" if "codigo_bone" in df_vendas.columns else ("codigo" if "codigo" in df_vendas.columns else "codigo_produto")
-            col_q_v = "qtd" if "qtd" in df_vendas.columns else "quantidade"
-            df_giro = df_vendas.groupby(c_v_col)[col_q_v].sum().reset_index().rename(columns={col_q_v: "Qtd_Saidas_Vendas", c_v_col: "Código"})
-            df_giro_completo = df_cm_estoque_tab3.merge(df_giro, on="Código", how="left").fillna({"Qtd_Saidas_Vendas": 0})
-            st.dataframe(df_giro_completo[["Código", "Cor do Boné", "Arte Estampada", "Produto", "Qtd_Saidas_Vendas"]], use_container_width=True, hide_index=True)
-        else:
-            st.info("Dados insuficientes para calcular o giro de vendas.")
-
-    # --- ABA 4: Feiras & Eventos (Ex: Feirarte) ---
-    with tab_d4:
-        st.markdown("#### 🎪 Feiras & Eventos (Análise de ROI / Feirarte)")
-        
-        df_custos_ev = fetch_data("custos_avulsos")
-        feiras_disponiveis = ["TODAS"]
-        if not df_custos_ev.empty:
-            subcat_c = df_custos_ev.get("subcategoria", pd.Series([""] * len(df_custos_ev))).fillna("").astype(str)
-            df_feiras_raw = df_custos_ev[subcat_c.str.contains("feira", case=False, na=False)]
-            if not df_feiras_raw.empty and "desc" in df_feiras_raw.columns:
-                nomes_f = df_feiras_raw["desc"].astype(str).apply(lambda x: x.split(" - ")[0].replace("Feira: ", "").strip() if "Feira: " in x else "Geral")
-                feiras_disponiveis.extend(sorted(nomes_f.unique().tolist()))
-
-        feira_sel = st.selectbox("🎪 Selecionar Feira / Evento:", list(set(feiras_disponiveis)))
-
-        total_despesas_feira = 0.0
-        df_despesas_feira_filtrada = pd.DataFrame()
-        
-        if not df_custos_ev.empty:
-            subcat_c = df_custos_ev.get("subcategoria", pd.Series([""] * len(df_custos_ev))).fillna("").astype(str)
-            df_f_filtro = df_custos_ev[subcat_c.str.contains("feira", case=False, na=False)].copy()
-            if feira_sel != "TODAS":
-                df_f_filtro = df_f_filtro[df_f_filtro["desc"].astype(str).str.contains(feira_sel, case=False, na=False)]
-            
-            total_despesas_feira = float(df_f_filtro["valor"].apply(parse_money).sum())
-            df_despesas_feira_filtrada = df_f_filtro
-
-        # ALTERAÇÃO SOLICITADA: Buscar no menu Vendas o Nome do Cliente igual ao nome da feira
-        total_faturado_feira = 0.0
-        if not df_vendas.empty and "cliente" in df_vendas.columns:
-            df_vendas_norm_f = normalizar_df_vendas(df_vendas)
-            if feira_sel != "TODAS":
-                df_vendas_feira = df_vendas_norm_f[df_vendas_norm_f["cliente"].astype(str).str.strip().str.lower() == feira_sel.strip().lower()]
-            else:
-                # Se for TODAS, considera todas as vendas ou você pode somar todas se preferir. Vamos somar as que correspondem a feiras ou todas se TODAS.
-                df_vendas_feira = df_vendas_norm_f
-            total_faturado_feira = float(df_vendas_feira["valor_bruto_calc"].sum())
-
-        roi_feira = total_faturado_feira - total_despesas_feira
-
-        fk1, fk2, fk3 = st.columns(3)
-        with fk1:
-            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #10b981;"><div class="kpi-title">Total Faturado no Período</div><div class="kpi-value">R$ {total_faturado_feira:,.2f}</div></div>', unsafe_allow_html=True)
-        with fk2:
-            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: #ef4444;"><div class="kpi-title">Total Despesas Operacionais</div><div class="kpi-value">R$ {total_despesas_feira:,.2f}</div></div>', unsafe_allow_html=True)
-        with fk3:
-            cor_roi = "#10b981" if roi_feira >= 0 else "#ef4444"
-            st.markdown(f'<div class="kpi-card-advanced" style="border-top-color: {cor_roi};"><div class="kpi-title">Saldo / ROI do Evento</div><div class="kpi-value">R$ {roi_feira:,.2f}</div></div>', unsafe_allow_html=True)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        fg1, fg2 = st.columns(2)
-        with fg1:
-            st.markdown("#### 🥧 Peso de Cada Tipo de Despesa da Feira")
-            if not df_despesas_feira_filtrada.empty:
-                df_pie_feira = df_despesas_feira_filtrada.groupby("tipo")["valor"].sum().reset_index()
-                fig_feira_pie = px.pie(df_pie_feira, names="tipo", values="valor", hole=0.4, color_discrete_sequence=px.colors.qualitative.Set3)
-                st.plotly_chart(fig_feira_pie, use_container_width=True)
-            else:
-                st.info("Sem despesas cadastradas para esta feira.")
-
-        with fg2:
-            st.markdown("#### 📋 Lançamentos de Despesas da Feira")
-            if not df_despesas_feira_filtrada.empty:
-                st.dataframe(df_despesas_feira_filtrada[["data", "tipo", "desc", "valor"]], use_container_width=True, hide_index=True)
-            else:
-                st.info("Nenhum lançamento encontrado.")
+            st.info("Nenhuma venda registrada.")
 
 elif "Compra de Mercadorias" in menu:
     st.subheader("🛍 Relatório de Compra de Mercadorias")
@@ -1683,39 +1481,31 @@ elif "Pedidos" in menu:
                                 codigo_base_atual = get_ultimo_codigo_config()
                                 codigos_gerados = []
                                 
-                                conn = sqlite3.connect(DB_NAME, timeout=30.0)
+                                conn = sqlite3.connect(DB_NAME)
                                 c = conn.cursor()
 
-                                try:
-                                    for item_id in ids_itens_acao:
-                                        row_alvo = df_lote[df_lote["id"] == item_id].iloc[0]
-                                        codigo_base_atual = gerar_proximo_codigo(codigo_base_atual)
-                                        codigos_gerados.append(codigo_base_atual)
+                                for item_id in ids_itens_acao:
+                                    row_alvo = df_lote[df_lote["id"] == item_id].iloc[0]
+                                    codigo_base_atual = gerar_proximo_codigo(codigo_base_atual)
+                                    codigos_gerados.append(codigo_base_atual)
 
-                                        dt_aquisicao_item = parse_date_str(dt_entrega_manual) if str(dt_entrega_manual).strip() else datetime.date.today().strftime("%Y/%m/%d")
+                                    dt_aquisicao_item = parse_date_str(dt_entrega_manual) if str(dt_entrega_manual).strip() else datetime.date.today().strftime("%Y/%m/%d")
 
-                                        novo_prod = {
-                                            "codigo": codigo_base_atual,
-                                            "cor": str(row_alvo.get("cor_bone", "")).strip(),
-                                            "frase": str(row_alvo.get("frase_arte", "")).strip(),
-                                            "cor_estampa": str(row_alvo.get("cor_linha", "")).strip(),
-                                            "categoria": str(row_alvo.get("tipo", "Básico")).strip(),
-                                            "custo": float(row_alvo.get("preco", 29.0)),
-                                            "estampa_extra": float(row_alvo.get("valor_estampa_extra", 0.0)),
-                                            "matriz_bordado": float(row_alvo.get("valor_matriz", 0.0)),
-                                            "qtd_estoque": 1,
-                                            "qtd_comprada": 1,
-                                            "data_aquisicao": dt_aquisicao_item
-                                        }
+                                    novo_prod = {
+                                        "codigo": codigo_base_atual,
+                                        "cor": str(row_alvo.get("cor_bone", "")).strip(),
+                                        "frase": str(row_alvo.get("frase_arte", "")).strip(),
+                                        "cor_estampa": str(row_alvo.get("cor_linha", "")).strip(),
+                                        "categoria": str(row_alvo.get("tipo", "Básico")).strip(),
+                                        "custo": float(row_alvo.get("preco", 29.0)),
+                                        "estampa_extra": float(row_alvo.get("valor_estampa_extra", 0.0)),
+                                        "matriz_bordado": float(row_alvo.get("valor_matriz", 0.0)),
+                                        "qtd_estoque": 1,
+                                        "qtd_comprada": 1,
+                                        "data_aquisicao": dt_aquisicao_item
+                                    }
 
-                                        # Inserção segura na tabela produtos via SQLite e Supabase
-                                        sqlite_insert_record("produtos", novo_prod)
-                                        if supabase:
-                                            try:
-                                                supabase.table("produtos").upsert(novo_prod, on_conflict="codigo").execute()
-                                            except Exception:
-                                                pass
-
+                                    if safe_upsert_produto(novo_prod):
                                         c.execute("UPDATE pedidos SET status = 'Entregue / Retirado', codigo_produto = ? WHERE id = ?", (codigo_base_atual, item_id))
                                         if supabase:
                                             try:
@@ -1723,11 +1513,8 @@ elif "Pedidos" in menu:
                                             except Exception:
                                                 pass
 
-                                    conn.commit()
-                                except Exception as err_lote:
-                                    st.error(f"Erro ao processar lote: {err_lote}")
-                                finally:
-                                    conn.close()
+                                conn.commit()
+                                conn.close()
                                 
                                 set_ultimo_codigo_config(codigo_base_atual)
 
@@ -1740,26 +1527,22 @@ elif "Pedidos" in menu:
                             if not ids_itens_acao:
                                 st.warning("Selecione ao menos um item!")
                             else:
-                                conn = sqlite3.connect(DB_NAME, timeout=30.0)
+                                conn = sqlite3.connect(DB_NAME)
                                 c = conn.cursor()
-                                try:
-                                    for item_id in ids_itens_acao:
-                                        row_alvo = df_lote[df_lote["id"] == item_id].iloc[0]
-                                        cod_prod = row_alvo.get("codigo_produto")
-                                        if cod_prod and str(cod_prod).strip() != "" and str(cod_prod).strip().lower() != "none":
-                                            estornar_estoque(cod_prod, 1)
+                                for item_id in ids_itens_acao:
+                                    row_alvo = df_lote[df_lote["id"] == item_id].iloc[0]
+                                    cod_prod = row_alvo.get("codigo_produto")
+                                    if cod_prod and str(cod_prod).strip() != "" and str(cod_prod).strip().lower() != "none":
+                                        estornar_estoque(cod_prod, 1)
 
-                                        c.execute("DELETE FROM pedidos WHERE id = ?", (item_id,))
-                                        if supabase:
-                                            try:
-                                                supabase.table("pedidos").delete().eq("id", item_id).execute()
-                                            except Exception:
-                                                pass
-                                    conn.commit()
-                                except Exception as exc_del:
-                                    st.error(f"Erro ao cancelar itens: {exc_del}")
-                                finally:
-                                    conn.close()
+                                    c.execute("DELETE FROM pedidos WHERE id = ?", (item_id,))
+                                    if supabase:
+                                        try:
+                                            supabase.table("pedidos").delete().eq("id", item_id).execute()
+                                        except Exception:
+                                            pass
+                                conn.commit()
+                                conn.close()
 
                                 st.session_state["flash_success"] = f"🗑 {len(ids_itens_acao)} item(ns) cancelado(s) e excluído(s) com sucesso!"
                                 st.rerun()
@@ -2041,31 +1824,6 @@ elif "Vendas" in menu:
         else:
             df_historico_vendas["_data_hist"] = datetime.date.today().strftime("%Y/%m/%d")
             df_historico_vendas["_mes_hist"] = datetime.date.today().strftime("%Y-%m")
-
-        with st.expander("🛠 Seleção e Exclusão em Lote de Vendas", expanded=False):
-            ids_vendas_disp = df_historico_vendas["id"].tolist()
-            vendas_selecionadas_lote = st.multiselect(
-                "Selecione as vendas para exclusão em lote:",
-                options=ids_vendas_disp,
-                format_func=lambda x: f"Venda ID #{x} - Cliente: {df_historico_vendas[df_historico_vendas['id'] == x]['cliente'].values[0] if not df_historico_vendas[df_historico_vendas['id'] == x].empty else ''}"
-            )
-            if st.button("🗑 Excluir Vendas Selecionadas em Lote", type="primary"):
-                if not vendas_selecionadas_lote:
-                    st.warning("Nenhuma venda selecionada.")
-                else:
-                    count_del = 0
-                    for v_id_del in vendas_selecionadas_lote:
-                        row_del = df_historico_vendas[df_historico_vendas["id"] == v_id_del]
-                        if not row_del.empty:
-                            r_d_dict = row_del.iloc[0].to_dict()
-                            cod_est = str(r_d_dict.get(col_codigo_hist, ""))
-                            qtd_est = int(pd.to_numeric(r_d_dict.get("qtd", 1), errors="coerce") or 1)
-                            estornar_estoque(cod_est, qtd_est)
-                            if safe_delete_venda(v_id_del):
-                                atualizar_caixa_da_venda(r_d_dict, excluir=True)
-                                count_del += 1
-                    st.session_state["flash_success"] = f"🗑 {count_del} venda(s) excluída(s) em lote com sucesso e itens estornados ao estoque!"
-                    st.rerun()
 
         meses_hist = [m for m in sorted(df_historico_vendas["_mes_hist"].dropna().unique().tolist(), reverse=True)]
         if not meses_hist:
@@ -2443,27 +2201,25 @@ elif "Custos" in menu:
             meses_custos_m = sorted(df_m["Mes_Ano"].unique(), reverse=True)
             for mes in meses_custos_m:
                 df_m_mes = df_m[df_m["Mes_Ano"] == mes]
-                total_mes_merc = df_m_mes["total_item_calc"].sum()
-                
-                # MELHORIA SOLICITADA: Accordion por mês mostrando custo total fechado e transações ao expandir
-                with st.expander(f"📅 Mês: {mes.replace('-', '/')} — Custo Total: R$ {total_mes_merc:,.2f}", expanded=False):
-                    agrup_data = df_m_mes.groupby("Data").agg({
-                        "qtd_num": "sum",
-                        "total_item_calc": "sum"
-                    }).reset_index().rename(columns={"Data": "Data da Aquisição", "qtd_num": "Quantidade Comprada"})
+                st.markdown(f"#### 📅 Mês: {mes}")
 
-                    agrup_data["Custo Total"] = agrup_data["total_item_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
-                    st.dataframe(agrup_data[["Data da Aquisição", "Quantidade Comprada", "Custo Total"]], use_container_width=True, hide_index=True)
+                agrup_data = df_m_mes.groupby("Data").agg({
+                    "qtd_num": "sum",
+                    "total_item_calc": "sum"
+                }).reset_index().rename(columns={"Data": "Data da Aquisição", "qtd_num": "Quantidade Comprada"})
 
-                    with st.expander("🔍 Visualizar Registros Individuais de Compras", expanded=False):
-                        df_m_mes["Custo Base"] = df_m_mes["preco_num"].apply(lambda v: f"R$ {float(v):,.2f}")
-                        df_m_mes["Estampa Extra"] = df_m_mes["estampa_extra_num"].apply(lambda v: f"R$ {float(v):,.2f}")
-                        df_m_mes["Matriz Bordado"] = df_m_mes["matriz_num"].apply(lambda v: f"R$ {float(v):,.2f}")
-                        df_m_mes["Custo Unit. Total"] = df_m_mes["total_item_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
-                        df_m_mes["Custo Total"] = df_m_mes["total_item_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
-                        
-                        cols_ind = ["Código", "Produto", "Custo Base", "Estampa Extra", "Matriz Bordado", "Custo Unit. Total", "Custo Total", "Data"]
-                        st.dataframe(df_m_mes[cols_ind], use_container_width=True, hide_index=True)
+                agrup_data["Custo Total"] = agrup_data["total_item_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
+                st.dataframe(agrup_data[["Data da Aquisição", "Quantidade Comprada", "Custo Total"]], use_container_width=True, hide_index=True)
+
+                with st.expander("🔍 Visualizar Registros Individuais de Compras", expanded=False):
+                    df_m_mes["Custo Base"] = df_m_mes["preco_num"].apply(lambda v: f"R$ {float(v):,.2f}")
+                    df_m_mes["Estampa Extra"] = df_m_mes["estampa_extra_num"].apply(lambda v: f"R$ {float(v):,.2f}")
+                    df_m_mes["Matriz Bordado"] = df_m_mes["matriz_num"].apply(lambda v: f"R$ {float(v):,.2f}")
+                    df_m_mes["Custo Unit. Total"] = df_m_mes["total_item_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
+                    df_m_mes["Custo Total"] = df_m_mes["total_item_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
+                    
+                    cols_ind = ["Código", "Produto", "Custo Base", "Estampa Extra", "Matriz Bordado", "Custo Unit. Total", "Custo Total", "Data"]
+                    st.dataframe(df_m_mes[cols_ind], use_container_width=True, hide_index=True)
         else:
             st.info("Nenhuma aquisição de mercadoria registrada no momento.")
 
@@ -2515,37 +2271,35 @@ elif "Custos" in menu:
                 
                 for mes in meses_cv:
                     df_cv_mes = df_cv_exib[df_cv_exib["Mes_Ano"] == mes]
-                    total_mes_cv = df_cv_mes["valor"].apply(parse_money).sum()
+                    st.markdown(f"#### 📅 Mês: {mes}")
                     
-                    # MELHORIA SOLICITADA: Accordion por mês com custo total fechado
-                    with st.expander(f"📅 Mês: {mes.replace('-', '/')} — Custo Total: R$ {total_mes_cv:,.2f}", expanded=False):
-                        for idx, row in df_cv_mes.iterrows():
-                            c_id = row.get("id")
-                            c_dt = format_data_br(row.get("data"))
-                            c_tp = row.get("tipo", "")
-                            c_desc = row.get("desc") or row.get("descricao") or ""
-                            c_vl = float(pd.to_numeric(row.get("valor", 0), errors="coerce") or 0.0)
+                    for idx, row in df_cv_mes.iterrows():
+                        c_id = row.get("id")
+                        c_dt = format_data_br(row.get("data"))
+                        c_tp = row.get("tipo", "")
+                        c_desc = row.get("desc") or row.get("descricao") or ""
+                        c_vl = float(pd.to_numeric(row.get("valor", 0), errors="coerce") or 0.0)
 
-                            col1, col2, col3, col4, col5 = st.columns([2, 2, 3, 2, 1])
-                            with col1:
-                                st.write(f"**Data:** {c_dt}")
-                            with col2:
-                                st.write(f"**Tipo:** {c_tp}")
-                            with col3:
-                                st.write(f"**Descrição:** {c_desc}")
-                            with col4:
-                                st.write(f"**Valor:** R$ {c_vl:,.2f}")
-                            with col5:
-                                if st.button("🗑 Excluir", key=f"del_cv_{c_id}_{mes}", use_container_width=True):
-                                    sqlite_delete_record("custos_avulsos", c_id)
-                                    if supabase:
-                                        try:
-                                            supabase.table("custos_avulsos").delete().eq("id", c_id).execute()
-                                        except Exception:
-                                            pass
-                                    st.session_state["flash_success"] = "Custo / Despesa excluído!"
-                                    st.rerun()
-                            st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
+                        col1, col2, col3, col4, col5 = st.columns([2, 2, 3, 2, 1])
+                        with col1:
+                            st.write(f"**Data:** {c_dt}")
+                        with col2:
+                            st.write(f"**Tipo:** {c_tp}")
+                        with col3:
+                            st.write(f"**Descrição:** {c_desc}")
+                        with col4:
+                            st.write(f"**Valor:** R$ {c_vl:,.2f}")
+                        with col5:
+                            if st.button("🗑 Excluir", key=f"del_cv_{c_id}_{mes}", use_container_width=True):
+                                sqlite_delete_record("custos_avulsos", c_id)
+                                if supabase:
+                                    try:
+                                        supabase.table("custos_avulsos").delete().eq("id", c_id).execute()
+                                    except Exception:
+                                        pass
+                                st.session_state["flash_success"] = "Custo / Despesa excluído!"
+                                st.rerun()
+                        st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
             else:
                 st.info("Nenhum custo ou despesa registrado até o momento.")
         else:
@@ -2600,37 +2354,35 @@ elif "Custos" in menu:
                 
                 for mes in meses_cf:
                     df_cf_mes = df_cf_exib[df_cf_exib["Mes_Ano"] == mes]
-                    total_mes_cf = df_cf_mes["valor"].apply(parse_money).sum()
+                    st.markdown(f"#### 📅 Mês: {mes}")
                     
-                    # MELHORIA SOLICITADA: Accordion por mês com custo total fechado
-                    with st.expander(f"📅 Mês: {mes.replace('-', '/')} — Custo Total: R$ {total_mes_cf:,.2f}", expanded=False):
-                        for idx, row in df_cf_mes.iterrows():
-                            f_id = row.get("id")
-                            f_dt = format_data_br(row.get("data"))
-                            f_tp = row.get("tipo", "")
-                            f_desc = row.get("desc") or row.get("descricao") or ""
-                            f_vl = float(pd.to_numeric(row.get("valor", 0), errors="coerce") or 0.0)
+                    for idx, row in df_cf_mes.iterrows():
+                        f_id = row.get("id")
+                        f_dt = format_data_br(row.get("data"))
+                        f_tp = row.get("tipo", "")
+                        f_desc = row.get("desc") or row.get("descricao") or ""
+                        f_vl = float(pd.to_numeric(row.get("valor", 0), errors="coerce") or 0.0)
 
-                            col1, col2, col3, col4, col5 = st.columns([2, 2, 3, 2, 1])
-                            with col1:
-                                st.write(f"**Data:** {f_dt}")
-                            with col2:
-                                st.write(f"**Tipo:** {f_tp}")
-                            with col3:
-                                st.write(f"**Descrição:** {f_desc}")
-                            with col4:
-                                st.write(f"**Valor:** R$ {f_vl:,.2f}")
-                            with col5:
-                                if st.button("🗑 Excluir", key=f"del_cf_{f_id}_{mes}", use_container_width=True):
-                                    sqlite_delete_record("custos_avulsos", f_id)
-                                    if supabase:
-                                        try:
-                                            supabase.table("custos_avulsos").delete().eq("id", f_id).execute()
-                                        except Exception:
-                                            pass
-                                    st.session_state["flash_success"] = "Custo de feira excluído!"
-                                    st.rerun()
-                            st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
+                        col1, col2, col3, col4, col5 = st.columns([2, 2, 3, 2, 1])
+                        with col1:
+                            st.write(f"**Data:** {f_dt}")
+                        with col2:
+                            st.write(f"**Tipo:** {f_tp}")
+                        with col3:
+                            st.write(f"**Descrição:** {f_desc}")
+                        with col4:
+                            st.write(f"**Valor:** R$ {f_vl:,.2f}")
+                        with col5:
+                            if st.button("🗑 Excluir", key=f"del_cf_{f_id}_{mes}", use_container_width=True):
+                                sqlite_delete_record("custos_avulsos", f_id)
+                                if supabase:
+                                    try:
+                                        supabase.table("custos_avulsos").delete().eq("id", f_id).execute()
+                                    except Exception:
+                                        pass
+                                st.session_state["flash_success"] = "Custo de feira excluído!"
+                                st.rerun()
+                        st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
             else:
                 st.info("Nenhum custo de feira registrado até o momento.")
         else:
@@ -2638,7 +2390,7 @@ elif "Custos" in menu:
 
 elif "Caixa" in menu or "Fluxo" in menu:
     st.subheader("💰 Extrato Consolidado de Fluxo de Caixa")
-    st.markdown("As entradas de vendas aparecem exclusivamente após a confirmação do recebimento no módulo **Contas a Receber**. Cada mês é exibido em um componente expansivo (accordion/collapse).")
+    st.markdown("As entradas de vendas aparecem exclusivamente após a confirmação do recebimento no módulo **Contas a Receber**.")
     
     lista_movimentos = []
 
@@ -2762,61 +2514,52 @@ elif "Caixa" in menu or "Fluxo" in menu:
 
         for mes in meses_caixa:
             df_cx_mes = df_extrato[df_extrato["Mes_Ano"] == mes].copy()
+            st.markdown(f"#### 📅 Mês: {mes.replace('-', '/')}")
             
-            running_mes_calc = saldo_acumulado_anterior
-            for _, r_m in df_cx_mes.iterrows():
-                running_mes_calc += r_m["Valor_Num"]
-            saldo_final_mes_val = running_mes_calc
-
-            titulo_accordion = f"📅 Mês: {mes.replace('-', '/')} — Saldo Final: R$ {saldo_final_mes_val:,.2f}"
-            
-            with st.expander(titulo_accordion, expanded=False):
-                linhas_mes_exib = []
-                if saldo_acumulado_anterior != 0.0:
-                    linhas_mes_exib.append({
-                        "Data": f"{mes}/01",
-                        "Origem": "🟢 SALDO INICIAL",
-                        "Descrição": f"Saldo transportado do mês anterior",
-                        "Tipo": "Saldo 💵",
-                        "Valor (R$)": f"R$ {saldo_acumulado_anterior:,.2f}",
-                        "Saldo Acumulado (R$)": f"R$ {saldo_acumulado_anterior:,.2f}"
-                    })
-                
-                running_mes = saldo_acumulado_anterior
-                for _, r_m in df_cx_mes.iterrows():
-                    running_mes += r_m["Valor_Num"]
-                    linhas_mes_exib.append({
-                        "Data": r_m["Data"],
-                        "Origem": r_m["Origem"],
-                        "Descrição": r_m["Descrição"],
-                        "Tipo": r_m["Tipo"],
-                        "Valor (R$)": f"R$ {r_m['Valor_Num']:,.2f}",
-                        "Saldo Acumulado (R$)": f"R$ {running_mes:,.2f}"
-                    })
-                
-                saldo_final_mes = running_mes
-                saldo_acumulado_anterior = saldo_final_mes
-                
-                try:
-                    ano_m, mes_m = map(int, mes.split("-"))
-                    ultimo_dia_num = calendar.monthrange(ano_m, mes_m)[1]
-                    data_ultimo_dia_mes = f"{mes}/{ultimo_dia_num:02d}"
-                except Exception:
-                    data_ultimo_dia_mes = f"{mes}/30"
-
+            linhas_mes_exib = []
+            if saldo_acumulado_anterior != 0.0:
                 linhas_mes_exib.append({
-                    "Data": data_ultimo_dia_mes,
-                    "Origem": "🏁 SALDO FINAL",
-                    "Descrição": f"Saldo Acumulado Final do Período ({mes})",
+                    "Data": f"{mes}/01",
+                    "Origem": "🟢 SALDO INICIAL",
+                    "Descrição": f"Saldo transportado do mês anterior",
                     "Tipo": "Saldo 💵",
-                    "Valor (R$)": f"R$ {saldo_final_mes:,.2f}",
-                    "Saldo Acumulado (R$)": f"R$ {saldo_final_mes:,.2f}"
+                    "Valor (R$)": f"R$ {saldo_acumulado_anterior:,.2f}",
+                    "Saldo Acumulado (R$)": f"R$ {saldo_acumulado_anterior:,.2f}"
                 })
-                
-                df_cx_mes_exib = pd.DataFrame(linhas_mes_exib)
-                st.dataframe(df_cx_mes_exib, use_container_width=True, hide_index=True)
-        
-            saldo_acumulado_anterior = saldo_final_mes_val
+            
+            running_mes = saldo_acumulado_anterior
+            for _, r_m in df_cx_mes.iterrows():
+                running_mes += r_m["Valor_Num"]
+                linhas_mes_exib.append({
+                    "Data": r_m["Data"],
+                    "Origem": r_m["Origem"],
+                    "Descrição": r_m["Descrição"],
+                    "Tipo": r_m["Tipo"],
+                    "Valor (R$)": f"R$ {r_m['Valor_Num']:,.2f}",
+                    "Saldo Acumulado (R$)": f"R$ {running_mes:,.2f}"
+                })
+            
+            saldo_final_mes = running_mes
+            saldo_acumulado_anterior = saldo_final_mes
+            
+            try:
+                ano_m, mes_m = map(int, mes.split("-"))
+                ultimo_dia_num = calendar.monthrange(ano_m, mes_m)[1]
+                data_ultimo_dia_mes = f"{mes}/{ultimo_dia_num:02d}"
+            except Exception:
+                data_ultimo_dia_mes = f"{mes}/30"
+
+            linhas_mes_exib.append({
+                "Data": data_ultimo_dia_mes,
+                "Origem": "🏁 SALDO FINAL",
+                "Descrição": f"Saldo Acumulado Final do Período ({mes})",
+                "Tipo": "Saldo 💵",
+                "Valor (R$)": f"R$ {saldo_final_mes:,.2f}",
+                "Saldo Acumulado (R$)": f"R$ {saldo_final_mes:,.2f}"
+            })
+            
+            df_cx_mes_exib = pd.DataFrame(linhas_mes_exib)
+            st.dataframe(df_cx_mes_exib, use_container_width=True, hide_index=True)
     else:
         st.info("Nenhuma movimentação registrada no fluxo de caixa.")
 
@@ -2932,89 +2675,82 @@ elif "Aportes" in menu:
             
             meses_aportes = sorted(df_aportes["Mes_Ano"].unique(), reverse=True)
             for mes in meses_aportes:
-                df_ap_mes = df_aportes[df_aportes["Mes_Ano"] == mes].copy()
-                
-                # Calcular total aportado e devolvido no mês para exibir a diferença no título do accordion
-                df_ap_mes["val_num"] = get_numeric_series(df_ap_mes, "valor")
-                aporte_mes_total = df_ap_mes[df_ap_mes["val_num"] > 0]["val_num"].sum()
-                devolucao_mes_total = abs(df_ap_mes[df_ap_mes["val_num"] < 0]["val_num"].sum())
-                dif_mes = aporte_mes_total - devolucao_mes_total
-                
-                # MELHORIA SOLICITADA: Accordion por mês mostrando a diferença entre aporte e devolução na visualização fechada
-                with st.expander(f"📅 Mês: {mes.replace('-', '/')} — Diferença Líquida (Aportes - Devoluções): R$ {dif_mes:,.2f}", expanded=False):
-                    for idx, row in df_ap_mes.iterrows():
-                        ap_id = row.get("id")
-                        ap_dt = format_data_br(row.get(col_dt_ap))
-                        ap_socio = row.get("socio", "")
-                        
-                        ap_val = float(pd.to_numeric(row.get("valor", 0), errors="coerce") or 0.0)
-                        
-                        tipo_raw = str(row.get("tipo", ""))
-                        if "devoluc" in tipo_raw.lower() or ap_val < 0:
-                            ap_tipo_exib = "Devolução"
-                        else:
-                            ap_tipo_exib = "Aporte"
+                df_ap_mes = df_aportes[df_aportes["Mes_Ano"] == mes]
+                st.markdown(f"#### 📅 Mês: {mes}")
 
-                        c1, c2, c3, c4, c5, c6 = st.columns([2, 2, 2, 2, 1, 1])
-                        with c1:
-                            st.write(f"**Data:** {ap_dt}")
-                        with c2:
-                            st.write(f"**Sócio:** {ap_socio}")
-                        with c3:
-                            st.write(f"**Operação:** {ap_tipo_exib}")
-                        with c4:
-                            st.write(f"**Valor:** R$ {abs(ap_val):,.2f}")
-                        with c5:
-                            if st.button("✏️", key=f"edit_ap_{ap_id}_{mes}", use_container_width=True):
-                                st.session_state["editing_aporte_id"] = ap_id
-                                st.rerun()
-                        with c6:
-                            if st.button("🗑", key=f"del_ap_{ap_id}_{mes}", use_container_width=True):
-                                sqlite_delete_record("aportes", ap_id)
-                                if supabase:
-                                    try:
-                                        supabase.table("aportes").delete().eq("id", ap_id).execute()
-                                    except Exception:
-                                        pass
-                                st.session_state["flash_success"] = f"Registro ID #{ap_id} excluído com sucesso!"
-                                st.rerun()
+                for idx, row in df_ap_mes.iterrows():
+                    ap_id = row.get("id")
+                    ap_dt = format_data_br(row.get(col_dt_ap))
+                    ap_socio = row.get("socio", "")
+                    
+                    ap_val = float(pd.to_numeric(row.get("valor", 0), errors="coerce") or 0.0)
+                    
+                    tipo_raw = str(row.get("tipo", ""))
+                    if "devoluc" in tipo_raw.lower() or ap_val < 0:
+                        ap_tipo_exib = "Devolução"
+                    else:
+                        ap_tipo_exib = "Aporte"
 
-                        if st.session_state.get("editing_aporte_id") == ap_id:
-                            with st.form(key=f"form_edit_ap_{ap_id}_{mes}"):
-                                st.markdown(f"##### ✏ Editar Registro ID #{ap_id}")
-                                e_col1, e_col2, e_col3 = st.columns(3)
-                                with e_col1:
-                                    idx_s = 0 if ap_socio == "Renan" else 1
-                                    novo_socio = st.selectbox("Sócio", ["Renan", "Ronald"], index=idx_s)
-                                with e_col2:
-                                    idx_t = 0 if ap_tipo_exib == "Aporte" else 1
-                                    novo_tipo = st.selectbox("Tipo", ["Aporte", "Devolução"], index=idx_t)
-                                with e_col3:
-                                    novo_val = st.number_input("Valor (R$)", min_value=1.0, value=abs(ap_val), format="%.2f")
+                    c1, c2, c3, c4, c5, c6 = st.columns([2, 2, 2, 2, 1, 1])
+                    with c1:
+                        st.write(f"**Data:** {ap_dt}")
+                    with c2:
+                        st.write(f"**Sócio:** {ap_socio}")
+                    with c3:
+                        st.write(f"**Operação:** {ap_tipo_exib}")
+                    with c4:
+                        st.write(f"**Valor:** R$ {abs(ap_val):,.2f}")
+                    with c5:
+                        if st.button("✏️", key=f"edit_ap_{ap_id}_{mes}", use_container_width=True):
+                            st.session_state["editing_aporte_id"] = ap_id
+                            st.rerun()
+                    with c6:
+                        if st.button("🗑", key=f"del_ap_{ap_id}_{mes}", use_container_width=True):
+                            sqlite_delete_record("aportes", ap_id)
+                            if supabase:
+                                try:
+                                    supabase.table("aportes").delete().eq("id", ap_id).execute()
+                                except Exception:
+                                    pass
+                            st.session_state["flash_success"] = f"Registro ID #{ap_id} excluído com sucesso!"
+                            st.rerun()
 
-                                btn_s_ap, btn_c_ap = st.columns(2)
-                                with btn_s_ap:
-                                    if st.form_submit_button("💾 Salvar Alterações", use_container_width=True, type="primary"):
-                                        val_final = float(novo_val) if novo_tipo == "Aporte" else -float(novo_val)
-                                        payload_upd_ap = {
-                                            "socio": novo_socio,
-                                            "tipo": novo_tipo,
-                                            "valor": val_final
-                                        }
-                                        sqlite_update_record("aportes", ap_id, payload_upd_ap)
-                                        if supabase:
-                                            try:
-                                                supabase.table("aportes").update(payload_upd_ap).eq("id", ap_id).execute()
-                                            except Exception:
-                                                pass
-                                        st.session_state["editing_aporte_id"] = None
-                                        st.session_state["flash_success"] = "Registro atualizado com sucesso!"
-                                        st.rerun()
-                                with btn_c_ap:
-                                    if st.form_submit_button("❌ Cancelar", use_container_width=True):
-                                        st.session_state["editing_aporte_id"] = None
-                                        st.rerun()
-                        st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
+                    if st.session_state.get("editing_aporte_id") == ap_id:
+                        with st.form(key=f"form_edit_ap_{ap_id}_{mes}"):
+                            st.markdown(f"##### ✏ Editar Registro ID #{ap_id}")
+                            e_col1, e_col2, e_col3 = st.columns(3)
+                            with e_col1:
+                                idx_s = 0 if ap_socio == "Renan" else 1
+                                novo_socio = st.selectbox("Sócio", ["Renan", "Ronald"], index=idx_s)
+                            with e_col2:
+                                idx_t = 0 if ap_tipo_exib == "Aporte" else 1
+                                novo_tipo = st.selectbox("Tipo", ["Aporte", "Devolução"], index=idx_t)
+                            with e_col3:
+                                novo_val = st.number_input("Valor (R$)", min_value=1.0, value=abs(ap_val), format="%.2f")
+
+                            btn_s_ap, btn_c_ap = st.columns(2)
+                            with btn_s_ap:
+                                if st.form_submit_button("💾 Salvar Alterações", use_container_width=True, type="primary"):
+                                    val_final = float(novo_val) if novo_tipo == "Aporte" else -float(novo_val)
+                                    payload_upd_ap = {
+                                        "socio": novo_socio,
+                                        "tipo": novo_tipo,
+                                        "valor": val_final
+                                    }
+                                    sqlite_update_record("aportes", ap_id, payload_upd_ap)
+                                    if supabase:
+                                        try:
+                                            supabase.table("aportes").update(payload_upd_ap).eq("id", ap_id).execute()
+                                        except Exception:
+                                            pass
+                                    st.session_state["editing_aporte_id"] = None
+                                    st.session_state["flash_success"] = "Registro atualizado com sucesso!"
+                                    st.rerun()
+                            with btn_c_ap:
+                                if st.form_submit_button("❌ Cancelar", use_container_width=True):
+                                    st.session_state["editing_aporte_id"] = None
+                                    st.rerun()
+                    st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
         else:
             st.info("Nenhum aporte registrado com data válida até o momento.")
     else:
