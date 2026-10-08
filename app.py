@@ -264,6 +264,32 @@ def init_db():
             motivo TEXT
         )
     ''')
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS produtos (
+            codigo TEXT PRIMARY KEY,
+            cor TEXT,
+            frase TEXT,
+            cor_estampa TEXT,
+            categoria TEXT,
+            custo REAL,
+            estampa_extra REAL DEFAULT 0.0,
+            matriz_bordado REAL DEFAULT 0.0,
+            qtd_estoque INTEGER DEFAULT 1,
+            qtd_comprada INTEGER DEFAULT 1,
+            data_aquisicao TEXT
+        )
+    ''')
+    c.execute("PRAGMA table_info(produtos)")
+    colunas_prod = [column[1] for column in c.fetchall()]
+    if "estampa_extra" not in colunas_prod:
+        c.execute("ALTER TABLE produtos ADD COLUMN estampa_extra REAL DEFAULT 0.0")
+    if "matriz_bordado" not in colunas_prod:
+        c.execute("ALTER TABLE produtos ADD COLUMN matriz_bordado REAL DEFAULT 0.0")
+    if "qtd_comprada" not in colunas_prod:
+        c.execute("ALTER TABLE produtos ADD COLUMN qtd_comprada INTEGER DEFAULT 1")
+    if "data_aquisicao" not in colunas_prod:
+        c.execute("ALTER TABLE produtos ADD COLUMN data_aquisicao TEXT")
     
     conn.commit()
     conn.close()
@@ -570,7 +596,7 @@ def safe_upsert_produto(payload: dict):
 
     payload_db = payload.copy()
     
-    # Gravação segura localmente com colunas completas
+    # Gravação segura localmente com gerenciamento robusto de conexão
     conn = None
     try:
         conn = sqlite3.connect(DB_NAME, timeout=30.0)
