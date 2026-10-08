@@ -300,6 +300,22 @@ def init_db():
             motivo TEXT
         )
     ''')
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS produtos (
+            codigo TEXT PRIMARY KEY,
+            cor TEXT,
+            frase TEXT,
+            cor_estampa TEXT,
+            categoria TEXT,
+            custo REAL,
+            estampa_extra REAL DEFAULT 0.0,
+            matriz_bordado REAL DEFAULT 0.0,
+            qtd_estoque INTEGER DEFAULT 1,
+            qtd_comprada INTEGER DEFAULT 1,
+            data_aquisicao TEXT
+        )
+    ''')
     
     conn.commit()
     conn.close()
@@ -443,10 +459,18 @@ def sqlite_insert_record(table_name: str, payload: dict):
             return False
         colunas = list(dados.keys())
         placeholders = ", ".join(["?"] * len(colunas))
-        cur.execute(
-            f"INSERT INTO {table_name} ({', '.join(colunas)}) VALUES ({placeholders})",
-            [dados[c] for c in colunas]
-        )
+        
+        # Tratamento especial para produtos com chave primária duplicada (Evita UNIQUE constraint failed)
+        if table_name == "produtos" and "codigo" in dados:
+            cur.execute(
+                f"INSERT OR REPLACE INTO {table_name} ({', '.join(colunas)}) VALUES ({placeholders})",
+                [dados[c] for c in colunas]
+            )
+        else:
+            cur.execute(
+                f"INSERT INTO {table_name} ({', '.join(colunas)}) VALUES ({placeholders})",
+                [dados[c] for c in colunas]
+            )
         conn.commit()
         return True
     except Exception as exc:
@@ -972,7 +996,6 @@ if "Dashboard" in menu:
         "Feiras & Eventos"
     ])
     
-    # Preparação de dados gerais para o dashboard
     col_v_val = "valor_venda" if "valor_venda" in df_vendas.columns else ("valor" if "valor" in df_vendas.columns else ("valor_total" if "valor_total" in df_vendas.columns else None))
     total_faturado = float(df_vendas[col_v_val].sum()) if not df_vendas.empty and col_v_val else 0.0
     
@@ -1074,7 +1097,6 @@ if "Dashboard" in menu:
                 df_l_cruzado["qtd_num"] = get_numeric_series(df_l_cruzado, qtd_col_l, 1.0)
                 df_l_cruzado["cmv_total"] = df_l_cruzado["cmv_unitario"] * df_l_cruzado["qtd_num"]
                 
-                # Valor Líquido Recebido já desconta as taxas/tarifas
                 df_l_cruzado["lucro_liquido_total"] = df_l_cruzado["liquido_recebido_calc"] - df_l_cruzado["cmv_total"]
                 df_l_cruzado["lucro_unitario"] = df_l_cruzado["lucro_liquido_total"] / df_l_cruzado["qtd_num"].replace(0, 1)
                 
@@ -1187,7 +1209,6 @@ if "Dashboard" in menu:
             subcat_c = df_custos_ev.get("subcategoria", pd.Series([""] * len(df_custos_ev))).fillna("").astype(str)
             df_feiras_raw = df_custos_ev[subcat_c.str.contains("feira", case=False, na=False)]
             if not df_feiras_raw.empty and "desc" in df_feiras_raw.columns:
-                # Extrair nome da feira da descrição formatada "Feira: [Nome] - [Desc]"
                 nomes_f = df_feiras_raw["desc"].astype(str).apply(lambda x: x.split(" - ")[0].replace("Feira: ", "").strip() if "Feira: " in x else "Geral")
                 feiras_disponiveis.extend(sorted(nomes_f.unique().tolist()))
 
@@ -1205,7 +1226,6 @@ if "Dashboard" in menu:
             total_despesas_feira = float(df_f_filtro["valor"].apply(parse_money).sum())
             df_despesas_feira_filtrada = df_f_filtro
 
-        # Faturamento estimado ou associado (caso queira cruzar com vendas no período)
         total_faturado_feira = float(df_vendas["valor_venda"].sum()) if not df_vendas.empty and "valor_venda" in df_vendas.columns else 0.0
         roi_feira = total_faturado_feira - total_despesas_feira
 
@@ -2019,7 +2039,6 @@ elif "Vendas" in menu:
             df_historico_vendas["_data_hist"] = datetime.date.today().strftime("%Y/%m/%d")
             df_historico_vendas["_mes_hist"] = datetime.date.today().strftime("%Y-%m")
 
-        # --- ROTINA DE SELEÇÃO EM LOTE PARA EXCLUSÃO (MELHORIA SOLICITADA) ---
         with st.expander("🛠 Seleção e Exclusão em Lote de Vendas", expanded=False):
             ids_vendas_disp = df_historico_vendas["id"].tolist()
             vendas_selecionadas_lote = st.multiselect(
@@ -2735,13 +2754,11 @@ elif "Caixa" in menu or "Fluxo" in menu:
         for mes in meses_caixa:
             df_cx_mes = df_extrato[df_extrato["Mes_Ano"] == mes].copy()
             
-            # Pré-cálculo do saldo final do mês para exibição no resumo fechado do accordion
             running_mes_calc = saldo_acumulado_anterior
             for _, r_m in df_cx_mes.iterrows():
                 running_mes_calc += r_m["Valor_Num"]
             saldo_final_mes_val = running_mes_calc
 
-            # --- MELHORIA SOLICITADA: Componente expansivo (accordion/collapse) por mês ---
             titulo_accordion = f"📅 Mês: {mes.replace('-', '/')} — Saldo Final: R$ {saldo_final_mes_val:,.2f}"
             
             with st.expander(titulo_accordion, expanded=False):
@@ -2790,7 +2807,6 @@ elif "Caixa" in menu or "Fluxo" in menu:
                 df_cx_mes_exib = pd.DataFrame(linhas_mes_exib)
                 st.dataframe(df_cx_mes_exib, use_container_width=True, hide_index=True)
         
-            # Atualiza o acumulado mesmo se o expander estiver fechado
             saldo_acumulado_anterior = saldo_final_mes_val
     else:
         st.info("Nenhuma movimentação registrada no fluxo de caixa.")
