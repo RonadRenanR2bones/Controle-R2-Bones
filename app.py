@@ -281,7 +281,6 @@ init_db()
 # FUNÇÕES ROBUSTAS DE TRATAMENTO E FORMATO DE DATAS (YYYY/MM/DD)
 # ----------------------------------------------------
 def parse_date_str(val):
-    """Normaliza datas de entrada para o formato estrito YYYY/MM/DD[cite: 1]."""
     hoje = datetime.date.today().strftime("%Y/%m/%d")
     if val is None:
         return hoje
@@ -312,7 +311,6 @@ def parse_date_str(val):
         return hoje
 
 def format_data_br(val):
-    """Exibição rigorosa em YYYY/MM/DD[cite: 1]."""
     if val is None:
         return ""
     try:
@@ -796,7 +794,7 @@ def gerar_proximo_codigo(codigo_atual):
 
 def get_df_compra_mercadorias():
     df_ped_ent = carregar_dataframe(
-        "SELECT * FROM pedidos WHERE status LIKE '%Entregue%' ORDER BY id DESC"
+        "SELECT * FROM pedidos WHERE status LIKE '%Entregue%' ORDER BY id ASC"
     )
     if df_ped_ent.empty:
         return pd.DataFrame()
@@ -1051,7 +1049,7 @@ if "Dashboard" in menu:
 
     with g2:
         st.markdown("#### 🎨 Cores Mais Vendidas")
-        c_v_col = "codigo_bone" if "codigo_bone" in df_vendas_fil.columns else ("codigo" if "codigo" in df_vendas_fil.columns else "codigo_produto")
+        c_v_col = "codigo_bone" if "codigo_bone" in df_vendas_fil.columns else ("codigo" if "codigo_vendas" in df_vendas_fil.columns else "codigo_produto")
         if not df_vendas_fil.empty and c_v_col in df_vendas_fil.columns and not df_produtos.empty:
             df_m = df_vendas_fil.merge(df_produtos, left_on=c_v_col, right_on="codigo", how="left")
             cor_col = "cor" if "cor" in df_m.columns else "cor_x"
@@ -1098,7 +1096,7 @@ elif "Compra de Mercadorias" in menu:
 elif "Pedidos" in menu:
     st.subheader("📦 Gerenciamento de Pedidos e Encomendas")
 
-    df_todos_pedidos = carregar_dataframe("SELECT * FROM pedidos ORDER BY id DESC")
+    df_todos_pedidos = carregar_dataframe("SELECT * FROM pedidos ORDER BY id ASC")
 
     with st.expander("➕ Cadastrar Novo Item no Pedido (Manual)", expanded=False):
         opcoes_itens = ["➕ [NOVO] Cadastrar Novo Item"]
@@ -1434,7 +1432,7 @@ elif "Pedidos" in menu:
 
     st.markdown("---")
 
-    df_ped = carregar_dataframe("SELECT id, lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, total_item, status, observacoes, codigo_produto FROM pedidos ORDER BY id DESC")
+    df_ped = carregar_dataframe("SELECT id, lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, total_item, status, observacoes, codigo_produto FROM pedidos ORDER BY id ASC")
 
     if df_ped.empty:
         st.info("Nenhum pedido cadastrado no momento.")
@@ -2008,15 +2006,15 @@ elif "Vendas" in menu:
 
 elif "Contas a Receber" in menu:
     st.subheader("💰 Contas a Receber")
-    st.markdown("Gerencie as vendas realizadas que aguardam confirmação de recebimento[cite: 1]. Ao confirmar o recebimento, o valor líquido correspondente será lançado automaticamente no Fluxo de Caixa.")
+    st.markdown("Gerencie as vendas realizadas que aguardam confirmação de recebimento. Ao confirmar o recebimento, o valor líquido correspondente será lançado automaticamente no Fluxo de Caixa.")
 
     df_cr = fetch_data("vendas")
     if df_cr.empty:
         df_cr = carregar_vendas_local()
 
     with st.expander("📥 Importar Contas a Receber via Planilha (.xlsx / .csv)", expanded=False):
-        st.markdown("**Colunas reconhecidas:** `Código do Boné`, `Nome do Cliente`, `Quantidade`, `Valor Bruto`, `Tarifa`, `Data da Venda`, `Data de Vencimento`, `Forma de Pagto`[cite: 1].")
-        st.caption("Permite importar novas contas a receber em lote validando os campos e salvando automaticamente[cite: 1].")
+        st.markdown("**Colunas reconhecidas:** `Código do Boné`, `Nome do Cliente`, `Quantidade`, `Valor Bruto`, `Tarifa`, `Data da Venda`, `Data de Vencimento`, `Forma de Pagto`.")
+        st.caption("Permite importar novas contas a receber em lote validando os campos e salvando automaticamente.")
 
         modelo_cr = pd.DataFrame([{
             "Código do Boné": "BL-0001",
@@ -2145,7 +2143,7 @@ elif "Contas a Receber" in menu:
                             st.warning(f"{count_cr_imp} registro(s) importado(s). Algumas linhas apresentaram erros.")
                             st.dataframe(pd.DataFrame({"Erros": erros_cr_imp}), use_container_width=True, hide_index=True)
                         elif count_cr_imp:
-                            st.session_state["flash_success"] = f"🎉 {count_cr_imp} contas a receber importadas com sucesso[cite: 1]!"
+                            st.session_state["flash_success"] = f"🎉 {count_cr_imp} contas a receber importadas com sucesso!"
                             st.rerun()
                         else:
                             st.warning("Nenhum registro válido encontrado para importação.")
