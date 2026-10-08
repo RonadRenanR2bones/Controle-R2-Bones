@@ -570,7 +570,7 @@ def safe_upsert_produto(payload: dict):
 
     payload_db = payload.copy()
     
-    # Garantir gravação segura localmente primeiro
+    # Gravação segura localmente com colunas completas
     conn = None
     try:
         conn = sqlite3.connect(DB_NAME, timeout=30.0)
@@ -590,6 +590,17 @@ def safe_upsert_produto(payload: dict):
                 data_aquisicao TEXT
             )
         ''')
+        cur.execute("PRAGMA table_info(produtos)")
+        colunas_prod = [column[1] for column in cur.fetchall()]
+        if "estampa_extra" not in colunas_prod:
+            cur.execute("ALTER TABLE produtos ADD COLUMN estampa_extra REAL DEFAULT 0.0")
+        if "matriz_bordado" not in colunas_prod:
+            cur.execute("ALTER TABLE produtos ADD COLUMN matriz_bordado REAL DEFAULT 0.0")
+        if "qtd_comprada" not in colunas_prod:
+            cur.execute("ALTER TABLE produtos ADD COLUMN qtd_comprada INTEGER DEFAULT 1")
+        if "data_aquisicao" not in colunas_prod:
+            cur.execute("ALTER TABLE produtos ADD COLUMN data_aquisicao TEXT")
+
         cur.execute('''
             INSERT OR REPLACE INTO produtos (codigo, cor, frase, cor_estampa, categoria, custo, estampa_extra, matriz_bordado, qtd_estoque, qtd_comprada, data_aquisicao)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1132,7 +1143,7 @@ elif "Compra de Mercadorias" in menu:
 elif "Pedidos" in menu:
     st.subheader("📦 Gerenciamento de Pedidos e Encomendas")
 
-    # MANTIDO CONFORME SOLICITADO: Ordem crescente e cronológica (ORDER BY id ASC)
+    # Ordem crescente e cronológica (ORDER BY id ASC)
     df_todos_pedidos = carregar_dataframe("SELECT * FROM pedidos ORDER BY id ASC")
 
     with st.expander("➕ Cadastrar Novo Item no Pedido (Manual)", expanded=False):
@@ -1469,7 +1480,7 @@ elif "Pedidos" in menu:
 
     st.markdown("---")
 
-    # MANTIDO CONFORME SOLICITADO: Ordem crescente e cronológica (ORDER BY id ASC)
+    # Ordem crescente e cronológica (ORDER BY id ASC)
     df_ped = carregar_dataframe("SELECT id, lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, total_item, status, observacoes, codigo_produto FROM pedidos ORDER BY id ASC")
 
     if df_ped.empty:
