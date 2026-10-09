@@ -571,14 +571,22 @@ def safe_insert(table_name: str, payload: dict) -> bool:
 def safe_update_venda(venda_id, payload: dict) -> bool:
     if venda_id in (None, ""):
         return False
-    sqlite_update_record("vendas", venda_id, payload)
+    sucesso_local = sqlite_update_record("vendas", venda_id, payload)
     if not supabase:
-        return True
+        return sucesso_local
     try:
-        supabase.table("vendas").update(payload).eq("id", venda_id).execute()
+        res = supabase.table("vendas").update(payload).eq("id", venda_id).execute()
         return True
-    except Exception:
-        return True
+    except Exception as err:
+        err_str = str(err)
+        if "Could not find the '" in err_str and "' column" in err_str:
+            col_err = err_str.split("Could not find the '")[1].split("' column")[0]
+            if col_err in payload:
+                payload_retry = payload.copy()
+                del payload_retry[col_err]
+                return safe_update_venda(venda_id, payload_retry)
+        st.error(f"Erro ao atualizar venda no Supabase: {err}")
+        return sucesso_local
 
 def safe_delete_venda(venda_id) -> bool:
     if venda_id in (None, ""):
