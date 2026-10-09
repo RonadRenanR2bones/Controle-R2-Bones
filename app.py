@@ -123,7 +123,7 @@ if "baixas_estoque_local" not in st.session_state:
 if "devolucoes_venda_local" not in st.session_state:
     st.session_state["devolucoes_venda_local"] = []
 
-# Configurações do Banco de Dados SQLite / Supabase (com timeout estendido de 30s)
+# Configurações do Banco de Dados SQLite / Supabase
 DB_NAME = "ordens_producao.db"
 UPLOADS_DIR = "uploads"
 COMPROVANTES_DIR = "comprovantes"
@@ -302,7 +302,7 @@ def init_db():
                 ''')
                 
                 c.execute('''
-                    CREATE TABLE IF NOT EXISTS devedores (
+                    CREATE TABLE IF NOT EXISTS devolucoes_vendas (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         venda_id INTEGER,
                         codigo TEXT,
@@ -338,9 +338,6 @@ def init_db():
 
 init_db()
 
-# ----------------------------------------------------
-# ROTINA ROBUSTA E SEQUENCIAL PARA GRAVAÇÃO NO SQLITE (EVITA "DATABASE IS LOCKED")
-# ----------------------------------------------------
 def sqlite_insert_record(table_name: str, payload: dict) -> bool:
     for tentativa in range(5):
         try:
@@ -428,9 +425,6 @@ def sqlite_delete_record(table_name: str, record_id) -> bool:
             return False
     return False
 
-# ----------------------------------------------------
-# FUNÇÕES DE FORMATO E DATAS (YYYY/MM/DD)
-# ----------------------------------------------------
 def parse_date_str(val):
     hoje = datetime.date.today().strftime("%Y/%m/%d")
     if val is None:
@@ -513,6 +507,8 @@ def fetch_data(table_name: str) -> pd.DataFrame:
             local_df = carregar_dataframe("SELECT * FROM pedidos ORDER BY id ASC")
         elif table_name == "baixas_estoque":
             local_df = carregar_dataframe("SELECT * FROM baixas_estoque ORDER BY id DESC")
+        elif table_name == "devolucoes_vendas":
+            local_df = carregar_dataframe("SELECT * FROM devolucoes_vendas ORDER BY id DESC")
         else:
             local_df = carregar_dataframe(f"SELECT * FROM {table_name}")
     except Exception:
@@ -905,7 +901,7 @@ def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, 
                 if val_v_calc > 0:
                     lista_movimentos.append({"Data_Val": parse_date_str(dt_rec_val), "Valor_Num": val_v_calc})
 
-    # 3. Custos e Despesas (incluindo Tarifas)
+    # 3. Custos e Despesas
     if not df_custos_in.empty:
         for _, r in df_custos_in.iterrows():
             val_c = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
@@ -955,7 +951,7 @@ df_caixa = fetch_data("caixa")
 df_aportes = fetch_data("aportes")
 df_custos = fetch_data("custos_avulsos")
 df_baixas = fetch_data("baixas_estoque")
-df_devolucoes = fetch_data("devedores")
+df_devolucoes = fetch_data("devolucoes_vendas")
 
 if "flash_success" in st.session_state and st.session_state["flash_success"]:
     st.success(st.session_state["flash_success"])
@@ -1726,7 +1722,6 @@ elif "Pedidos" in menu:
                                 codigo_base_atual = get_ultimo_codigo_config()
                                 codigos_gerados = []
                                 
-                                # Processamento sequencial item a item com validação para evitar "database is locked"
                                 for item_id in ids_itens_acao:
                                     row_alvo = df_lote[df_lote["id"] == item_id].iloc[0]
                                     codigo_base_atual = gerar_proximo_codigo(codigo_base_atual)
@@ -1748,7 +1743,6 @@ elif "Pedidos" in menu:
                                         "data_aquisicao": dt_aquisicao_item
                                     }
 
-                                    # Validação de gravação sequencial item a item
                                     gravou_produto = safe_upsert_produto(novo_prod)
                                     if gravou_produto:
                                         sqlite_update_record("pedidos", item_id, {"status": "Entregue / Retirado", "codigo_produto": codigo_base_atual})
@@ -1757,7 +1751,7 @@ elif "Pedidos" in menu:
                                                 supabase.table("pedidos").update({"status": "Entregue / Retirado", "codigo_produto": codigo_base_atual}).eq("id", item_id).execute()
                                             except Exception:
                                                 pass
-                                    time.sleep(0.1)  # Intervalo de respiro entre operações de gravação
+                                    time.sleep(0.1)
 
                                 set_ultimo_codigo_config(codigo_base_atual)
 
@@ -2449,7 +2443,6 @@ elif "Contas a Receber" in menu:
 
 elif "Custos" in menu:
     st.subheader("💵 Gerenciamento de Custos e Despesas")
-    # SUB-ABAS SOLICITADAS: Mercadorias, Custos / Despesas, Feiras e Tarifas
     sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷 Custos / Despesas", "🎪 Feiras", "💳 Tarifas"], horizontal=True)
 
     if "Mercadorias" in sub_tab:
@@ -3055,7 +3048,6 @@ elif "Aportes" in menu:
             
             meses_aportes = sorted(df_aportes["Mes_Ano"].unique(), reverse=True)
             
-            # MELHORIA APLICADA: Componente expansivo por mês mostrando a diferença líquida entre o valor aportado e a devolução
             for mes in meses_aportes:
                 df_ap_mes = df_aportes[df_aportes["Mes_Ano"] == mes].copy()
                 df_ap_mes["val_num"] = get_numeric_series(df_ap_mes, "valor")
