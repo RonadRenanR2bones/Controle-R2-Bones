@@ -1068,7 +1068,7 @@ if "Dashboard" in menu:
                 if cor_col in df_m.columns:
                     qtd_col = "qtd_x" if "qtd_x" in df_m.columns else ("qtd" if "qtd" in df_m.columns else "qtd_y")
                     agrup_cor = df_m.groupby(cor_col)[qtd_col].sum().reset_index()
-                    # MELHORIA: Ordenação alfabética das cores
+                    # MELHORIA APLICADA: Ordenação alfabética rigorosa das cores
                     agrup_cor = agrup_cor.sort_values(by=cor_col, ascending=True)
                     fig2 = px.pie(agrup_cor, names=cor_col, values=qtd_col, hole=0.45, color_discrete_sequence=px.colors.qualitative.Pastel)
                     st.plotly_chart(fig2, use_container_width=True)
@@ -1227,7 +1227,7 @@ if "Dashboard" in menu:
             total_despesas_feira = float(df_f_filtro["valor"].apply(parse_money).sum())
             df_despesas_feira_filtrada = df_f_filtro
 
-        # MELHORIA: Buscar no menu Vendas o Nome do Cliente igual ao nome da feira
+        # MELHORIA APLICADA: Buscar no menu Vendas o Nome do Cliente idêntico ao nome da feira (apenas vendas cujo cliente seja igual à feira)
         total_faturado_feira = 0.0
         if not df_vendas.empty:
             df_v_norm_feira = normalizar_df_vendas(df_vendas)
@@ -1235,7 +1235,6 @@ if "Dashboard" in menu:
                 if feira_sel != "TODAS":
                     df_v_feira_match = df_v_norm_feira[df_v_norm_feira["cliente"].astype(str).str.strip().str.lower() == feira_sel.strip().lower()]
                 else:
-                    # Se 'TODAS', consideramos todas as vendas cujos clientes também constam como feiras cadastradas
                     nomes_feiras_cadastradas = [f.lower() for f in feiras_disponiveis if f != "TODAS"]
                     df_v_feira_match = df_v_norm_feira[df_v_norm_feira["cliente"].astype(str).str.strip().str.lower().isin(nomes_feiras_cadastradas)]
                 total_faturado_feira = float(df_v_feira_match["valor_bruto_calc"].sum())
@@ -2221,7 +2220,7 @@ elif "Contas a Receber" in menu:
 
     with st.expander("📥 Importar Contas a Receber via Planilha (.xlsx / .csv)", expanded=False):
         st.markdown("**Colunas reconhecidas:** `Código do Boné`, `Nome do Cliente`, `Quantidade`, `Valor Bruto`, `Tarifa`, `Data da Venda`, `Data de Vencimento`, `Forma de Pagto`.")
-        st.caption("Permite importar novas contas a receber en lote validando os campos e salvando automaticamente.")
+        st.caption("Permite importar novas contas a receber em lote validando os campos e salvando automaticamente.")
 
         modelo_cr = pd.DataFrame([{
             "Código do Boné": "BL-0001",
@@ -2453,17 +2452,21 @@ elif "Custos" in menu:
             meses_custos_m = sorted(df_m["Mes_Ano"].unique(), reverse=True)
             for mes in meses_custos_m:
                 df_m_mes = df_m[df_m["Mes_Ano"] == mes]
-                st.markdown(f"#### 📅 Mês: {mes}")
+                
+                # MELHORIA APLICADA: Botão ou componente expansivo (accordion/collapse) por mês mostrando apenas o custo total fechado e expandindo para mostrar transações
+                total_custo_m_mes = float(df_m_mes["total_item_calc"].sum())
+                titulo_exp_m = f"📅 Mês: {mes.replace('-', '/')} — Custo Total de Mercadorias: R$ {total_custo_m_mes:,.2f} ({len(df_m_mes)} itens)"
 
-                agrup_data = df_m_mes.groupby("Data").agg({
-                    "qtd_num": "sum",
-                    "total_item_calc": "sum"
-                }).reset_index().rename(columns={"Data": "Data da Aquisição", "qtd_num": "Quantidade Comprada"})
+                with st.expander(titulo_exp_m, expanded=False):
+                    agrup_data = df_m_mes.groupby("Data").agg({
+                        "qtd_num": "sum",
+                        "total_item_calc": "sum"
+                    }).reset_index().rename(columns={"Data": "Data da Aquisição", "qtd_num": "Quantidade Comprada"})
 
-                agrup_data["Custo Total"] = agrup_data["total_item_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
-                st.dataframe(agrup_data[["Data da Aquisição", "Quantidade Comprada", "Custo Total"]], use_container_width=True, hide_index=True)
+                    agrup_data["Custo Total"] = agrup_data["total_item_calc"].apply(lambda v: f"R$ {float(v):,.2f}")
+                    st.dataframe(agrup_data[["Data da Aquisição", "Quantidade Comprada", "Custo Total"]], use_container_width=True, hide_index=True)
 
-                with st.expander("🔍 Visualizar Registros Individuais de Compras", expanded=False):
+                    st.markdown("##### 🔍 Registros Individuais")
                     df_m_mes["Custo Base"] = df_m_mes["preco_num"].apply(lambda v: f"R$ {float(v):,.2f}")
                     df_m_mes["Estampa Extra"] = df_m_mes["estampa_extra_num"].apply(lambda v: f"R$ {float(v):,.2f}")
                     df_m_mes["Matriz Bordado"] = df_m_mes["matriz_num"].apply(lambda v: f"R$ {float(v):,.2f}")
@@ -2521,7 +2524,7 @@ elif "Custos" in menu:
                 df_cv_exib["Mes_Ano"] = pd.to_datetime(df_cv_exib["data"].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
                 meses_cv = sorted(df_cv_exib["Mes_Ano"].unique(), reverse=True)
                 
-                # MELHORIA: Accordion/collapse por mês mostrando apenas o custo total fechado
+                # MELHORIA APLICADA: Accordion/collapse por mês mostrando apenas o custo total fechado e expandindo para transações
                 for mes in meses_cv:
                     df_cv_mes = df_cv_exib[df_cv_exib["Mes_Ano"] == mes].copy()
                     total_custo_mes = float(df_cv_mes["valor"].apply(parse_money).sum())
@@ -2608,7 +2611,7 @@ elif "Custos" in menu:
                 df_cf_exib["Mes_Ano"] = pd.to_datetime(df_cf_exib["data"].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
                 meses_cf = sorted(df_cf_exib["Mes_Ano"].unique(), reverse=True)
                 
-                # MELHORIA: Accordion/collapse por mês para custos de feiras mostrando o total fechado
+                # MELHORIA APLICADA: Accordion/collapse por mês para custos de feiras mostrando o total fechado e expandindo para transações
                 for mes in meses_cf:
                     df_cf_mes = df_cf_exib[df_cf_exib["Mes_Ano"] == mes].copy()
                     total_feira_mes = float(df_cf_mes["valor"].apply(parse_money).sum())
@@ -2936,7 +2939,7 @@ elif "Aportes" in menu:
             
         st.dataframe(pd.DataFrame(resumo_socios), use_container_width=True, hide_index=True)
 
-        # MELHORIA: Resumo geral adicionado no menu de aportes
+        # MELHORIA APLICADA: Resumo geral estruturado no menu de aportes
         saldo_geral_aportes = tot_geral_aportado - tot_geral_devolvido
         st.markdown(f"📌 **Resumo Geral de Aportes:** Total Aportado: `R$ {tot_geral_aportado:,.2f}` | Total Devolvido: `R$ {tot_geral_devolvido:,.2f}` | **Saldo Líquido Geral:** `R$ {saldo_geral_aportes:,.2f}`")
 
@@ -2952,7 +2955,7 @@ elif "Aportes" in menu:
             
             meses_aportes = sorted(df_aportes["Mes_Ano"].unique(), reverse=True)
             
-            # MELHORIA: Botão ou componente expansivo (accordion/collapse) para cada mês mostrando a diferença entre aportes e devolução
+            # MELHORIA APLICADA: Botão ou componente expansivo (accordion/collapse) para cada mês mostrando a diferença entre o valor aportado e a devolução
             for mes in meses_aportes:
                 df_ap_mes = df_aportes[df_aportes["Mes_Ano"] == mes].copy()
                 df_ap_mes["val_num"] = get_numeric_series(df_ap_mes, "valor")
