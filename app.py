@@ -3,6 +3,7 @@ import calendar
 import base64
 import io
 import os
+import time
 import sqlite3
 import pandas as pd
 import plotly.express as px
@@ -122,7 +123,7 @@ if "baixas_estoque_local" not in st.session_state:
 if "devolucoes_venda_local" not in st.session_state:
     st.session_state["devolucoes_venda_local"] = []
 
-# Configurações do Banco de Dados SQLite / Supabase (com timeout de 10s para evitar "database is locked")
+# Configurações do Banco de Dados SQLite / Supabase (com timeout estendido de 30s)
 DB_NAME = "ordens_producao.db"
 UPLOADS_DIR = "uploads"
 COMPROVANTES_DIR = "comprovantes"
@@ -146,184 +147,289 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 def carregar_dataframe(query, params=None):
-    conn = sqlite3.connect(DB_NAME, timeout=10.0)
-    df = pd.read_sql_query(query, conn, params=params)
-    conn.close()
-    return df
+    for tentativa in range(3):
+        try:
+            with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
+                df = pd.read_sql_query(query, conn, params=params)
+                return df
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and tentativa < 2:
+                time.sleep(0.5 * (tentativa + 1))
+                continue
+            raise e
+        except Exception as ex:
+            raise ex
+    return pd.DataFrame()
 
 def init_db():
-    conn = sqlite3.connect(DB_NAME, timeout=10.0)
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS pedidos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            lote_id TEXT,
-            data_criacao TEXT,
-            cor_bone TEXT,
-            frase_arte TEXT,
-            cor_linha TEXT,
-            tipo TEXT,
-            preco REAL,
-            observacoes TEXT,
-            imagem_path TEXT,
-            status TEXT,
-            valor_estampa_extra REAL DEFAULT 0.0,
-            valor_matriz REAL DEFAULT 0.0,
-            codigo_produto TEXT,
-            total_item REAL
-        )
-    ''')
-    c.execute("PRAGMA table_info(pedidos)")
-    colunas_pedidos = [column[1] for column in c.fetchall()]
-    if "valor_estampa_extra" not in colunas_pedidos:
-        c.execute("ALTER TABLE pedidos ADD COLUMN valor_estampa_extra REAL DEFAULT 0.0")
-    if "valor_matriz" not in colunas_pedidos:
-        c.execute("ALTER TABLE pedidos ADD COLUMN valor_matriz REAL DEFAULT 0.0")
-    if "codigo_produto" not in colunas_pedidos:
-        c.execute("ALTER TABLE pedidos ADD COLUMN codigo_produto TEXT")
-    if "total_item" not in colunas_pedidos:
-        c.execute("ALTER TABLE pedidos ADD COLUMN total_item REAL")
+    for tentativa in range(3):
+        try:
+            with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
+                c = conn.cursor()
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS pedidos (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        lote_id TEXT,
+                        data_criacao TEXT,
+                        cor_bone TEXT,
+                        frase_arte TEXT,
+                        cor_linha TEXT,
+                        tipo TEXT,
+                        preco REAL,
+                        observacoes TEXT,
+                        imagem_path TEXT,
+                        status TEXT,
+                        valor_estampa_extra REAL DEFAULT 0.0,
+                        valor_matriz REAL DEFAULT 0.0,
+                        codigo_produto TEXT,
+                        total_item REAL
+                    )
+                ''')
+                c.execute("PRAGMA table_info(pedidos)")
+                colunas_pedidos = [column[1] for column in c.fetchall()]
+                if "valor_estampa_extra" not in colunas_pedidos:
+                    c.execute("ALTER TABLE pedidos ADD COLUMN valor_estampa_extra REAL DEFAULT 0.0")
+                if "valor_matriz" not in colunas_pedidos:
+                    c.execute("ALTER TABLE pedidos ADD COLUMN valor_matriz REAL DEFAULT 0.0")
+                if "codigo_produto" not in colunas_pedidos:
+                    c.execute("ALTER TABLE pedidos ADD COLUMN codigo_produto TEXT")
+                if "total_item" not in colunas_pedidos:
+                    c.execute("ALTER TABLE pedidos ADD COLUMN total_item REAL")
 
-    try:
-        c.execute("UPDATE pedidos SET tipo = 'Básico' WHERE tipo = 'Simples'")
-    except Exception:
-        pass
+                try:
+                    c.execute("UPDATE pedidos SET tipo = 'Básico' WHERE tipo = 'Simples'")
+                except Exception:
+                    pass
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS vendas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            codigo_bone TEXT,
-            codigo TEXT,
-            cliente TEXT,
-            qtd INTEGER DEFAULT 1,
-            valor_venda REAL DEFAULT 0.0,
-            tarifa REAL DEFAULT 0.0,
-            tarifa_bancaria REAL DEFAULT 0.0,
-            tarifa_cartao REAL DEFAULT 0.0,
-            valor_recebido REAL DEFAULT 0.0,
-            forma_pagto TEXT,
-            data TEXT,
-            data_venda TEXT,
-            data_recebimento TEXT,
-            custo REAL DEFAULT 0.0,
-            custo_unitario REAL DEFAULT 0.0
-        )
-    ''')
-    c.execute("PRAGMA table_info(vendas)")
-    colunas_vendas = [column[1] for column in c.fetchall()]
-    colunas_vendas_necessarias = {
-        "codigo_bone": "TEXT", "codigo": "TEXT", "cliente": "TEXT",
-        "qtd": "INTEGER DEFAULT 1", "valor_venda": "REAL DEFAULT 0.0",
-        "tarifa": "REAL DEFAULT 0.0", "tarifa_bancaria": "REAL DEFAULT 0.0",
-        "tarifa_cartao": "REAL DEFAULT 0.0", "valor_recebido": "REAL DEFAULT 0.0",
-        "forma_pagto": "TEXT", "data": "TEXT", "data_venda": "TEXT",
-        "data_recebimento": "TEXT", "custo": "REAL DEFAULT 0.0",
-        "custo_unitario": "REAL DEFAULT 0.0"
-    }
-    for _col, _tipo in colunas_vendas_necessarias.items():
-        if _col not in colunas_vendas:
-            c.execute(f"ALTER TABLE vendas ADD COLUMN {_col} {_tipo}")
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS vendas (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        codigo_bone TEXT,
+                        codigo TEXT,
+                        cliente TEXT,
+                        qtd INTEGER DEFAULT 1,
+                        valor_venda REAL DEFAULT 0.0,
+                        tarifa REAL DEFAULT 0.0,
+                        tarifa_bancaria REAL DEFAULT 0.0,
+                        tarifa_cartao REAL DEFAULT 0.0,
+                        valor_recebido REAL DEFAULT 0.0,
+                        forma_pagto TEXT,
+                        data TEXT,
+                        data_venda TEXT,
+                        data_recebimento TEXT,
+                        custo REAL DEFAULT 0.0,
+                        custo_unitario REAL DEFAULT 0.0
+                    )
+                ''')
+                c.execute("PRAGMA table_info(vendas)")
+                colunas_vendas = [column[1] for column in c.fetchall()]
+                colunas_vendas_necessarias = {
+                    "codigo_bone": "TEXT", "codigo": "TEXT", "cliente": "TEXT",
+                    "qtd": "INTEGER DEFAULT 1", "valor_venda": "REAL DEFAULT 0.0",
+                    "tarifa": "REAL DEFAULT 0.0", "tarifa_bancaria": "REAL DEFAULT 0.0",
+                    "tarifa_cartao": "REAL DEFAULT 0.0", "valor_recebido": "REAL DEFAULT 0.0",
+                    "forma_pagto": "TEXT", "data": "TEXT", "data_venda": "TEXT",
+                    "data_recebimento": "TEXT", "custo": "REAL DEFAULT 0.0",
+                    "custo_unitario": "REAL DEFAULT 0.0"
+                }
+                for _col, _tipo in colunas_vendas_necessarias.items():
+                    if _col not in colunas_vendas:
+                        c.execute(f"ALTER TABLE vendas ADD COLUMN {_col} {_tipo}")
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS pagamentos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            lote_id TEXT,
-            data_pagamento TEXT,
-            valor_pago REAL,
-            forma_pagamento TEXT,
-            observacoes TEXT,
-            comprovante_path TEXT
-        )
-    ''')
-    try:
-        c.execute("UPDATE pedidos SET status = 'Em Produção' WHERE status = 'Pendente'")
-    except Exception:
-        pass
-    
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS configuracoes (
-            chave TEXT PRIMARY KEY,
-            valor_b64 TEXT
-        )
-    ''')
-    
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS custos_avulsos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            subcategoria TEXT,
-            data TEXT,
-            desc TEXT,
-            tipo TEXT,
-            valor REAL
-        )
-    ''')
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS pagamentos (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        lote_id TEXT,
+                        data_pagamento TEXT,
+                        valor_pago REAL,
+                        forma_pagamento TEXT,
+                        observacoes TEXT,
+                        comprovante_path TEXT
+                    )
+                ''')
+                try:
+                    c.execute("UPDATE pedidos SET status = 'Em Produção' WHERE status = 'Pendente'")
+                except Exception:
+                    pass
+                
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS configuracoes (
+                        chave TEXT PRIMARY KEY,
+                        valor_b64 TEXT
+                    )
+                ''')
+                
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS custos_avulsos (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        subcategoria TEXT,
+                        data TEXT,
+                        desc TEXT,
+                        tipo TEXT,
+                        valor REAL
+                    )
+                ''')
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS aportes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            data TEXT,
-            data_aporte TEXT,
-            socio TEXT,
-            valor REAL,
-            tipo TEXT
-        )
-    ''')
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS aportes (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        data TEXT,
+                        data_aporte TEXT,
+                        socio TEXT,
+                        valor REAL,
+                        tipo TEXT
+                    )
+                ''')
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS caixa (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            data TEXT,
-            desc TEXT,
-            tipo TEXT,
-            valor REAL
-        )
-    ''')
-    
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS baixas_estoque (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            codigo TEXT,
-            motivo TEXT,
-            observacao TEXT,
-            data_baixa TEXT
-        )
-    ''')
-    
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS devolucoes_vendas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            venda_id INTEGER,
-            codigo TEXT,
-            cliente TEXT,
-            valor_devolvido REAL,
-            data_devolucao TEXT,
-            motivo TEXT
-        )
-    ''')
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS caixa (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        data TEXT,
+                        desc TEXT,
+                        tipo TEXT,
+                        valor REAL
+                    )
+                ''')
+                
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS baixas_estoque (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        codigo TEXT,
+                        motivo TEXT,
+                        observacao TEXT,
+                        data_baixa TEXT
+                    )
+                ''')
+                
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS devedores (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        venda_id INTEGER,
+                        codigo TEXT,
+                        cliente TEXT,
+                        valor_devolvido REAL,
+                        data_devolucao TEXT,
+                        motivo TEXT
+                    )
+                ''')
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS produtos (
-            codigo TEXT PRIMARY KEY,
-            cor TEXT,
-            frase TEXT,
-            cor_estampa TEXT,
-            categoria TEXT,
-            custo REAL,
-            estampa_extra REAL DEFAULT 0.0,
-            matriz_bordado REAL DEFAULT 0.0,
-            qtd_estoque INTEGER DEFAULT 1,
-            qtd_comprada INTEGER DEFAULT 1,
-            data_aquisicao TEXT
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS produtos (
+                        codigo TEXT PRIMARY KEY,
+                        cor TEXT,
+                        frase TEXT,
+                        cor_estampa TEXT,
+                        categoria TEXT,
+                        custo REAL,
+                        estampa_extra REAL DEFAULT 0.0,
+                        matriz_bordado REAL DEFAULT 0.0,
+                        qtd_estoque INTEGER DEFAULT 1,
+                        qtd_comprada INTEGER DEFAULT 1,
+                        data_aquisicao TEXT
+                    )
+                ''')
+                conn.commit()
+                break
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and tentativa < 2:
+                time.sleep(0.5 * (tentativa + 1))
+                continue
+            raise e
 
 init_db()
 
 # ----------------------------------------------------
-# FUNÇÕES ROBUSTAS DE TRATAMENTO E FORMATO DE DATAS (YYYY/MM/DD)
+# ROTINA ROBUSTA E SEQUENCIAL PARA GRAVAÇÃO NO SQLITE (EVITA "DATABASE IS LOCKED")
+# ----------------------------------------------------
+def sqlite_insert_record(table_name: str, payload: dict) -> bool:
+    for tentativa in range(5):
+        try:
+            with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
+                cur = conn.cursor()
+                cur.execute(f"PRAGMA table_info({table_name})")
+                cols = {row[1] for row in cur.fetchall()}
+                dados = {k: v for k, v in payload.items() if k in cols}
+                if not dados:
+                    return False
+                colunas = list(dados.keys())
+                placeholders = ", ".join(["?"] * len(colunas))
+                
+                if table_name == "produtos" and "codigo" in dados:
+                    cur.execute(
+                        f"INSERT OR REPLACE INTO {table_name} ({', '.join(colunas)}) VALUES ({placeholders})",
+                        [dados[c] for c in colunas]
+                    )
+                else:
+                    cur.execute(
+                        f"INSERT INTO {table_name} ({', '.join(colunas)}) VALUES ({placeholders})",
+                        [dados[c] for c in colunas]
+                    )
+                conn.commit()
+                return True
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and tentativa < 4:
+                time.sleep(0.3 * (tentativa + 1))
+                continue
+            st.error(f"Erro operacional ao gravar localmente na tabela `{table_name}`: {e}")
+            return False
+        except Exception as exc:
+            st.error(f"Erro ao gravar localmente na tabela `{table_name}`: {exc}")
+            return False
+    return False
+
+def sqlite_update_record(table_name: str, record_id, payload: dict) -> bool:
+    if record_id in (None, ""):
+        return False
+    for tentativa in range(5):
+        try:
+            with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
+                cur = conn.cursor()
+                cur.execute(f"PRAGMA table_info({table_name})")
+                cols = {row[1] for row in cur.fetchall()}
+                dados = {k: v for k, v in payload.items() if k in cols and k != "id"}
+                if not dados:
+                    return False
+                assignments = ", ".join([f"{c} = ?" for c in dados])
+                cur.execute(
+                    f"UPDATE {table_name} SET {assignments} WHERE id = ?",
+                    [dados[c] for c in dados] + [record_id]
+                )
+                conn.commit()
+                return cur.rowcount > 0
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and tentativa < 4:
+                time.sleep(0.3 * (tentativa + 1))
+                continue
+            st.error(f"Erro ao atualizar localmente na tabela `{table_name}`: {e}")
+            return False
+        except Exception as exc:
+            st.error(f"Erro ao atualizar localmente na tabela `{table_name}`: {exc}")
+            return False
+    return False
+
+def sqlite_delete_record(table_name: str, record_id) -> bool:
+    if record_id in (None, ""):
+        return False
+    for tentativa in range(5):
+        try:
+            with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
+                cur = conn.cursor()
+                cur.execute(f"DELETE FROM {table_name} WHERE id = ?", (record_id,))
+                conn.commit()
+                return cur.rowcount > 0
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and tentativa < 4:
+                time.sleep(0.3 * (tentativa + 1))
+                continue
+            st.error(f"Erro ao excluir localmente da tabela `{table_name}`: {e}")
+            return False
+        except Exception as exc:
+            st.error(f"Erro ao excluir localmente da tabela `{table_name}`: {exc}")
+            return False
+    return False
+
+# ----------------------------------------------------
+# FUNÇÕES DE FORMATO E DATAS (YYYY/MM/DD)
 # ----------------------------------------------------
 def parse_date_str(val):
     hoje = datetime.date.today().strftime("%Y/%m/%d")
@@ -393,20 +499,22 @@ def get_numeric_series(df: pd.DataFrame, col_name: str, default_value: float = 0
 def fetch_data(table_name: str) -> pd.DataFrame:
     local_df = pd.DataFrame()
     try:
-        conn = sqlite3.connect(DB_NAME, timeout=10.0)
         if table_name == "vendas":
-            local_df = pd.read_sql_query("SELECT * FROM vendas ORDER BY id DESC", conn)
+            local_df = carregar_dataframe("SELECT * FROM vendas ORDER BY id DESC")
         elif table_name == "custos_avulsos":
-            local_df = pd.read_sql_query("SELECT * FROM custos_avulsos ORDER BY id DESC", conn)
+            local_df = carregar_dataframe("SELECT * FROM custos_avulsos ORDER BY id DESC")
         elif table_name == "aportes":
-            local_df = pd.read_sql_query("SELECT * FROM aportes ORDER BY id DESC", conn)
+            local_df = carregar_dataframe("SELECT * FROM aportes ORDER BY id DESC")
         elif table_name == "caixa":
-            local_df = pd.read_sql_query("SELECT * FROM caixa ORDER BY id DESC", conn)
+            local_df = carregar_dataframe("SELECT * FROM caixa ORDER BY id DESC")
         elif table_name == "produtos":
-            local_df = pd.read_sql_query("SELECT * FROM produtos", conn)
+            local_df = carregar_dataframe("SELECT * FROM produtos")
         elif table_name == "pedidos":
-            local_df = pd.read_sql_query("SELECT * FROM pedidos ORDER BY id ASC", conn)
-        conn.close()
+            local_df = carregar_dataframe("SELECT * FROM pedidos ORDER BY id ASC")
+        elif table_name == "baixas_estoque":
+            local_df = carregar_dataframe("SELECT * FROM baixas_estoque ORDER BY id DESC")
+        else:
+            local_df = carregar_dataframe(f"SELECT * FROM {table_name}")
     except Exception:
         pass
 
@@ -421,7 +529,7 @@ def fetch_data(table_name: str) -> pd.DataFrame:
     except Exception as e:
         err_str = str(e)
         if "PGRST205" not in err_str and "schema cache" not in err_str:
-            st.warning(f"Aviso de leitura na tabela `{table_name}`: {e}")
+            pass
         return local_df
 
 def normalizar_df_vendas(df: pd.DataFrame) -> pd.DataFrame:
@@ -447,85 +555,10 @@ def normalizar_df_vendas(df: pd.DataFrame) -> pd.DataFrame:
 
     return df_res
 
-def sqlite_insert_record(table_name: str, payload: dict):
-    conn = None
-    try:
-        conn = sqlite3.connect(DB_NAME, timeout=10.0)
-        cur = conn.cursor()
-        cur.execute(f"PRAGMA table_info({table_name})")
-        cols = {row[1] for row in cur.fetchall()}
-        dados = {k: v for k, v in payload.items() if k in cols}
-        if not dados:
-            return False
-        colunas = list(dados.keys())
-        placeholders = ", ".join(["?"] * len(colunas))
-        
-        if table_name == "produtos" and "codigo" in dados:
-            cur.execute(
-                f"INSERT OR REPLACE INTO {table_name} ({', '.join(colunas)}) VALUES ({placeholders})",
-                [dados[c] for c in colunas]
-            )
-        else:
-            cur.execute(
-                f"INSERT INTO {table_name} ({', '.join(colunas)}) VALUES ({placeholders})",
-                [dados[c] for c in colunas]
-            )
-        conn.commit()
-        return True
-    except Exception as exc:
-        st.error(f"Erro ao gravar localmente na tabela `{table_name}`: {exc}")
-        return False
-    finally:
-        if conn is not None:
-            conn.close()
-
-def sqlite_update_record(table_name: str, record_id, payload: dict):
-    if record_id in (None, ""):
-        return False
-    conn = None
-    try:
-        conn = sqlite3.connect(DB_NAME, timeout=10.0)
-        cur = conn.cursor()
-        cur.execute(f"PRAGMA table_info({table_name})")
-        cols = {row[1] for row in cur.fetchall()}
-        dados = {k: v for k, v in payload.items() if k in cols and k != "id"}
-        if not dados:
-            return False
-        assignments = ", ".join([f"{c} = ?" for c in dados])
-        cur.execute(
-            f"UPDATE {table_name} SET {assignments} WHERE id = ?",
-            [dados[c] for c in dados] + [record_id]
-        )
-        conn.commit()
-        return cur.rowcount > 0
-    except Exception as exc:
-        st.error(f"Erro ao atualizar localmente na tabela `{table_name}`: {exc}")
-        return False
-    finally:
-        if conn is not None:
-            conn.close()
-
-def sqlite_delete_record(table_name: str, record_id):
-    if record_id in (None, ""):
-        return False
-    conn = None
-    try:
-        conn = sqlite3.connect(DB_NAME, timeout=10.0)
-        cur = conn.cursor()
-        cur.execute(f"DELETE FROM {table_name} WHERE id = ?", (record_id,))
-        conn.commit()
-        return cur.rowcount > 0
-    except Exception as exc:
-        st.error(f"Erro ao excluir localmente da tabela `{table_name}`: {exc}")
-        return False
-    finally:
-        if conn is not None:
-            conn.close()
-
-def safe_insert(table_name: str, payload: dict):
-    sqlite_insert_record(table_name, payload)
+def safe_insert(table_name: str, payload: dict) -> bool:
+    sucesso_local = sqlite_insert_record(table_name, payload)
     if not supabase:
-        return True
+        return sucesso_local
     try:
         supabase.table(table_name).insert(payload).execute()
         return True
@@ -537,9 +570,9 @@ def safe_insert(table_name: str, payload: dict):
                 payload_retry = payload.copy()
                 del payload_retry[col_err]
                 return safe_insert(table_name, payload_retry)
-        return True
+        return sucesso_local
 
-def safe_update_venda(venda_id, payload: dict):
+def safe_update_venda(venda_id, payload: dict) -> bool:
     if venda_id in (None, ""):
         return False
     sqlite_update_record("vendas", venda_id, payload)
@@ -551,7 +584,7 @@ def safe_update_venda(venda_id, payload: dict):
     except Exception:
         return True
 
-def safe_delete_venda(venda_id):
+def safe_delete_venda(venda_id) -> bool:
     if venda_id in (None, ""):
         return False
     sqlite_delete_record("vendas", venda_id)
@@ -597,7 +630,7 @@ def atualizar_caixa_da_venda(venda_antiga: dict, venda_nova: dict | None = None,
     except Exception:
         pass
 
-def safe_upsert_produto(payload: dict):
+def safe_upsert_produto(payload: dict) -> bool:
     cod = payload.get("codigo")
     if cod:
         st.session_state["extra_costs_cache"][cod] = {
@@ -605,16 +638,16 @@ def safe_upsert_produto(payload: dict):
             "matriz_bordado": payload.get("matriz_bordado", 0.0),
             "data_aquisicao": payload.get("data_aquisicao", "")
         }
-    sqlite_insert_record("produtos", payload)
+    sucesso_local = sqlite_insert_record("produtos", payload)
     if not supabase:
-        return True
+        return sucesso_local
     try:
         supabase.table("produtos").upsert(payload, on_conflict="codigo").execute()
         return True
     except Exception:
-        return True
+        return sucesso_local
 
-def dar_baixa_estoque_venda(codigo_prod, qtd_venda=1):
+def dar_baixa_estoque_venda(codigo_prod, qtd_venda=1) -> bool:
     if not codigo_prod or qtd_venda <= 0:
         return False
     
@@ -630,30 +663,33 @@ def dar_baixa_estoque_venda(codigo_prod, qtd_venda=1):
         except Exception:
             pass
 
-    conn = None
-    try:
-        conn = sqlite3.connect(DB_NAME, timeout=10.0)
-        cur = conn.cursor()
-        cur.execute("PRAGMA table_info(produtos)")
-        cols = {row[1] for row in cur.fetchall()}
-        if cols:
-            col_qtd_sql = "qtd_estoque" if "qtd_estoque" in cols else ("qtd" if "qtd" in cols else "estoque")
-            cur.execute(f"SELECT {col_qtd_sql} FROM produtos WHERE codigo = ?", (codigo_prod,))
-            row_p = cur.fetchone()
-            if row_p:
-                qtd_atual_sql = int(pd.to_numeric(row_p[0], errors="coerce") or 0)
-                novo_estoque_sql = max(0, qtd_atual_sql - int(qtd_venda))
-                cur.execute(f"UPDATE produtos SET {col_qtd_sql} = ? WHERE codigo = ?", (novo_estoque_sql, codigo_prod))
-                conn.commit()
-    except Exception:
-        pass
-    finally:
-        if conn is not None:
-            conn.close()
+    for tentativa in range(3):
+        try:
+            with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
+                cur = conn.cursor()
+                cur.execute("PRAGMA table_info(produtos)")
+                cols = {row[1] for row in cur.fetchall()}
+                if cols:
+                    col_qtd_sql = "qtd_estoque" if "qtd_estoque" in cols else ("qtd" if "qtd" in cols else "estoque")
+                    cur.execute(f"SELECT {col_qtd_sql} FROM produtos WHERE codigo = ?", (codigo_prod,))
+                    row_p = cur.fetchone()
+                    if row_p:
+                        qtd_atual_sql = int(pd.to_numeric(row_p[0], errors="coerce") or 0)
+                        novo_estoque_sql = max(0, qtd_atual_sql - int(qtd_venda))
+                        cur.execute(f"UPDATE produtos SET {col_qtd_sql} = ? WHERE codigo = ?", (novo_estoque_sql, codigo_prod))
+                        conn.commit()
+                return True
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and tentativa < 2:
+                time.sleep(0.3 * (tentativa + 1))
+                continue
+            break
+        except Exception:
+            break
 
     return True
 
-def estornar_estoque(codigo_prod, qtd_estorno):
+def estornar_estoque(codigo_prod, qtd_estorno) -> bool:
     if not codigo_prod or qtd_estorno <= 0:
         return False
     
@@ -669,40 +705,43 @@ def estornar_estoque(codigo_prod, qtd_estorno):
         except Exception:
             pass
 
-    conn = None
-    try:
-        conn = sqlite3.connect(DB_NAME, timeout=10.0)
-        cur = conn.cursor()
-        cur.execute("PRAGMA table_info(produtos)")
-        cols = {row[1] for row in cur.fetchall()}
-        if cols:
-            col_qtd_sql = "qtd_estoque" if "qtd_estoque" in cols else ("qtd" if "qtd" in cols else "estoque")
-            cur.execute(f"SELECT {col_qtd_sql} FROM produtos WHERE codigo = ?", (codigo_prod,))
-            row_p = cur.fetchone()
-            if row_p:
-                qtd_atual_sql = int(pd.to_numeric(row_p[0], errors="coerce") or 0)
-                novo_estoque_sql = qtd_atual_sql + int(qtd_estorno)
-                cur.execute(f"UPDATE produtos SET {col_qtd_sql} = ? WHERE codigo = ?", (novo_estoque_sql, codigo_prod))
-                conn.commit()
-        else:
-            cur.execute('''
-                CREATE TABLE IF NOT EXISTS produtos (
-                    codigo TEXT PRIMARY KEY,
-                    cor TEXT,
-                    frase TEXT,
-                    cor_estampa TEXT,
-                    categoria TEXT,
-                    custo REAL,
-                    qtd_estoque INTEGER DEFAULT 1
-                )
-            ''')
-            cur.execute("INSERT OR REPLACE INTO produtos (codigo, qtd_estoque) VALUES (?, ?)", (codigo_prod, int(qtd_estorno)))
-            conn.commit()
-    except Exception:
-        pass
-    finally:
-        if conn is not None:
-            conn.close()
+    for tentativa in range(3):
+        try:
+            with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
+                cur = conn.cursor()
+                cur.execute("PRAGMA table_info(produtos)")
+                cols = {row[1] for row in cur.fetchall()}
+                if cols:
+                    col_qtd_sql = "qtd_estoque" if "qtd_estoque" in cols else ("qtd" if "qtd" in cols else "estoque")
+                    cur.execute(f"SELECT {col_qtd_sql} FROM produtos WHERE codigo = ?", (codigo_prod,))
+                    row_p = cur.fetchone()
+                    if row_p:
+                        qtd_atual_sql = int(pd.to_numeric(row_p[0], errors="coerce") or 0)
+                        novo_estoque_sql = qtd_atual_sql + int(qtd_estorno)
+                        cur.execute(f"UPDATE produtos SET {col_qtd_sql} = ? WHERE codigo = ?", (novo_estoque_sql, codigo_prod))
+                        conn.commit()
+                else:
+                    cur.execute('''
+                        CREATE TABLE IF NOT EXISTS produtos (
+                            codigo TEXT PRIMARY KEY,
+                            cor TEXT,
+                            frase TEXT,
+                            cor_estampa TEXT,
+                            categoria TEXT,
+                            custo REAL,
+                            qtd_estoque INTEGER DEFAULT 1
+                        )
+                    ''')
+                    cur.execute("INSERT OR REPLACE INTO produtos (codigo, qtd_estoque) VALUES (?, ?)", (codigo_prod, int(qtd_estorno)))
+                    conn.commit()
+                return True
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and tentativa < 2:
+                time.sleep(0.3 * (tentativa + 1))
+                continue
+            break
+        except Exception:
+            break
 
     return True
 
@@ -754,13 +793,9 @@ def get_ultimo_codigo_config():
         except Exception:
             pass
     try:
-        conn = sqlite3.connect(DB_NAME, timeout=10.0)
-        c = conn.cursor()
-        c.execute("SELECT valor_b64 FROM configuracoes WHERE chave = 'ultimo_codigo_bone'")
-        row = c.fetchone()
-        conn.close()
-        if row and row[0]:
-            return str(row[0]).strip()
+        df_cfg = carregar_dataframe("SELECT valor_b64 FROM configuracoes WHERE chave = 'ultimo_codigo_bone'")
+        if not df_cfg.empty and df_cfg.iloc[0, 0]:
+            return str(df_cfg.iloc[0, 0]).strip()
     except Exception:
         pass
     return "BL-0001"
@@ -776,11 +811,10 @@ def set_ultimo_codigo_config(novo_codigo):
         except Exception as e:
             st.error(f"Erro ao salvar configuração do código no Supabase: {e}")
     try:
-        conn = sqlite3.connect(DB_NAME, timeout=10.0)
-        c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO configuracoes (chave, valor_b64) VALUES ('ultimo_codigo_bone', ?)", (novo_codigo,))
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
+            c = conn.cursor()
+            c.execute("INSERT OR REPLACE INTO configuracoes (chave, valor_b64) VALUES ('ultimo_codigo_bone', ?)", (novo_codigo,))
+            conn.commit()
         return True
     except Exception as e:
         st.error(f"Erro ao salvar configuração do código localmente: {e}")
@@ -871,7 +905,7 @@ def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, 
                 if val_v_calc > 0:
                     lista_movimentos.append({"Data_Val": parse_date_str(dt_rec_val), "Valor_Num": val_v_calc})
 
-    # 3. Custos e Despesas
+    # 3. Custos e Despesas (incluindo Tarifas)
     if not df_custos_in.empty:
         for _, r in df_custos_in.iterrows():
             val_c = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
@@ -921,7 +955,7 @@ df_caixa = fetch_data("caixa")
 df_aportes = fetch_data("aportes")
 df_custos = fetch_data("custos_avulsos")
 df_baixas = fetch_data("baixas_estoque")
-df_devolucoes = fetch_data("devolucoes_vendas")
+df_devolucoes = fetch_data("devedores")
 
 if "flash_success" in st.session_state and st.session_state["flash_success"]:
     st.success(st.session_state["flash_success"])
@@ -1068,7 +1102,6 @@ if "Dashboard" in menu:
                 if cor_col in df_m.columns:
                     qtd_col = "qtd_x" if "qtd_x" in df_m.columns else ("qtd" if "qtd" in df_m.columns else "qtd_y")
                     agrup_cor = df_m.groupby(cor_col)[qtd_col].sum().reset_index()
-                    # MELHORIA APLICADA: Ordenação alfabética rigorosa das cores
                     agrup_cor = agrup_cor.sort_values(by=cor_col, ascending=True)
                     fig2 = px.pie(agrup_cor, names=cor_col, values=qtd_col, hole=0.45, color_discrete_sequence=px.colors.qualitative.Pastel)
                     st.plotly_chart(fig2, use_container_width=True)
@@ -1200,9 +1233,9 @@ if "Dashboard" in menu:
         else:
             st.info("Dados insuficientes para calcular o giro de vendas.")
 
-    # --- ABA 4: Feiras & Eventos (Ex: Feirarte) ---
+    # --- ABA 4: Feiras & Eventos ---
     with tab_d4:
-        st.markdown("#### 🎪 Feiras & Eventos (Análise de ROI / Feirarte)")
+        st.markdown("#### 🎪 Feiras & Eventos (Análise de ROI)")
         
         df_custos_ev = fetch_data("custos_avulsos")
         feiras_disponiveis = ["TODAS"]
@@ -1227,7 +1260,6 @@ if "Dashboard" in menu:
             total_despesas_feira = float(df_f_filtro["valor"].apply(parse_money).sum())
             df_despesas_feira_filtrada = df_f_filtro
 
-        # MELHORIA APLICADA: Buscar no menu Vendas o Nome do Cliente idêntico ao nome da feira (apenas vendas cujo cliente seja igual à feira)
         total_faturado_feira = 0.0
         if not df_vendas.empty:
             df_v_norm_feira = normalizar_df_vendas(df_vendas)
@@ -1444,16 +1476,11 @@ elif "Pedidos" in menu:
 
     with st.expander("📥 Importar Pedido via Planilha Excel (.xlsx / .csv)", expanded=False):
         st.markdown("**Colunas reconhecidas:** `Cor do Boné`, `Arte Estampada`, `Cor da Estampa`, `Produto`, `Preço Base`, `Estampa Extra`, `Matriz Bordado`, `Total Item`, `Status`, `Observações` e `Data`.")
-        st.caption("O lote informado abaixo será aplicado a todas as linhas importadas. Se a coluna `Lote` também existir no arquivo, ela terá prioridade linha a linha.")
+        st.caption("O lote informado abaixo será aplicado a todas as linhas importadas.")
 
         c_imp1, c_imp2 = st.columns([2, 1])
         with c_imp1:
-            lote_importacao = st.text_input(
-                "Identificador / Lote do Pedido *",
-                value="",
-                placeholder="Ex.: Pedido #06.10-2026",
-                key="lote_importacao_pedidos"
-            )
+            lote_importacao = st.text_input("Identificador / Lote do Pedido *", value="", placeholder="Ex.: Pedido #06.10-2026", key="lote_importacao_pedidos")
         with c_imp2:
             st.write("")
             st.write("")
@@ -1485,11 +1512,7 @@ elif "Pedidos" in menu:
             use_container_width=True
         )
 
-        uploaded_p_file = st.file_uploader(
-            "Enviar arquivo de pedidos (.xlsx ou .csv)",
-            type=["xlsx", "csv"],
-            key="uploader_pedidos_final"
-        )
+        uploaded_p_file = st.file_uploader("Enviar arquivo de pedidos (.xlsx ou .csv)", type=["xlsx", "csv"], key="uploader_pedidos_final")
 
         if uploaded_p_file is not None:
             try:
@@ -1531,10 +1554,6 @@ elif "Pedidos" in menu:
                         df_preview_p[destino] = df_imp_p[origem]
                     if "Cor da Estampa" not in df_preview_p.columns:
                         df_preview_p["Cor da Estampa"] = ""
-                    if "Lote" in df_imp_p.columns:
-                        df_preview_p["Lote"] = df_imp_p["Lote"]
-                    elif "lote_id" in df_imp_p.columns:
-                        df_preview_p["Lote"] = df_imp_p["lote_id"]
 
                     st.markdown("##### 🔍 Pré-visualização dos Pedidos a Importar:")
                     st.dataframe(df_preview_p, use_container_width=True, hide_index=True)
@@ -1707,9 +1726,7 @@ elif "Pedidos" in menu:
                                 codigo_base_atual = get_ultimo_codigo_config()
                                 codigos_gerados = []
                                 
-                                conn = sqlite3.connect(DB_NAME, timeout=10.0)
-                                c = conn.cursor()
-
+                                # Processamento sequencial item a item com validação para evitar "database is locked"
                                 for item_id in ids_itens_acao:
                                     row_alvo = df_lote[df_lote["id"] == item_id].iloc[0]
                                     codigo_base_atual = gerar_proximo_codigo(codigo_base_atual)
@@ -1731,17 +1748,17 @@ elif "Pedidos" in menu:
                                         "data_aquisicao": dt_aquisicao_item
                                     }
 
-                                    if safe_upsert_produto(novo_prod):
-                                        c.execute("UPDATE pedidos SET status = 'Entregue / Retirado', codigo_produto = ? WHERE id = ?", (codigo_base_atual, item_id))
+                                    # Validação de gravação sequencial item a item
+                                    gravou_produto = safe_upsert_produto(novo_prod)
+                                    if gravou_produto:
+                                        sqlite_update_record("pedidos", item_id, {"status": "Entregue / Retirado", "codigo_produto": codigo_base_atual})
                                         if supabase:
                                             try:
                                                 supabase.table("pedidos").update({"status": "Entregue / Retirado", "codigo_produto": codigo_base_atual}).eq("id", item_id).execute()
                                             except Exception:
                                                 pass
+                                    time.sleep(0.1)  # Intervalo de respiro entre operações de gravação
 
-                                conn.commit()
-                                conn.close()
-                                
                                 set_ultimo_codigo_config(codigo_base_atual)
 
                                 st.session_state["flash_success"] = f"🎉 {len(codigos_gerados)} item(ns) entregue(s) com sucesso em {dt_aquisicao_item} e cadastrado(s) no estoque (Códigos: {', '.join(codigos_gerados)})!"
@@ -1753,22 +1770,19 @@ elif "Pedidos" in menu:
                             if not ids_itens_acao:
                                 st.warning("Selecione ao menos um item!")
                             else:
-                                conn = sqlite3.connect(DB_NAME, timeout=10.0)
-                                c = conn.cursor()
                                 for item_id in ids_itens_acao:
                                     row_alvo = df_lote[df_lote["id"] == item_id].iloc[0]
                                     cod_prod = row_alvo.get("codigo_produto")
                                     if cod_prod and str(cod_prod).strip() != "" and str(cod_prod).strip().lower() != "none":
                                         estornar_estoque(cod_prod, 1)
 
-                                    c.execute("DELETE FROM pedidos WHERE id = ?", (item_id,))
+                                    sqlite_delete_record("pedidos", item_id)
                                     if supabase:
                                         try:
                                             supabase.table("pedidos").delete().eq("id", item_id).execute()
                                         except Exception:
                                             pass
-                                conn.commit()
-                                conn.close()
+                                    time.sleep(0.1)
 
                                 st.session_state["flash_success"] = f"🗑 {len(ids_itens_acao)} item(ns) cancelado(s) e excluído(s) com sucesso!"
                                 st.rerun()
@@ -2245,11 +2259,7 @@ elif "Contas a Receber" in menu:
             use_container_width=True
         )
 
-        uploaded_cr_file = st.file_uploader(
-            "Enviar arquivo de contas a receber (.xlsx ou .csv)",
-            type=["xlsx", "csv"],
-            key="uploader_contas_receber_final"
-        )
+        uploaded_cr_file = st.file_uploader("Enviar arquivo de contas a receber (.xlsx ou .csv)", type=["xlsx", "csv"], key="uploader_contas_receber_final")
 
         if uploaded_cr_file is not None:
             try:
@@ -2439,7 +2449,8 @@ elif "Contas a Receber" in menu:
 
 elif "Custos" in menu:
     st.subheader("💵 Gerenciamento de Custos e Despesas")
-    sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷 Custos / Despesas", "🎪 Feiras"], horizontal=True)
+    # SUB-ABAS SOLICITADAS: Mercadorias, Custos / Despesas, Feiras e Tarifas
+    sub_tab = st.radio("Sub-abas de Custos:", ["📦 Mercadorias", "🏷 Custos / Despesas", "🎪 Feiras", "💳 Tarifas"], horizontal=True)
 
     if "Mercadorias" in sub_tab:
         df_cm = get_df_compra_mercadorias()
@@ -2452,8 +2463,6 @@ elif "Custos" in menu:
             meses_custos_m = sorted(df_m["Mes_Ano"].unique(), reverse=True)
             for mes in meses_custos_m:
                 df_m_mes = df_m[df_m["Mes_Ano"] == mes]
-                
-                # MELHORIA APLICADA: Botão ou componente expansivo (accordion/collapse) por mês mostrando apenas o custo total fechado e expandindo para mostrar transações
                 total_custo_m_mes = float(df_m_mes["total_item_calc"].sum())
                 titulo_exp_m = f"📅 Mês: {mes.replace('-', '/')} — Custo Total de Mercadorias: R$ {total_custo_m_mes:,.2f} ({len(df_m_mes)} itens)"
 
@@ -2524,7 +2533,6 @@ elif "Custos" in menu:
                 df_cv_exib["Mes_Ano"] = pd.to_datetime(df_cv_exib["data"].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
                 meses_cv = sorted(df_cv_exib["Mes_Ano"].unique(), reverse=True)
                 
-                # MELHORIA APLICADA: Accordion/collapse por mês mostrando apenas o custo total fechado e expandindo para transações
                 for mes in meses_cv:
                     df_cv_mes = df_cv_exib[df_cv_exib["Mes_Ano"] == mes].copy()
                     total_custo_mes = float(df_cv_mes["valor"].apply(parse_money).sum())
@@ -2611,7 +2619,6 @@ elif "Custos" in menu:
                 df_cf_exib["Mes_Ano"] = pd.to_datetime(df_cf_exib["data"].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
                 meses_cf = sorted(df_cf_exib["Mes_Ano"].unique(), reverse=True)
                 
-                # MELHORIA APLICADA: Accordion/collapse por mês para custos de feiras mostrando o total fechado e expandindo para transações
                 for mes in meses_cf:
                     df_cf_mes = df_cf_exib[df_cf_exib["Mes_Ano"] == mes].copy()
                     total_feira_mes = float(df_cf_mes["valor"].apply(parse_money).sum())
@@ -2648,6 +2655,91 @@ elif "Custos" in menu:
                             st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
             else:
                 st.info("Nenhum custo de feira registrado até o momento.")
+        else:
+            st.info("Nenhum custo registrado.")
+
+    elif "Tarifas" in sub_tab:
+        st.markdown("#### 💳 Lançamento e Gestão de Tarifas")
+        with st.form("form_tarifas"):
+            t_c1, t_c2, t_c3 = st.columns(3)
+            with t_c1:
+                dt_tar = st.date_input("Data da Tarifa *", datetime.date.today(), format="YYYY/MM/DD")
+                desc_tar = st.text_input("Descrição / Banco *", placeholder="Ex.: Taxa maquininha / TED / PIX")
+            with t_c2:
+                tipo_tar = st.selectbox("Tipo de Tarifa *", ["Taxa de Cartão", "Tarifa Bancária", "Taxa de Gateway", "Outra"])
+            with t_c3:
+                val_tar = st.number_input("Valor da Tarifa (R$) *", min_value=0.01, value=5.00, format="%.2f")
+
+            if st.form_submit_button("Adicionar Tarifa", use_container_width=True, type="primary"):
+                val_tar_fmt = round(float(val_tar), 2)
+                dt_tar_str = parse_date_str(dt_tar)
+                
+                payload_tar = {
+                    "subcategoria": "Tarifas",
+                    "data": dt_tar_str,
+                    "desc": desc_tar.strip(),
+                    "tipo": tipo_tar,
+                    "valor": val_tar_fmt
+                }
+                
+                safe_insert("custos_avulsos", payload_tar)
+                safe_insert("caixa", {
+                    "data": dt_tar_str,
+                    "desc": f"[Tarifa] {desc_tar.strip()}",
+                    "tipo": tipo_tar,
+                    "valor": val_tar_fmt
+                })
+                st.session_state["flash_success"] = f"Tarifa de R$ {val_tar_fmt:,.2f} registrada com sucesso!"
+                st.rerun()
+
+        st.markdown("---")
+        st.markdown("##### 📋 Extrato de Tarifas Lançadas")
+        
+        df_custos_atualizado = fetch_data("custos_avulsos")
+        if not df_custos_atualizado.empty:
+            subcat_col = df_custos_atualizado.get("subcategoria", pd.Series([""] * len(df_custos_atualizado))).fillna("").astype(str)
+            df_tar_exib = df_custos_atualizado[subcat_col.str.contains("tarifas", case=False, na=False)].copy()
+            
+            if not df_tar_exib.empty:
+                df_tar_exib["Mes_Ano"] = pd.to_datetime(df_tar_exib["data"].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
+                meses_tar = sorted(df_tar_exib["Mes_Ano"].unique(), reverse=True)
+                
+                for mes in meses_tar:
+                    df_tar_mes = df_tar_exib[df_tar_exib["Mes_Ano"] == mes].copy()
+                    total_tarifa_mes = float(df_tar_mes["valor"].apply(parse_money).sum())
+                    
+                    titulo_exp_tarifa = f"📅 Mês: {mes.replace('-', '/')} — Total de Tarifas: R$ {total_tarifa_mes:,.2f} ({len(df_tar_mes)} transações)"
+                    
+                    with st.expander(titulo_exp_tarifa, expanded=False):
+                        for idx, row in df_tar_mes.iterrows():
+                            t_id = row.get("id")
+                            t_dt = format_data_br(row.get("data"))
+                            t_tp = row.get("tipo", "")
+                            t_desc = row.get("desc") or ""
+                            t_vl = float(pd.to_numeric(row.get("valor", 0), errors="coerce") or 0.0)
+
+                            col1, col2, col3, col4, col5 = st.columns([2, 2, 3, 2, 1])
+                            with col1:
+                                st.write(f"**Data:** {t_dt}")
+                            with col2:
+                                st.write(f"**Tipo:** {t_tp}")
+                            with col3:
+                                st.write(f"**Descrição:** {t_desc}")
+                            with col4:
+                                st.write(f"**Valor:** R$ {t_vl:,.2f}")
+                            with col5:
+                                if st.button("🗑 Excluir", key=f"del_tar_{t_id}_{mes}", use_container_width=True):
+                                    sqlite_delete_record("custos_avulsos", t_id)
+                                    if supabase:
+                                        try:
+                                            supabase.table("custos_avulsos").delete().eq("id", t_id).execute()
+                                        except Exception:
+                                            pass
+                                    st.session_state["flash_success"] = "Tarifa excluída!"
+                                    st.rerun()
+                            st.markdown("<hr style='margin:2px 0;'>", unsafe_allow_html=True)
+            else:
+                st.info("Nenhuma tarifa registrada até o momento.")
         else:
             st.info("Nenhum custo registrado.")
 
@@ -2703,13 +2795,22 @@ elif "Caixa" in menu or "Fluxo" in menu:
                         "Valor_Num": val_v_calc
                     })
 
-    # 3. Custos Avulsos e Feiras
+    # 3. Custos Avulsos, Feiras e Tarifas
     if not df_custos.empty:
         for _, r in df_custos.iterrows():
             val_c = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
             sub_c = str(r.get("subcategoria", "Custos"))
             desc_c = r.get("desc") or r.get("descricao") or "Despesa Avulsa"
-            origem_tag = "🏷 Custos / Despesas" if "custos" in sub_c.lower() or "venda" in sub_c.lower() else ("🎪 Custos de Feiras" if "feira" in sub_c.lower() else f"💵 Custos ({sub_c})")
+            
+            if "tarifas" in sub_c.lower():
+                origem_tag = "💳 Tarifas"
+            elif "feira" in sub_c.lower():
+                origem_tag = "🎪 Custos de Feiras"
+            elif "custos" in sub_c.lower():
+                origem_tag = "🏷 Custos / Despesas"
+            else:
+                origem_tag = f"💵 Custos ({sub_c})"
+
             if val_c > 0:
                 dt_c_str = parse_date_str(r.get("data"))
                 lista_movimentos.append({
@@ -2939,7 +3040,6 @@ elif "Aportes" in menu:
             
         st.dataframe(pd.DataFrame(resumo_socios), use_container_width=True, hide_index=True)
 
-        # MELHORIA APLICADA: Resumo geral estruturado no menu de aportes
         saldo_geral_aportes = tot_geral_aportado - tot_geral_devolvido
         st.markdown(f"📌 **Resumo Geral de Aportes:** Total Aportado: `R$ {tot_geral_aportado:,.2f}` | Total Devolvido: `R$ {tot_geral_devolvido:,.2f}` | **Saldo Líquido Geral:** `R$ {saldo_geral_aportes:,.2f}`")
 
@@ -2955,7 +3055,7 @@ elif "Aportes" in menu:
             
             meses_aportes = sorted(df_aportes["Mes_Ano"].unique(), reverse=True)
             
-            # MELHORIA APLICADA: Botão ou componente expansivo (accordion/collapse) para cada mês mostrando a diferença entre o valor aportado e a devolução
+            # MELHORIA APLICADA: Componente expansivo por mês mostrando a diferença líquida entre o valor aportado e a devolução
             for mes in meses_aportes:
                 df_ap_mes = df_aportes[df_aportes["Mes_Ano"] == mes].copy()
                 df_ap_mes["val_num"] = get_numeric_series(df_ap_mes, "valor")
