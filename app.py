@@ -1926,8 +1926,7 @@ elif "Vendas" in menu:
         tarifa_venda = st.number_input("Tarifa / Taxa Bancária (R$)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
     with c3:
         forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
-        st.write("")
-        st.caption("ℹ️ A data da venda é preenchida automaticamente com a data atual (YYYY/MM/DD).")
+        dt_venda_manual = st.date_input("Data da Venda *", datetime.date.today(), format="YYYY/MM/DD")
 
     valor_liquido_calc = max(0.0, float(valor_venda) - float(tarifa_venda))
     st.markdown(f"👉 **Valor Bruto:** `R$ {float(valor_venda):,.2f}` | 🏷 **Tarifa:** `R$ {float(tarifa_venda):,.2f}` | 💵 **Valor Líquido:** `R$ {valor_liquido_calc:,.2f}`")
@@ -1943,7 +1942,7 @@ elif "Vendas" in menu:
                 p_info = df_cm_estoque[df_cm_estoque["Código"] == codigo_sel].iloc[0]
                 custo_total_cm = float(p_info.get("total_item_calc", 0.0))
             
-            data_atual_str = datetime.date.today().strftime("%Y/%m/%d")
+            data_venda_str = parse_date_str(dt_venda_manual)
             val_bruto_fmt = round(float(valor_venda), 2)
             tarifa_fmt = round(float(tarifa_venda), 2)
             val_liquido_fmt = round(valor_liquido_calc, 2)
@@ -1959,8 +1958,8 @@ elif "Vendas" in menu:
                 "tarifa_cartao": tarifa_fmt,
                 "valor_recebido": val_liquido_fmt,
                 "forma_pagto": forma_pagto,
-                "data": data_atual_str,
-                "data_venda": data_atual_str,
+                "data": data_venda_str,
+                "data_venda": data_venda_str,
                 "data_recebimento": None,
                 "custo": custo_total_cm,
                 "custo_unitario": custo_total_cm
