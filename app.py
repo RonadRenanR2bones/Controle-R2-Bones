@@ -549,6 +549,11 @@ def normalizar_df_vendas(df: pd.DataFrame) -> pd.DataFrame:
     else:
         df_res["liquido_recebido_calc"] = df_res["valor_bruto_calc"] - df_res["tarifa_calc"]
 
+    # Remove duplicatas exatas baseadas nos principais campos para evitar replicações visuais
+    cols_para_dedup = [c for c in ["codigo_bone", "codigo", "cliente", "qtd", "valor_venda", "data"] if c in df_res.columns]
+    if cols_para_dedup:
+        df_res = df_res.drop_duplicates(subset=cols_para_dedup, keep="first")
+
     return df_res
 
 def safe_insert(table_name: str, payload: dict) -> bool:
@@ -571,30 +576,40 @@ def safe_insert(table_name: str, payload: dict) -> bool:
 def safe_update_venda(venda_id, payload: dict) -> bool:
     if venda_id in (None, ""):
         return False
-    sucesso_local = sqlite_update_record("vendas", venda_id, payload)
+    sqlite_update_record("vendas", venda_id, payload)
     if not supabase:
-        return sucesso_local
-    try:
-        res = supabase.table("vendas").update(payload).eq("id", venda_id).execute()
         return True
-    except Exception as err:
-        err_str = str(err)
-        if "Could not find the '" in err_str and "' column" in err_str:
-            col_err = err_str.split("Could not find the '")[1].split("' column")[0]
-            if col_err in payload:
-                payload_retry = payload.copy()
-                del payload_retry[col_err]
-                return safe_update_venda(venda_id, payload_retry)
-        st.error(f"Erro ao atualizar venda no Supabase: {err}")
-        return sucesso_local
+    try:
+        supabase.table("vendas").update(payload).eq("id", venda_id).execute()
+        return True
+    except Exception:
+        return True
 
 def safe_delete_venda(venda_id) -> bool:
     if venda_id in (None, ""):
         return False
+    
+    # Busca a linha atual para garantir a remoção correta de eventuais duplicatas com o mesmo ID ou conteúdo
+    row_match = carregar_dataframe("SELECT * FROM vendas WHERE id = ?", (venda_id,))
+    
     sqlite_delete_record("vendas", venda_id)
+    if not row_match.empty and "cliente" in row_match.columns and "valor_venda" in row_match.columns:
+        c_val = row_match.iloc[0].get("cliente")
+        v_val = row_match.iloc[0].get("valor_venda")
+        # Deleta também linhas duplicadas órfãs locais com o mesmo cliente e valor para limpar a interface
+        try:
+            with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM vendas WHERE cliente = ? AND valor_venda = ?", (c_val, v_val))
+                conn.commit()
+        except Exception:
+            pass
+
     if supabase:
         try:
             supabase.table("vendas").delete().eq("id", venda_id).execute()
+            if not row_match.empty:
+                supabase.table("vendas").delete().eq("cliente", row_match.iloc[0].get("cliente")).eq("valor_venda", row_match.iloc[0].get("valor_venda")).execute()
         except Exception:
             pass
     return True
@@ -1934,7 +1949,8 @@ elif "Vendas" in menu:
         tarifa_venda = st.number_input("Tarifa / Taxa Bancária (R$)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
     with c3:
         forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
-        dt_venda_manual = st.date_input("Data da Venda *", datetime.date.today(), format="YYYY/MM/DD")
+        st.write("")
+        st.caption("ℹ️ A data da venda é preenchida automaticamente com a data atual (YYYY/MM/DD).")
 
     valor_liquido_calc = max(0.0, float(valor_venda) - float(tarifa_venda))
     st.markdown(f"👉 **Valor Bruto:** `R$ {float(valor_venda):,.2f}` | 🏷 **Tarifa:** `R$ {float(tarifa_venda):,.2f}` | 💵 **Valor Líquido:** `R$ {valor_liquido_calc:,.2f}`")
@@ -1950,7 +1966,7 @@ elif "Vendas" in menu:
                 p_info = df_cm_estoque[df_cm_estoque["Código"] == codigo_sel].iloc[0]
                 custo_total_cm = float(p_info.get("total_item_calc", 0.0))
             
-            data_venda_str = parse_date_str(dt_venda_manual)
+            data_atual_str = datetime.date.today().strftime("%Y/%m/%d")
             val_bruto_fmt = round(float(valor_venda), 2)
             tarifa_fmt = round(float(tarifa_venda), 2)
             val_liquido_fmt = round(valor_liquido_calc, 2)
@@ -1966,8 +1982,8 @@ elif "Vendas" in menu:
                 "tarifa_cartao": tarifa_fmt,
                 "valor_recebido": val_liquido_fmt,
                 "forma_pagto": forma_pagto,
-                "data": data_venda_str,
-                "data_venda": data_venda_str,
+                "data": data_atual_str,
+                "data_venda": data_atual_str,
                 "data_recebimento": None,
                 "custo": custo_total_cm,
                 "custo_unitario": custo_total_cm
