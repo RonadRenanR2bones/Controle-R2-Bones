@@ -1890,30 +1890,43 @@ elif "Estoque" in menu:
 elif "Vendas" in menu:
     st.subheader("🛒 Lançar Nova Venda")
     
-    # Recarrega a tabela de produtos para garantir estoque atualizado em tempo real após dar entrada
-    df_produtos_atual = fetch_data("produtos")
-    if not df_produtos_atual.empty and "codigo" in df_produtos_atual.columns:
-        df_produtos_atual = df_produtos_atual[~df_produtos_atual["codigo"].astype(str).str.strip().isin(CODIGOS_REMOVER)].reset_index(drop=True)
-    
+    # Obtém o estoque unificado a partir de Compra de Mercadorias (pedidos entregues) e abate as vendas realizadas
+    df_cm_vendas = get_df_compra_mercadorias()
     map_estoque_disponivel = {}
     opts = []
     
-    if not df_produtos_atual.empty:
-        col_q_prod = "qtd_estoque" if "qtd_estoque" in df_produtos_atual.columns else ("qtd" if "qtd" in df_produtos_atual.columns else "estoque")
-        if col_q_prod in df_produtos_atual.columns:
-            df_produtos_atual["_qtd_est"] = pd.to_numeric(df_produtos_atual[col_q_prod], errors="coerce").fillna(0).astype(int)
-        else:
-            df_produtos_atual["_qtd_est"] = 1
+    if not df_cm_vendas.empty:
+        df_vendas_atual_v = fetch_data("vendas")
+        qtd_vendida_por_codigo = {}
+        if not df_vendas_atual_v.empty:
+            col_cv_v = "codigo_bone" if "codigo_bone" in df_vendas_atual_v.columns else ("codigo" if "codigo" in df_vendas_atual_v.columns else "codigo_produto")
+            col_qv_v = "qtd" if "qtd" in df_vendas_atual_v.columns else "quantidade"
+            if col_cv_v in df_vendas_atual_v.columns and col_qv_v in df_vendas_atual_v.columns:
+                for _, rv in df_vendas_atual_v.iterrows():
+                    c_v_code = str(rv.get(col_cv_v, "")).strip()
+                    q_v_val = int(pd.to_numeric(rv.get(col_qv_v, 1), errors="coerce") or 1)
+                    if c_v_code:
+                        qtd_vendida_por_codigo[c_v_code] = qtd_vendida_por_codigo.get(c_v_code, 0) + q_v_val
+
+        for _, r in df_cm_vendas.iterrows():
+            cod_item = str(r.get("Código", "")).strip()
+            if not cod_item or cod_item.lower() == "none":
+                continue
+            q_vendida = qtd_vendida_por_codigo.get(cod_item, 0)
+            q_disp = max(0, 1 - q_vendida)
             
-        df_prod_disp = df_produtos_atual[df_produtos_atual["_qtd_est"] > 0].copy()
-        
-        for _, r in df_prod_disp.iterrows():
-            cod_item = str(r.get("codigo", "")).strip()
-            q_disp = int(r.get("_qtd_est", 1))
-            frase_item = str(r.get("frase", "")).strip()
-            cor_item = str(r.get("cor", "")).strip()
-            map_estoque_disponivel[cod_item] = q_disp
-            opts.append(f"[{cod_item}] \"{frase_item}\" - Cor: {cor_item} (Disponível: {q_disp} un)")
+            if not df_produtos.empty and "codigo" in df_produtos.columns:
+                p_match = df_produtos[df_produtos["codigo"].astype(str).str.strip() == cod_item]
+                if not p_match.empty:
+                    col_qp = "qtd_estoque" if "qtd_estoque" in p_match.columns else ("qtd" if "qtd" in p_match.columns else "estoque")
+                    q_disp_p = int(pd.to_numeric(p_match.iloc[0].get(col_qp, 1), errors="coerce") or 1)
+                    q_disp = min(q_disp, q_disp_p)
+
+            if q_disp > 0:
+                frase_item = str(r.get("Arte Estampada", "")).strip()
+                cor_item = str(r.get("Cor do Boné", "")).strip()
+                map_estoque_disponivel[cod_item] = q_disp
+                opts.append(f"[{cod_item}] \"{frase_item}\" - Cor: {cor_item} (Disponível: {q_disp} un)")
 
     if not opts:
         st.warning("⚠ Nenhum boné disponível em estoque para venda no momento. Dê entrada em um pedido no menu 'Pedidos' para disponibilizar produtos.")
