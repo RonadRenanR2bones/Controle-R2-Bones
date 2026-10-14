@@ -549,7 +549,6 @@ def normalizar_df_vendas(df: pd.DataFrame) -> pd.DataFrame:
     else:
         df_res["liquido_recebido_calc"] = df_res["valor_bruto_calc"] - df_res["tarifa_calc"]
 
-    # Remove duplicatas exatas baseadas nos principais campos para evitar replicações visuais
     cols_para_dedup = [c for c in ["codigo_bone", "codigo", "cliente", "qtd", "valor_venda", "data"] if c in df_res.columns]
     if cols_para_dedup:
         df_res = df_res.drop_duplicates(subset=cols_para_dedup, keep="first")
@@ -589,14 +588,12 @@ def safe_delete_venda(venda_id) -> bool:
     if venda_id in (None, ""):
         return False
     
-    # Busca a linha atual para garantir a remoção correta de eventuais duplicatas com o mesmo ID ou conteúdo
     row_match = carregar_dataframe("SELECT * FROM vendas WHERE id = ?", (venda_id,))
     
     sqlite_delete_record("vendas", venda_id)
     if not row_match.empty and "cliente" in row_match.columns and "valor_venda" in row_match.columns:
         c_val = row_match.iloc[0].get("cliente")
         v_val = row_match.iloc[0].get("valor_venda")
-        # Deleta também linhas duplicadas órfãs locais com o mesmo cliente e valor para limpar a interface
         try:
             with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
                 cur = conn.cursor()
@@ -624,10 +621,26 @@ def atualizar_caixa_da_venda(venda_antiga: dict, venda_nova: dict | None = None,
         return
 
     if not supabase:
+        # Remover também do caixa local SQLite
+        try:
+            with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM caixa WHERE desc = ?", (desc_antiga,))
+                conn.commit()
+        except Exception:
+            pass
         return
+
     try:
         if excluir:
             supabase.table("caixa").delete().eq("data", parse_date_str(data_rec)).eq("desc", desc_antiga).execute()
+            try:
+                with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
+                    cur = conn.cursor()
+                    cur.execute("DELETE FROM caixa WHERE desc = ?", (desc_antiga,))
+                    conn.commit()
+            except Exception:
+                pass
         elif venda_nova is not None:
             data_nova = venda_nova.get("data_recebimento") or venda_nova.get("data")
             v_bruto_n = float(venda_nova.get("valor_venda", 0) or 0)
@@ -902,7 +915,6 @@ def get_df_compra_mercadorias():
 def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, df_devolucoes_in):
     lista_movimentos = []
 
-    # 1. Compras de Mercadorias
     df_cm = get_df_compra_mercadorias()
     if not df_cm.empty:
         df_cm["data_str"] = df_cm["Data_Raw"].apply(parse_date_str)
@@ -912,7 +924,6 @@ def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, 
             if tot_c > 0:
                 lista_movimentos.append({"Data_Val": r["data_str"], "Valor_Num": -tot_c})
 
-    # 2. Recebimentos Líquidos das Vendas
     if not df_vendas_in.empty:
         df_v_norm = normalizar_df_vendas(df_vendas_in)
         col_dt_rec = "data_recebimento" if "data_recebimento" in df_v_norm.columns else ("data_receb" if "data_receb" in df_v_norm.columns else None)
@@ -924,14 +935,12 @@ def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, 
                 if val_v_calc > 0:
                     lista_movimentos.append({"Data_Val": parse_date_str(dt_rec_val), "Valor_Num": val_v_calc})
 
-    # 3. Custos e Despesas
     if not df_custos_in.empty:
         for _, r in df_custos_in.iterrows():
             val_c = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
             if val_c > 0:
                 lista_movimentos.append({"Data_Val": parse_date_str(r.get("data")), "Valor_Num": -val_c})
 
-    # 4. Aportes e Devoluções
     if not df_aportes_in.empty:
         for _, r in df_aportes_in.iterrows():
             val_ap = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
@@ -943,7 +952,6 @@ def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, 
                 dt_ap_str = parse_date_str(dt_ap_raw) if dt_ap_raw else datetime.date.today().strftime("%Y-%m-%d")
                 lista_movimentos.append({"Data_Val": dt_ap_str, "Valor_Num": val_final})
 
-    # 5. Devoluções de Vendas
     if not df_devolucoes_in.empty:
         for _, r in df_devolucoes_in.iterrows():
             val_dev = float(pd.to_numeric(r.get("valor_devolvido", 0.0), errors="coerce") or 0.0)
@@ -957,7 +965,6 @@ def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, 
         return float(df_ext["Valor_Num"].sum())
     return 0.0
 
-# Carregar tabelas do Supabase / SQLite
 df_produtos = fetch_data("produtos")
 
 CODIGOS_REMOVER = ["BL-0001", "BL-0002", "BL-0003", "BL-0004", "Teste1", "Teste 1"]
@@ -1890,7 +1897,6 @@ elif "Estoque" in menu:
 elif "Vendas" in menu:
     st.subheader("🛒 Lançar Nova Venda")
     
-    # Obtém o estoque unificado a partir de Compra de Mercadorias (pedidos entregues) e abate as vendas realizadas
     df_cm_vendas = get_df_compra_mercadorias()
     map_estoque_disponivel = {}
     opts = []
@@ -2175,7 +2181,7 @@ elif "Contas a Receber" in menu:
                 resumo_cr_str = f"👉 Valor Bruto: R$ {v_bruto:,.2f} | 🏷 Tarifa: R$ {v_tarifa:,.2f} | 💵 Valor Líquido: R$ {v_liq:,.2f}"
 
                 with st.container(border=True):
-                    rc1, rc2, rc3 = st.columns([3, 4, 2])
+                    rc1, rc2, rc3, rc4 = st.columns([2.5, 3.5, 2, 2])
                     with rc1:
                         st.markdown(f"**Venda ID #{v_id}** | Data: `{v_data}`")
                         st.write(f"Código: `{v_cod}` | Cliente: **{v_cli}** ({v_qtd}un)")
@@ -2184,8 +2190,8 @@ elif "Contas a Receber" in menu:
                         st.markdown(resumo_cr_str)
                     with rc3:
                         key_input_rec = f"dt_rec_cr_{v_id}"
-                        dt_receb_input = st.date_input("Data de Recebimento", datetime.date.today(), format="YYYY/MM/DD", key=key_input_rec)
-                        if st.button("✅ Confirmar Recebimento", key=f"btn_rec_cr_{v_id}", use_container_width=True, type="primary"):
+                        dt_receb_input = st.date_input("Data Recebimento", datetime.date.today(), format="YYYY/MM/DD", key=key_input_rec)
+                        if st.button("✅ Confirmar", key=f"btn_rec_cr_{v_id}", use_container_width=True, type="primary"):
                             dt_rec_str = parse_date_str(dt_receb_input)
                             payload_upd = {
                                 "data_recebimento": dt_rec_str,
@@ -2200,6 +2206,15 @@ elif "Contas a Receber" in menu:
                                 })
                                 st.session_state["flash_success"] = f"🎉 Recebimento da Venda ID #{v_id} confirmado com sucesso! R$ {v_liq:,.2f} lançado no Fluxo de Caixa."
                                 st.rerun()
+                    with rc4:
+                        st.write("")
+                        st.write("")
+                        if st.button("❌ Cancelar Venda", key=f"btn_cancel_pend_{v_id}", use_container_width=True, type="secondary"):
+                            estornar_estoque(v_cod, v_qtd)
+                            atualizar_caixa_da_venda(r, excluir=True)
+                            safe_delete_venda(v_id)
+                            st.session_state["flash_success"] = f"🗑 Venda ID #{v_id} cancelada e {v_qtd} unidade(s) estornada(s) para o estoque!"
+                            st.rerun()
         else:
             st.info("🎉 Nenhuma venda pendente de recebimento no momento!")
 
@@ -2208,21 +2223,33 @@ elif "Contas a Receber" in menu:
         if col_dt_rec_cr:
             df_recebidas = df_cr[df_cr[col_dt_rec_cr].notna() & df_cr[col_dt_rec_cr].astype(str).str.strip().ne("") & df_cr[col_dt_rec_cr].astype(str).str.lower().ne("none")].copy()
             if not df_recebidas.empty:
-                lista_rec_exib = []
                 for _, r in df_recebidas.iterrows():
+                    v_id = r.get("id")
+                    v_data_v = format_data_br(r.get("data_venda") or r.get("data"))
+                    v_data_r = format_data_br(r.get("data_recebimento"))
+                    v_cod = str(r.get("codigo_bone") or r.get("codigo") or "")
+                    v_cli = str(r.get("cliente") or "")
+                    v_qtd = int(pd.to_numeric(r.get("qtd", 1), errors="coerce") or 1)
                     v_bruto_r = parse_money(r.get('valor_venda', 0))
                     v_tarifa_r = float(r.get('tarifa_calc', 0.0))
                     v_liq_r = float(r.get('liquido_recebido_calc', 0))
                     resumo_rec_str = f"👉 Valor Bruto: R$ {v_bruto_r:,.2f} | 🏷 Tarifa: R$ {v_tarifa_r:,.2f} | 💵 Valor Líquido: R$ {v_liq_r:,.2f}"
-                    lista_rec_exib.append({
-                        "ID": r.get("id"),
-                        "Data Venda": format_data_br(r.get("data_venda") or r.get("data")),
-                        "Data Recebimento": format_data_br(r.get("data_recebimento")),
-                        "Código": str(r.get("codigo_bone") or r.get("codigo") or ""),
-                        "Cliente": str(r.get("cliente") or ""),
-                        "Resumo Financeiro": resumo_rec_str
-                    })
-                st.dataframe(pd.DataFrame(lista_rec_exib), use_container_width=True, hide_index=True)
+
+                    with st.container(border=True):
+                        rc_1, rc_2, rc_3 = st.columns([3, 5, 2])
+                        with rc_1:
+                            st.markdown(f"**Venda ID #{v_id}** | Venda: `{v_data_v}` | Recebimento: `{v_data_r}`")
+                            st.write(f"Código: `{v_cod}` | Cliente: **{v_cli}** ({v_qtd}un)")
+                        with rc_2:
+                            st.markdown(resumo_rec_str)
+                        with rc_3:
+                            st.write("")
+                            if st.button("❌ Cancelar / Estornar", key=f"btn_cancel_rec_{v_id}", use_container_width=True, type="secondary"):
+                                estornar_estoque(v_cod, v_qtd)
+                                atualizar_caixa_da_venda(r, excluir=True)
+                                safe_delete_venda(v_id)
+                                st.session_state["flash_success"] = f"🗑 Venda ID #{v_id} (já recebida) cancelada, removida do caixa e {v_qtd} unidade(s) estornada(s) para o estoque!"
+                                st.rerun()
             else:
                 st.info("Nenhuma venda recebida registrada ainda.")
     else:
@@ -2529,7 +2556,6 @@ elif "Caixa" in menu or "Fluxo" in menu:
     
     lista_movimentos = []
 
-    # 1. Compras do Módulo Compra de Mercadorias
     df_cm = get_df_compra_mercadorias()
     if not df_cm.empty:
         df_cm["data_str"] = df_cm["Data_Raw"].apply(parse_date_str)
@@ -2553,7 +2579,6 @@ elif "Caixa" in menu or "Fluxo" in menu:
                     "Valor_Num": -tot_c
                 })
 
-    # 2. Recebimentos Líquidos das Vendas
     if not df_vendas.empty:
         df_v_norm = normalizar_df_vendas(df_vendas)
         col_dt_rec = "data_recebimento" if "data_recebimento" in df_v_norm.columns else None
@@ -2575,7 +2600,6 @@ elif "Caixa" in menu or "Fluxo" in menu:
                         "Valor_Num": val_v_calc
                     })
 
-    # 3. Custos Avulsos, Feiras e Tarifas
     if not df_custos.empty:
         for _, r in df_custos.iterrows():
             val_c = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
@@ -2602,7 +2626,6 @@ elif "Caixa" in menu or "Fluxo" in menu:
                     "Valor_Num": -val_c
                 })
 
-    # 4. Aporte e Devoluções de Sócios
     if not df_aportes.empty:
         for _, r in df_aportes.iterrows():
             val_ap = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
@@ -2625,7 +2648,6 @@ elif "Caixa" in menu or "Fluxo" in menu:
                     "Valor_Num": -abs(val_ap) if is_devolucao else abs(val_ap)
                 })
 
-    # 5. Devoluções de Vendas como Saída
     if not df_devolucoes.empty:
         for _, r in df_devolucoes.iterrows():
             val_dev = float(pd.to_numeric(r.get("valor_devolvido", 0.0), errors="coerce") or 0.0)
