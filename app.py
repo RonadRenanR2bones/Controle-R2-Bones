@@ -1971,8 +1971,9 @@ elif "Vendas" in menu:
             st.error("Selecione um produto com estoque válido!")
         else:
             custo_total_cm = 0.0
-            if not df_produtos_atual.empty and codigo_sel in df_produtos_atual["codigo"].values:
-                p_info = df_produtos_atual[df_produtos_atual["codigo"] == codigo_sel].iloc[0]
+            df_produtos_venda_final = fetch_data("produtos")
+            if not df_produtos_venda_final.empty and "codigo" in df_produtos_venda_final.columns and codigo_sel in df_produtos_venda_final["codigo"].values:
+                p_info = df_produtos_venda_final[df_produtos_venda_final["codigo"].astype(str).str.strip() == codigo_sel].iloc[0]
                 c_base = float(pd.to_numeric(p_info.get("custo", 29.0), errors="coerce") or 29.0)
                 e_ext = float(pd.to_numeric(p_info.get("estampa_extra", 0.0), errors="coerce") or 0.0)
                 m_bord = float(pd.to_numeric(p_info.get("matriz_bordado", 0.0), errors="coerce") or 0.0)
