@@ -1890,36 +1890,33 @@ elif "Estoque" in menu:
 elif "Vendas" in menu:
     st.subheader("🛒 Lançar Nova Venda")
     
-    df_cm_estoque = get_df_compra_mercadorias()
-    map_estoque_disponivel = {}
+    # Recarrega a tabela de produtos para garantir estoque atualizado em tempo real após dar entrada
+    df_produtos_atual = fetch_data("produtos")
+    if not df_produtos_atual.empty and "codigo" in df_produtos_atual.columns:
+        df_produtos_atual = df_produtos_atual[~df_produtos_atual["codigo"].astype(str).str.strip().isin(CODIGOS_REMOVER)].reset_index(drop=True)
     
-    if not df_cm_estoque.empty:
-        df_cm_estoque = df_cm_estoque[~df_cm_estoque["Código"].isin(CODIGOS_REMOVER)]
-        
-        if not df_produtos.empty and "codigo" in df_produtos.columns:
-            col_q = "qtd_estoque" if "qtd_estoque" in df_produtos.columns else ("qtd" if "qtd" in df_produtos.columns else "estoque")
-            df_cm_estoque = df_cm_estoque.merge(df_produtos[["codigo", col_q]], left_on="Código", right_on="codigo", how="left")
-            df_cm_estoque["qtd_disp"] = pd.to_numeric(df_cm_estoque[col_q], errors="coerce").fillna(1).astype(int)
+    map_estoque_disponivel = {}
+    opts = []
+    
+    if not df_produtos_atual.empty:
+        col_q_prod = "qtd_estoque" if "qtd_estoque" in df_produtos_atual.columns else ("qtd" if "qtd" in df_produtos_atual.columns else "estoque")
+        if col_q_prod in df_produtos_atual.columns:
+            df_produtos_atual["_qtd_est"] = pd.to_numeric(df_produtos_atual[col_q_prod], errors="coerce").fillna(0).astype(int)
         else:
-            df_cm_estoque["qtd_disp"] = 0
-
-        df_cm_estoque["qtd_disp"] = pd.to_numeric(
-            df_cm_estoque["qtd_disp"], errors="coerce"
-        ).fillna(0).astype(int)
-        df_cm_disponivel = df_cm_estoque[df_cm_estoque["qtd_disp"] > 0].copy()
+            df_produtos_atual["_qtd_est"] = 1
+            
+        df_prod_disp = df_produtos_atual[df_produtos_atual["_qtd_est"] > 0].copy()
         
-        opts = []
-        for _, r in df_cm_disponivel.iterrows():
-            cod_item = r['Código']
-            q_disp = int(r['qtd_disp'])
+        for _, r in df_prod_disp.iterrows():
+            cod_item = str(r.get("codigo", "")).strip()
+            q_disp = int(r.get("_qtd_est", 1))
+            frase_item = str(r.get("frase", "")).strip()
+            cor_item = str(r.get("cor", "")).strip()
             map_estoque_disponivel[cod_item] = q_disp
-            opts.append(f"[{cod_item}] \"{r.get('Arte Estampada','')}\" - Cor: {r.get('Cor do Boné','')} (Disponível: {q_disp} un)")
-    else:
-        df_cm_disponivel = pd.DataFrame()
-        opts = []
+            opts.append(f"[{cod_item}] \"{frase_item}\" - Cor: {cor_item} (Disponível: {q_disp} un)")
 
     if not opts:
-        st.warning("⚠ Nenhum boné disponível em estoque para venda no momento.")
+        st.warning("⚠ Nenhum boné disponível em estoque para venda no momento. Dê entrada em um pedido no menu 'Pedidos' para disponibilizar produtos.")
         prod_sel = None
         codigo_sel = ""
     else:
@@ -1949,8 +1946,7 @@ elif "Vendas" in menu:
         tarifa_venda = st.number_input("Tarifa / Taxa Bancária (R$)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
     with c3:
         forma_pagto = st.selectbox("Forma Pagto *", ["PIX", "Cartão", "Dinheiro", "Brinde"])
-        st.write("")
-        st.caption("ℹ️ A data da venda é preenchida automaticamente com a data atual (YYYY/MM/DD).")
+        data_venda_manual = st.date_input("Data da Venda *", datetime.date.today(), format="YYYY/MM/DD", help="Preencha manualmente a data em que a venda foi realizada.")
 
     valor_liquido_calc = max(0.0, float(valor_venda) - float(tarifa_venda))
     st.markdown(f"👉 **Valor Bruto:** `R$ {float(valor_venda):,.2f}` | 🏷 **Tarifa:** `R$ {float(tarifa_venda):,.2f}` | 💵 **Valor Líquido:** `R$ {valor_liquido_calc:,.2f}`")
@@ -1962,11 +1958,14 @@ elif "Vendas" in menu:
             st.error("Selecione um produto com estoque válido!")
         else:
             custo_total_cm = 0.0
-            if not df_cm_estoque.empty and codigo_sel in df_cm_estoque["Código"].values:
-                p_info = df_cm_estoque[df_cm_estoque["Código"] == codigo_sel].iloc[0]
-                custo_total_cm = float(p_info.get("total_item_calc", 0.0))
-            
-            data_atual_str = datetime.date.today().strftime("%Y/%m/%d")
+            if not df_produtos_atual.empty and codigo_sel in df_produtos_atual["codigo"].values:
+                p_info = df_produtos_atual[df_produtos_atual["codigo"] == codigo_sel].iloc[0]
+                c_base = float(pd.to_numeric(p_info.get("custo", 29.0), errors="coerce") or 29.0)
+                e_ext = float(pd.to_numeric(p_info.get("estampa_extra", 0.0), errors="coerce") or 0.0)
+                m_bord = float(pd.to_numeric(p_info.get("matriz_bordado", 0.0), errors="coerce") or 0.0)
+                custo_total_cm = c_base + e_ext + m_bord
+
+            data_venda_str = parse_date_str(data_venda_manual)
             val_bruto_fmt = round(float(valor_venda), 2)
             tarifa_fmt = round(float(tarifa_venda), 2)
             val_liquido_fmt = round(valor_liquido_calc, 2)
@@ -1982,8 +1981,8 @@ elif "Vendas" in menu:
                 "tarifa_cartao": tarifa_fmt,
                 "valor_recebido": val_liquido_fmt,
                 "forma_pagto": forma_pagto,
-                "data": data_atual_str,
-                "data_venda": data_atual_str,
+                "data": data_venda_str,
+                "data_venda": data_venda_str,
                 "data_recebimento": None,
                 "custo": custo_total_cm,
                 "custo_unitario": custo_total_cm
@@ -1991,259 +1990,8 @@ elif "Vendas" in menu:
 
             if safe_insert("vendas", payload_venda):
                 dar_baixa_estoque_venda(codigo_sel.strip(), int(qtd_venda))
-                st.session_state["flash_success"] = f"🎉 Venda salva e encaminhada para 'Contas a Receber'! Líquido estimado: R$ {val_liquido_fmt:,.2f}"
-                st.rerun()
-
-    st.markdown("---")
-    with st.expander("📥 Importar Vendas via Planilha (.xlsx / .csv)", expanded=False):
-        st.markdown("##### 📌 Modelo de Planilha de Vendas:")
-        df_modelo_vendas = pd.DataFrame([{
-            "Código": "BL-0005",
-            "Quantidade": 1,
-            "Valor Bruto": 80.00,
-            "Tarifa": 3.50,
-            "Nome do Cliente": "João Silva",
-            "Forma de Pagto": "Cartão"
-        }])
-        st.dataframe(df_modelo_vendas, use_container_width=True, hide_index=True)
-        
-        output_v = io.BytesIO()
-        with pd.ExcelWriter(output_v, engine='openpyxl') as writer:
-            df_modelo_vendas.to_excel(writer, index=False, sheet_name="Modelo_Vendas")
-        
-        st.download_button(
-            "📥 Baixar Modelo de Planilha de Vendas (.xlsx)",
-            data=output_v.getvalue(),
-            file_name="Modelo_Importacao_Vendas_R2.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        
-        uploaded_v_file = st.file_uploader("Enviar arquivo de vendas (.xlsx ou .csv)", type=["xlsx", "csv"], key="uploader_vendas_final")
-        if uploaded_v_file is not None:
-            try:
-                df_imp_v = pd.read_csv(uploaded_v_file, dtype=str) if uploaded_v_file.name.endswith(".csv") else pd.read_excel(uploaded_v_file, dtype=str)
-                st.markdown("##### 🔍 Pré-visualização das Vendas a Importar:")
-                st.dataframe(df_imp_v, use_container_width=True)
-                
-                if st.button("🚀 Confirmar Importação de Vendas", type="primary", use_container_width=True):
-                    count_v_imp = 0
-                    data_atual_str = datetime.date.today().strftime("%Y/%m/%d")
-                    for _, row in df_imp_v.iterrows():
-                        cod_v = str(row.get('Código', row.get('codigo', ''))).strip()
-                        qtd_v = int(pd.to_numeric(row.get('Quantidade', row.get('qtd', 1)), errors='coerce') or 1)
-                        val_v = parse_money(row.get('Valor Bruto', row.get('valor_venda', row.get('valor', 0.0))))
-                        tarifa_v = parse_money(row.get('Tarifa', row.get('tarifa', row.get('tarifa_bancaria', row.get('tarifa_cartao', 0.0)))))
-                        val_liq_v = max(0.0, val_v - tarifa_v)
-                        
-                        cli_v = str(row.get('Nome do Cliente', row.get('cliente', ''))).strip()
-                        pag_v = str(row.get('Forma de Pagto', row.get('forma_pagto', 'PIX'))).strip()
-                        
-                        payload_imp_v = {
-                            "codigo_bone": cod_v,
-                            "codigo": cod_v,
-                            "cliente": cli_v,
-                            "qtd": qtd_v,
-                            "valor_venda": val_v,
-                            "tarifa": tarifa_v,
-                            "tarifa_bancaria": tarifa_v,
-                            "tarifa_cartao": tarifa_v,
-                            "valor_recebido": val_liq_v,
-                            "forma_pagto": pag_v,
-                            "data": data_atual_str,
-                            "data_venda": data_atual_str,
-                            "data_recebimento": None,
-                            "custo": val_v,
-                            "custo_unitario": val_v
-                        }
-
-                        safe_insert("vendas", payload_imp_v)
-                        dar_baixa_estoque_venda(cod_v, qtd_v)
-                        count_v_imp += 1
-
-                    st.session_state["flash_success"] = f"🎉 {count_v_imp} vendas importadas para Contas a Receber com sucesso!"
-                    st.rerun()
-            except Exception as ex_v:
-                st.error(f"Erro ao processar planilha de vendas: {ex_v}")
-
-    st.markdown("---")
-    st.subheader("📋 Histórico Detalhado de Vendas")
-    st.caption("As vendas são agrupadas por mês. Exibe a coluna dinâmica com Valor Bruto, Tarifa e Líquido Recebido. Use ✏️ para editar ou 🗑 para cancelar.")
-
-    df_historico_vendas = fetch_data("vendas")
-
-    if not df_historico_vendas.empty:
-        df_historico_vendas = normalizar_df_vendas(df_historico_vendas)
-        col_data_hist = "data_venda" if "data_venda" in df_historico_vendas.columns else ("data" if "data" in df_historico_vendas.columns else None)
-        col_codigo_hist = "codigo_bone" if "codigo_bone" in df_historico_vendas.columns else ("codigo" if "codigo" in df_historico_vendas.columns else "codigo_produto")
-        if col_data_hist:
-            df_historico_vendas["_data_hist"] = df_historico_vendas[col_data_hist].apply(parse_date_str)
-            df_historico_vendas["_mes_hist"] = pd.to_datetime(df_historico_vendas["_data_hist"], format="%Y/%m/%d", errors="coerce").dt.strftime("%Y-%m")
-        else:
-            df_historico_vendas["_data_hist"] = datetime.date.today().strftime("%Y/%m/%d")
-            df_historico_vendas["_mes_hist"] = datetime.date.today().strftime("%Y-%m")
-
-        with st.expander("🛠 Seleção e Exclusão em Lote de Vendas", expanded=False):
-            ids_vendas_disp = df_historico_vendas["id"].tolist()
-            vendas_selecionadas_lote = st.multiselect(
-                "Selecione as vendas para exclusão em lote:",
-                options=ids_vendas_disp,
-                format_func=lambda x: f"Venda ID #{x} - Cliente: {df_historico_vendas[df_historico_vendas['id'] == x]['cliente'].values[0] if not df_historico_vendas[df_historico_vendas['id'] == x].empty else ''}"
-            )
-            if st.button("🗑 Excluir Vendas Selecionadas em Lote", type="primary"):
-                if not vendas_selecionadas_lote:
-                    st.warning("Nenhuma venda selecionada.")
-                else:
-                    count_del = 0
-                    for v_id_del in vendas_selecionadas_lote:
-                        row_del = df_historico_vendas[df_historico_vendas["id"] == v_id_del]
-                        if not row_del.empty:
-                            r_d_dict = row_del.iloc[0].to_dict()
-                            cod_est = str(r_d_dict.get(col_codigo_hist, ""))
-                            qtd_est = int(pd.to_numeric(r_d_dict.get("qtd", 1), errors="coerce") or 1)
-                            estornar_estoque(cod_est, qtd_est)
-                            if safe_delete_venda(v_id_del):
-                                atualizar_caixa_da_venda(r_d_dict, excluir=True)
-                                count_del += 1
-                    st.session_state["flash_success"] = f"🗑 {count_del} venda(s) excluída(s) em lote com sucesso e itens estornados ao estoque!"
-                    st.rerun()
-
-        meses_hist = [m for m in sorted(df_historico_vendas["_mes_hist"].dropna().unique().tolist(), reverse=True)]
-        if not meses_hist:
-            meses_hist = [datetime.date.today().strftime("%Y-%m")]
-
-        id_edicao = st.session_state.get("editar_venda_id")
-        if id_edicao is not None:
-            linha_edicao = df_historico_vendas[df_historico_vendas["id"].astype(str) == str(id_edicao)]
-            if not linha_edicao.empty:
-                venda_edit = linha_edicao.iloc[0].to_dict()
-                st.markdown("### ✏️ Editar Venda")
-                with st.container(border=True):
-                    c_ed1, c_ed2, c_ed3, c_ed4 = st.columns(4)
-                    cliente_atual = str(venda_edit.get("cliente", "") or "")
-                    bruto_atual = parse_money(venda_edit.get("valor_venda", venda_edit.get("valor", 0.0)))
-                    
-                    tarifa_atual = 0.0
-                    for t_c in ["tarifa", "tarifa_bancaria", "tarifa_cartao"]:
-                        if t_c in venda_edit and pd.notna(venda_edit[t_c]):
-                            val_t_cand = parse_money(venda_edit[t_c])
-                            if val_t_cand > 0:
-                                tarifa_atual = val_t_cand
-                                break
-
-                    forma_atual = str(venda_edit.get("forma_pagto", "PIX") or "PIX")
-                    formas_pagto = ["PIX", "Cartão", "Dinheiro", "Brinde"]
-                    if forma_atual and forma_atual not in formas_pagto:
-                        formas_pagto.append(forma_atual)
-
-                    with c_ed1:
-                        cliente_editado = st.text_input("Cliente *", value=cliente_atual, key=f"cliente_edit_{id_edicao}")
-                    with c_ed2:
-                        bruto_editado = st.number_input("Valor Bruto (R$) *", min_value=0.0, value=float(bruto_atual), step=5.0, format="%.2f", key=f"bruto_edit_{id_edicao}")
-                    with c_ed3:
-                        tarifa_editada = st.number_input("Tarifa / Taxa (R$)", min_value=0.0, value=float(tarifa_atual), step=1.0, format="%.2f", key=f"tarifa_edit_{id_edicao}")
-                    with c_ed4:
-                        forma_editada = st.selectbox("Forma de Pagamento *", formas_pagto, index=formas_pagto.index(forma_atual), key=f"forma_edit_{id_edicao}")
-
-                    liq_editado_calc = max(0.0, float(bruto_editado) - float(tarifa_editada))
-                    st.write(f"💵 **Líquido recalculado:** `R$ {liq_editado_calc:,.2f}`")
-
-                    ce1, ce2, ce3 = st.columns([1, 1, 3])
-                    with ce1:
-                        salvar_edicao = st.button("💾 Salvar Alterações", type="primary", use_container_width=True, key=f"salvar_edicao_{id_edicao}")
-                    with ce2:
-                        cancelar_edicao = st.button("↩ Cancelar", use_container_width=True, key=f"cancelar_edicao_{id_edicao}")
-
-                    if cancelar_edicao:
-                        st.session_state.pop("editar_venda_id", None)
-                        st.rerun()
-
-                    if salvar_edicao:
-                        if not cliente_editado.strip():
-                            st.error("Informe o nome do cliente.")
-                        else:
-                            payload_edicao = {
-                                "cliente": cliente_editado.strip(),
-                                "valor_venda": round(float(bruto_editado), 2),
-                                "tarifa": round(float(tarifa_editada), 2),
-                                "tarifa_bancaria": round(float(tarifa_editada), 2),
-                                "tarifa_cartao": round(float(tarifa_editada), 2),
-                                "valor_recebido": round(liq_editado_calc, 2),
-                                "forma_pagto": forma_editada
-                            }
-                            if safe_update_venda(id_edicao, payload_edicao):
-                                venda_nova_caixa = venda_edit.copy()
-                                venda_nova_caixa.update(payload_edicao)
-                                atualizar_caixa_da_venda(venda_edit, venda_nova_caixa, excluir=False)
-                                st.session_state.pop("editar_venda_id", None)
-                                st.session_state["flash_success"] = f"✏️ Venda #{id_edicao} atualizada com sucesso!"
-                                st.rerun()
-            else:
-                st.session_state.pop("editar_venda_id", None)
-
-        for mes_hist in meses_hist:
-            df_mes_hist = df_historico_vendas[df_historico_vendas["_mes_hist"] == mes_hist].copy()
-            if df_mes_hist.empty:
-                continue
-            st.markdown(f"#### 📅 Mês: {mes_hist.replace('-', '/')}")
-            df_mes_hist = df_mes_hist.sort_values(by="_data_hist", ascending=False)
-
-            h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([1.1, 0.9, 1.6, 0.6, 4.2, 0.8, 0.5, 0.5], vertical_alignment="center")
-            with h1: st.markdown("**Data**")
-            with h2: st.markdown("**Código**")
-            with h3: st.markdown("**Cliente**")
-            with h4: st.markdown("**Qtd**")
-            with h5: st.markdown("**Resumo Financeiro**")
-            with h6: st.markdown("**Pagto**")
-            with h7: st.markdown("**Edit**")
-            with h8: st.markdown("**Del**")
-            st.divider()
-
-            for _, venda_row in df_mes_hist.iterrows():
-                venda_id = venda_row.get("id")
-                codigo = str(venda_row.get(col_codigo_hist, "") or "").strip()
-                cliente = str(venda_row.get("cliente", "") or "").strip()
-                qtd = int(pd.to_numeric(venda_row.get("qtd", 1), errors="coerce") or 1)
-                valor_bruto = parse_money(venda_row.get("valor_venda", venda_row.get("valor", 0.0)))
-                
-                tarifa_val = float(venda_row.get("tarifa_calc", 0.0))
-                valor_liquido = max(0.0, valor_bruto - tarifa_val)
-                forma = str(venda_row.get("forma_pagto", "") or "")
-                data_hist = str(venda_row.get("_data_hist", ""))
-
-                resumo_financeiro_str = f"👉 Valor Bruto: R$ {valor_bruto:,.2f} | 🏷 Tarifa: R$ {tarifa_val:,.2f} | 💵 Valor Líquido: R$ {valor_liquido:,.2f}"
-
-                r1, r2, r3, r4, r5, r6, r7, r8 = st.columns([1.1, 0.9, 1.6, 0.6, 4.2, 0.8, 0.5, 0.5], vertical_alignment="center")
-                with r1:
-                    st.write(f"**{data_hist}**")
-                with r2:
-                    st.write(f"`{codigo}`")
-                with r3:
-                    st.write(f"{cliente or 'Sem cliente'}")
-                with r4:
-                    st.write(f"{qtd}un")
-                with r5:
-                    st.markdown(resumo_financeiro_str)
-                with r6:
-                    st.write(f"{forma or '-'}")
-                with r7:
-                    if st.button("✏️", key=f"editar_venda_{venda_id}", help="Editar venda"):
-                        st.session_state["editar_venda_id"] = venda_id
-                        st.rerun()
-                with r8:
-                    if st.button("🗑", key=f"excluir_venda_{venda_id}", help="Excluir / Cancelar venda"):
-                        qtd_estorno = max(1, qtd)
-                        if estornar_estoque(codigo, qtd_estorno):
-                            if safe_delete_venda(venda_id):
-                                atualizar_caixa_da_venda(venda_row.to_dict(), excluir=True)
-                                st.session_state["flash_success"] = f"🗑 Venda #{venda_id} cancelada com sucesso. {qtd_estorno} un devolvida(s) ao estoque."
-                                st.rerun()
-                        else:
-                            st.error("Não foi possível estornar a quantidade para o estoque. A venda não foi excluída.")
-                st.divider()
-    else:
-        st.info("Nenhuma venda registrada até o momento.")
-
-elif "Contas a Receber" in menu:
+                st.session_state["flash_success"] = f"🎉 Venda salva com data {data_venda_str} e encaminhada para 'Contas a Receber'! Líquido estimado: R$ {val_liquido_fmt:,.2f}"
+                st.rerun()elif "Contas a Receber" in menu:
     st.subheader("💰 Contas a Receber")
     st.markdown("Gerencie as vendas realizadas que aguardam confirmação de recebimento. Ao confirmar o recebimento, o valor líquido correspondente será lançado automaticamente no Fluxo de Caixa.")
 
