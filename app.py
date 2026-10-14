@@ -1991,7 +1991,9 @@ elif "Vendas" in menu:
             if safe_insert("vendas", payload_venda):
                 dar_baixa_estoque_venda(codigo_sel.strip(), int(qtd_venda))
                 st.session_state["flash_success"] = f"🎉 Venda salva com data {data_venda_str} e encaminhada para 'Contas a Receber'! Líquido estimado: R$ {val_liquido_fmt:,.2f}"
-                st.rerun()elif "Contas a Receber" in menu:
+                st.rerun()
+
+elif "Contas a Receber" in menu:
     st.subheader("💰 Contas a Receber")
     st.markdown("Gerencie as vendas realizadas que aguardam confirmação de recebimento. Ao confirmar o recebimento, o valor líquido correspondente será lançado automaticamente no Fluxo de Caixa.")
 
