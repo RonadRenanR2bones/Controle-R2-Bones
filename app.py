@@ -466,7 +466,10 @@ def format_data_br(val):
     s = str(val).strip()
     if not s or s.lower() in {"none", "nat", "nan", "null"}:
         return ""
-    return parse_date_str(val)
+    try:
+        return datetime.datetime.strptime(parse_date_str(val), "%Y/%m/%d").strftime("%d/%m/%Y")
+    except Exception:
+        return str(val)
 
 def parse_money(val):
     if pd.isna(val) or val is None:
@@ -521,6 +524,15 @@ def fetch_data(table_name: str) -> pd.DataFrame:
         remote_df = pd.DataFrame(res.data)
         if remote_df.empty:
             return local_df
+        # Para o caixa, combina o banco remoto com movimentos locais ainda não
+        # sincronizados. Evita que um caixa remoto parcialmente preenchido esconda
+        # recebimentos que foram gravados localmente durante uma falha de conexão.
+        if table_name == "caixa" and not local_df.empty:
+            combinado = pd.concat([remote_df, local_df], ignore_index=True, sort=False)
+            chaves = [c for c in ("data", "desc", "tipo", "valor") if c in combinado.columns]
+            if chaves:
+                combinado = combinado.drop_duplicates(subset=chaves, keep="first")
+            return combinado
         return remote_df
     except Exception as e:
         err_str = str(e)
@@ -573,16 +585,84 @@ def safe_insert(table_name: str, payload: dict) -> bool:
         return sucesso_local
 
 def safe_update_venda(venda_id, payload: dict) -> bool:
+    """Atualiza a venda localmente e, quando configurado, também no Supabase.
+
+    Não informa sucesso se nenhuma persistência for confirmada.
+    """
     if venda_id in (None, ""):
         return False
-    sqlite_update_record("vendas", venda_id, payload)
+
+    sucesso_local = sqlite_update_record("vendas", venda_id, payload)
     if not supabase:
-        return True
+        return sucesso_local
+
     try:
-        supabase.table("vendas").update(payload).eq("id", venda_id).execute()
+        res = supabase.table("vendas").update(payload).eq("id", venda_id).execute()
+        # O PostgREST normalmente devolve os registros alterados em data.
+        # Se a configuração não devolver representação, a ausência de exceção
+        # ainda confirma que o comando foi aceito.
         return True
-    except Exception:
-        return True
+    except Exception as err:
+        st.error(
+            "Não foi possível atualizar a venda no Supabase. "
+            f"Verifique as colunas da tabela 'vendas'. Detalhe: {err}"
+        )
+        return sucesso_local
+
+
+def registrar_recebimento_caixa(venda: dict, data_recebimento: str, valor_liquido: float) -> bool:
+    """Registra o recebimento no caixa local e remoto, evitando duplicidade por venda.
+
+    A descrição inclui o ID da venda para identificar o movimento de forma estável.
+    """
+    venda_id = venda.get("id")
+    codigo = str(venda.get("codigo_bone") or venda.get("codigo") or "").strip()
+    cliente = str(venda.get("cliente") or "").strip()
+    qtd = int(pd.to_numeric(venda.get("qtd", venda.get("quantidade", 1)), errors="coerce") or 1)
+    descricao = f"Recebimento Venda #{venda_id} - {codigo} ({qtd}un) - {cliente}"
+    payload = {
+        "data": parse_date_str(data_recebimento),
+        "desc": descricao,
+        "tipo": "Venda",
+        "valor": round(float(valor_liquido), 2),
+    }
+
+    # SQLite: idempotência por descrição, data e tipo.
+    try:
+        with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id FROM caixa WHERE desc = ? AND tipo = ?",
+                (descricao, "Venda"),
+            )
+            existente = cur.fetchone()
+            if existente:
+                cur.execute(
+                    "UPDATE caixa SET data = ?, valor = ? WHERE id = ?",
+                    (payload["data"], payload["valor"], existente[0]),
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO caixa (data, desc, tipo, valor) VALUES (?, ?, ?, ?)",
+                    (payload["data"], payload["desc"], payload["tipo"], payload["valor"]),
+                )
+            conn.commit()
+    except Exception as err:
+        st.error(f"Erro ao registrar recebimento no caixa local: {err}")
+        return False
+
+    if supabase:
+        try:
+            # Remove duplicatas antigas geradas por cliques repetidos e recria um único movimento.
+            supabase.table("caixa").delete().eq("desc", descricao).eq("tipo", "Venda").execute()
+            supabase.table("caixa").insert(payload).execute()
+        except Exception as err:
+            st.warning(
+                "O recebimento foi salvo no banco local, mas não foi possível sincronizar "
+                f"o movimento com o Supabase: {err}"
+            )
+            # A gravação local está confirmada; o fluxo local continuará disponível.
+    return True
 
 def safe_delete_venda(venda_id) -> bool:
     if venda_id in (None, ""):
@@ -2197,15 +2277,24 @@ elif "Contas a Receber" in menu:
                                 "data_recebimento": dt_rec_str,
                                 "valor_recebido": round(v_liq, 2)
                             }
+                            venda_para_caixa = r.to_dict()
                             if safe_update_venda(v_id, payload_upd):
-                                safe_insert("caixa", {
-                                    "data": dt_rec_str,
-                                    "desc": f"Venda {v_cod} ({v_qtd}un) - {v_cli}",
-                                    "tipo": "Venda",
-                                    "valor": round(v_liq, 2)
-                                })
-                                st.session_state["flash_success"] = f"🎉 Recebimento da Venda ID #{v_id} confirmado com sucesso! R$ {v_liq:,.2f} lançado no Fluxo de Caixa."
-                                st.rerun()
+                                if registrar_recebimento_caixa(venda_para_caixa, dt_rec_str, v_liq):
+                                    st.session_state["flash_success"] = (
+                                        f"🎉 Recebimento da Venda ID #{v_id} confirmado! "
+                                        f"R$ {v_liq:,.2f} registrado no Fluxo de Caixa."
+                                    )
+                                    st.rerun()
+                                else:
+                                    st.error(
+                                        "A venda foi atualizada, mas o lançamento no caixa falhou. "
+                                        "Tente confirmar novamente e verifique o banco de dados."
+                                    )
+                            else:
+                                st.error(
+                                    "Não foi possível salvar a confirmação do recebimento. "
+                                    "Nenhuma confirmação de sucesso foi registrada."
+                                )
                     with rc4:
                         st.write("")
                         st.write("")
@@ -2579,17 +2668,52 @@ elif "Caixa" in menu or "Fluxo" in menu:
                     "Valor_Num": -tot_c
                 })
 
+    # Fonte principal: movimentos efetivamente registrados na tabela caixa.
+    # Isso permite visualizar o recebimento mesmo se o Supabase tiver uma divergência
+    # temporária entre a atualização da venda e a sincronização das tabelas.
+    movimentos_venda_caixa = set()
+    if not df_caixa.empty:
+        for _, mov in df_caixa.iterrows():
+            tipo_mov = str(mov.get("tipo", "")).strip().lower()
+            desc_mov = str(mov.get("desc", mov.get("descricao", "")) or "")
+            valor_mov = parse_money(mov.get("valor", 0))
+            if tipo_mov == "venda" and valor_mov > 0:
+                dt_mov = parse_date_str(mov.get("data"))
+                lista_movimentos.append({
+                    "Data_Val": dt_mov,
+                    "Data": format_data_br(dt_mov),
+                    "Origem": "🛒 Recebimento de Vendas (Líquido)",
+                    "Descrição": desc_mov,
+                    "Tipo": "Entrada 🟢",
+                    "Valor_Num": valor_mov
+                })
+                movimentos_venda_caixa.add(desc_mov)
+
+    # Compatibilidade com vendas antigas que já estão marcadas como recebidas,
+    # mas ainda não possuem movimento correspondente na tabela caixa.
     if not df_vendas.empty:
         df_v_norm = normalizar_df_vendas(df_vendas)
         col_dt_rec = "data_recebimento" if "data_recebimento" in df_v_norm.columns else None
         if col_dt_rec:
-            df_v_recebidas = df_v_norm[df_v_norm[col_dt_rec].notna() & df_v_norm[col_dt_rec].astype(str).str.strip().ne("") & df_v_norm[col_dt_rec].astype(str).str.lower().ne("none")].copy()
+            df_v_recebidas = df_v_norm[
+                df_v_norm[col_dt_rec].notna()
+                & df_v_norm[col_dt_rec].astype(str).str.strip().ne("")
+                & df_v_norm[col_dt_rec].astype(str).str.lower().ne("none")
+            ].copy()
             for _, r in df_v_recebidas.iterrows():
+                v_id = r.get("id")
                 dt_rec_val = r.get(col_dt_rec)
                 val_v_calc = float(r.get("liquido_recebido_calc", 0.0))
                 cli = r.get("cliente") or ""
                 cod = r.get("codigo_bone") or r.get("codigo") or ""
-                if val_v_calc > 0:
+                qtd_mov = int(pd.to_numeric(r.get("qtd", r.get("quantidade", 1)), errors="coerce") or 1)
+                desc_id = f"Recebimento Venda #{v_id} - {cod} ({qtd_mov}un) - {cli}"
+                desc_antiga = f"Venda {cod} ({qtd_mov}un) - {cli}"
+                ja_no_caixa = any(
+                    desc_id == d or desc_antiga == d or (v_id is not None and f"#{v_id}" in d)
+                    for d in movimentos_venda_caixa
+                )
+                if val_v_calc > 0 and not ja_no_caixa:
                     dt_rec_str = parse_date_str(dt_rec_val)
                     lista_movimentos.append({
                         "Data_Val": dt_rec_str,
