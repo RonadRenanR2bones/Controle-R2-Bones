@@ -234,7 +234,10 @@ def init_db():
                 }
                 for _col, _tipo in colunas_vendas_necessarias.items():
                     if _col not in colunas_vendas:
-                        c.execute(f"ALTER TABLE vendas ADD COLUMN {_col} {_tipo}")
+                        try:
+                            c.execute(f"ALTER TABLE vendas ADD COLUMN {_col} {_tipo}")
+                        except Exception:
+                            pass
 
                 c.execute('''
                     CREATE TABLE IF NOT EXISTS pagamentos (
@@ -367,10 +370,8 @@ def sqlite_insert_record(table_name: str, payload: dict) -> bool:
             if "database is locked" in str(e) and tentativa < 4:
                 time.sleep(0.3 * (tentativa + 1))
                 continue
-            st.error(f"Erro operacional ao gravar localmente na tabela `{table_name}`: {e}")
             return False
-        except Exception as exc:
-            st.error(f"Erro ao gravar localmente na tabela `{table_name}`: {exc}")
+        except Exception:
             return False
     return False
 
@@ -397,10 +398,8 @@ def sqlite_update_record(table_name: str, record_id, payload: dict) -> bool:
             if "database is locked" in str(e) and tentativa < 4:
                 time.sleep(0.3 * (tentativa + 1))
                 continue
-            st.error(f"Erro ao atualizar localmente na tabela `{table_name}`: {e}")
             return False
-        except Exception as exc:
-            st.error(f"Erro ao atualizar localmente na tabela `{table_name}`: {exc}")
+        except Exception:
             return False
     return False
 
@@ -418,10 +417,8 @@ def sqlite_delete_record(table_name: str, record_id) -> bool:
             if "database is locked" in str(e) and tentativa < 4:
                 time.sleep(0.3 * (tentativa + 1))
                 continue
-            st.error(f"Erro ao excluir localmente da tabela `{table_name}`: {e}")
             return False
-        except Exception as exc:
-            st.error(f"Erro ao excluir localmente da tabela `{table_name}`: {exc}")
+        except Exception:
             return False
     return False
 
@@ -522,10 +519,7 @@ def fetch_data(table_name: str) -> pd.DataFrame:
         if remote_df.empty:
             return local_df
         return remote_df
-    except Exception as e:
-        err_str = str(e)
-        if "PGRST205" not in err_str and "schema cache" not in err_str:
-            pass
+    except Exception:
         return local_df
 
 def normalizar_df_vendas(df: pd.DataFrame) -> pd.DataFrame:
@@ -548,10 +542,6 @@ def normalizar_df_vendas(df: pd.DataFrame) -> pd.DataFrame:
         df_res["liquido_recebido_calc"] = val_rec_raw.where(val_rec_raw > 0, df_res["valor_bruto_calc"] - df_res["tarifa_calc"])
     else:
         df_res["liquido_recebido_calc"] = df_res["valor_bruto_calc"] - df_res["tarifa_calc"]
-
-    cols_para_dedup = [c for c in ["codigo_bone", "codigo", "cliente", "qtd", "valor_venda", "data"] if c in df_res.columns]
-    if cols_para_dedup:
-        df_res = df_res.drop_duplicates(subset=cols_para_dedup, keep="first")
 
     return df_res
 
@@ -617,50 +607,40 @@ def atualizar_caixa_da_venda(venda_antiga: dict, venda_nova: dict | None = None,
     cliente = str(venda_antiga.get("cliente", "")).strip()
     qtd = int(pd.to_numeric(venda_antiga.get("qtd", 1), errors="coerce") or 1)
     desc_antiga = f"Venda {codigo} ({qtd}un) - {cliente}"
-    if not data_rec or not codigo:
-        return
-
-    if not supabase:
-        # Remover também do caixa local SQLite
-        try:
-            with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
-                cur = conn.cursor()
-                cur.execute("DELETE FROM caixa WHERE desc = ?", (desc_antiga,))
-                conn.commit()
-        except Exception:
-            pass
-        return
-
+    
+    # Remover do SQLite
     try:
-        if excluir:
-            supabase.table("caixa").delete().eq("data", parse_date_str(data_rec)).eq("desc", desc_antiga).execute()
-            try:
-                with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
-                    cur = conn.cursor()
-                    cur.execute("DELETE FROM caixa WHERE desc = ?", (desc_antiga,))
-                    conn.commit()
-            except Exception:
-                pass
-        elif venda_nova is not None:
-            data_nova = venda_nova.get("data_recebimento") or venda_nova.get("data")
-            v_bruto_n = float(venda_nova.get("valor_venda", 0) or 0)
-            t_n = float(venda_nova.get("tarifa", venda_nova.get("tarifa_bancaria", venda_nova.get("tarifa_cartao", 0))) or 0)
-            valor_novo = float(venda_nova.get("valor_recebido", v_bruto_n - t_n) or (v_bruto_n - t_n))
-            codigo_novo = str(venda_nova.get("codigo_bone", codigo)).strip()
-            cliente_novo = str(venda_nova.get("cliente", cliente)).strip()
-            qtd_nova = int(pd.to_numeric(venda_nova.get("qtd", qtd), errors="coerce") or qtd)
-            desc_nova = f"Venda {codigo_novo} ({qtd_nova}un) - {cliente_novo}"
-            if data_nova:
-                supabase.table("caixa").update({
-                    "data": parse_date_str(data_nova),
-                    "desc": desc_nova,
-                    "tipo": "Venda",
-                    "valor": valor_novo
-                }).eq("data", parse_date_str(data_rec)).eq("desc", desc_antiga).execute()
-            else:
-                supabase.table("caixa").delete().eq("data", parse_date_str(data_rec)).eq("desc", desc_antiga).execute()
+        with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM caixa WHERE desc = ?", (desc_antiga,))
+            conn.commit()
     except Exception:
         pass
+
+    if supabase:
+        try:
+            supabase.table("caixa").delete().eq("desc", desc_antiga).execute()
+        except Exception:
+            pass
+
+    if not excluir and venda_nova is not None:
+        data_nova = venda_nova.get("data_recebimento") or venda_nova.get("data")
+        v_bruto_n = float(venda_nova.get("valor_venda", 0) or 0)
+        t_n = float(venda_nova.get("tarifa", venda_nova.get("tarifa_bancaria", venda_nova.get("tarifa_cartao", 0))) or 0)
+        valor_novo = float(venda_nova.get("valor_recebido", v_bruto_n - t_n) or (v_bruto_n - t_n))
+        codigo_novo = str(venda_nova.get("codigo_bone", codigo)).strip()
+        cliente_novo = str(venda_nova.get("cliente", cliente)).strip()
+        qtd_nova = int(pd.to_numeric(venda_nova.get("qtd", qtd), errors="coerce") or qtd)
+        desc_nova = f"Venda {codigo_novo} ({qtd_nova}un) - {cliente_novo}"
+        
+        if data_nova and valor_novo > 0:
+            payload_cx = {
+                "data": parse_date_str(data_nova),
+                "desc": desc_nova,
+                "tipo": "Venda",
+                "valor": valor_novo
+            }
+            safe_insert("caixa", payload_cx)
 
 def safe_upsert_produto(payload: dict) -> bool:
     cod = payload.get("codigo")
@@ -752,20 +732,6 @@ def estornar_estoque(codigo_prod, qtd_estorno) -> bool:
                         novo_estoque_sql = qtd_atual_sql + int(qtd_estorno)
                         cur.execute(f"UPDATE produtos SET {col_qtd_sql} = ? WHERE codigo = ?", (novo_estoque_sql, codigo_prod))
                         conn.commit()
-                else:
-                    cur.execute('''
-                        CREATE TABLE IF NOT EXISTS produtos (
-                            codigo TEXT PRIMARY KEY,
-                            cor TEXT,
-                            frase TEXT,
-                            cor_estampa TEXT,
-                            categoria TEXT,
-                            custo REAL,
-                            qtd_estoque INTEGER DEFAULT 1
-                        )
-                    ''')
-                    cur.execute("INSERT OR REPLACE INTO produtos (codigo, qtd_estoque) VALUES (?, ?)", (codigo_prod, int(qtd_estorno)))
-                    conn.commit()
                 return True
         except sqlite3.OperationalError as e:
             if "database is locked" in str(e) and tentativa < 2:
@@ -801,8 +767,7 @@ def save_logo_to_db(b64_data_url):
         ).execute()
         get_saved_logo.clear()
         return True
-    except Exception as e:
-        st.error(f"Erro ao salvar logo: {e}")
+    except Exception:
         return False
 
 def delete_logo_from_db():
@@ -811,8 +776,8 @@ def delete_logo_from_db():
     try:
         supabase.table("configuracoes").delete().eq("chave", "logo_header").execute()
         get_saved_logo.clear()
-    except Exception as e:
-        st.error(f"Erro ao remover logo: {e}")
+    except Exception:
+        pass
 
 def get_ultimo_codigo_config():
     if supabase:
@@ -840,16 +805,15 @@ def set_ultimo_codigo_config(novo_codigo):
                 {"chave": "ultimo_codigo_bone", "valor_b64": novo_codigo},
                 on_conflict="chave"
             ).execute()
-        except Exception as e:
-            st.error(f"Erro ao salvar configuração do código no Supabase: {e}")
+        except Exception:
+            pass
     try:
         with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
             c = conn.cursor()
             c.execute("INSERT OR REPLACE INTO configuracoes (chave, valor_b64) VALUES ('ultimo_codigo_bone', ?)", (novo_codigo,))
             conn.commit()
         return True
-    except Exception as e:
-        st.error(f"Erro ao salvar configuração do código localmente: {e}")
+    except Exception:
         return False
 
 def gerar_proximo_codigo(codigo_atual):
@@ -912,58 +876,14 @@ def get_df_compra_mercadorias():
     })
     return df_cm
 
-def calcular_saldo_final_fluxo_caixa(df_vendas_in, df_custos_in, df_aportes_in, df_devolucoes_in):
-    lista_movimentos = []
-
-    df_cm = get_df_compra_mercadorias()
-    if not df_cm.empty:
-        df_cm["data_str"] = df_cm["Data_Raw"].apply(parse_date_str)
-        agrup_cm = df_cm.groupby("data_str").agg(total_custo=("total_item_calc", "sum")).reset_index()
-        for _, r in agrup_cm.iterrows():
-            tot_c = float(r["total_custo"])
-            if tot_c > 0:
-                lista_movimentos.append({"Data_Val": r["data_str"], "Valor_Num": -tot_c})
-
-    if not df_vendas_in.empty:
-        df_v_norm = normalizar_df_vendas(df_vendas_in)
-        col_dt_rec = "data_recebimento" if "data_recebimento" in df_v_norm.columns else ("data_receb" if "data_receb" in df_v_norm.columns else None)
-        if col_dt_rec:
-            df_v_recebidas = df_v_norm[df_v_norm[col_dt_rec].notna() & df_v_norm[col_dt_rec].astype(str).str.strip().ne("") & df_v_norm[col_dt_rec].astype(str).str.lower().ne("none")].copy()
-            for _, r in df_v_recebidas.iterrows():
-                dt_rec_val = r.get(col_dt_rec)
-                val_v_calc = float(r.get("liquido_recebido_calc", 0.0))
-                if val_v_calc > 0:
-                    lista_movimentos.append({"Data_Val": parse_date_str(dt_rec_val), "Valor_Num": val_v_calc})
-
-    if not df_custos_in.empty:
-        for _, r in df_custos_in.iterrows():
-            val_c = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
-            if val_c > 0:
-                lista_movimentos.append({"Data_Val": parse_date_str(r.get("data")), "Valor_Num": -val_c})
-
-    if not df_aportes_in.empty:
-        for _, r in df_aportes_in.iterrows():
-            val_ap = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
-            tipo_ap = str(r.get("tipo", ""))
-            if val_ap != 0:
-                is_devolucao = "devoluc" in tipo_ap.lower() or val_ap < 0
-                val_final = -abs(val_ap) if is_devolucao else abs(val_ap)
-                dt_ap_raw = r.get("data") or r.get("data_aporte") or r.get("created_at")
-                dt_ap_str = parse_date_str(dt_ap_raw) if dt_ap_raw else datetime.date.today().strftime("%Y-%m-%d")
-                lista_movimentos.append({"Data_Val": dt_ap_str, "Valor_Num": val_final})
-
-    if not df_devolucoes_in.empty:
-        for _, r in df_devolucoes_in.iterrows():
-            val_dev = float(pd.to_numeric(r.get("valor_devolvido", 0.0), errors="coerce") or 0.0)
-            if val_dev > 0:
-                dt_dev_raw = r.get("data_devolucao")
-                dt_dev_str = parse_date_str(dt_dev_raw) if dt_dev_raw else datetime.date.today().strftime("%Y-%m-%d")
-                lista_movimentos.append({"Data_Val": dt_dev_str, "Valor_Num": -val_dev})
-
-    if lista_movimentos:
-        df_ext = pd.DataFrame(lista_movimentos)
-        return float(df_ext["Valor_Num"].sum())
-    return 0.0
+def calcular_saldo_final_fluxo_caixa(df_caixa_in, df_cm_in):
+    # Lê diretamente da tabela caixa consolidada e das compras de mercadorias
+    total = 0.0
+    if not df_cm_in.empty:
+        total -= float(df_cm_in["total_item_calc"].sum())
+    if not df_caixa_in.empty and "valor" in df_caixa_in.columns:
+        total += float(df_caixa_in["valor"].apply(parse_money).sum())
+    return total
 
 df_produtos = fetch_data("produtos")
 
@@ -1059,17 +979,16 @@ if "Dashboard" in menu:
     total_faturado = float(df_vendas[col_v_val].sum()) if not df_vendas.empty and col_v_val else 0.0
     
     total_cmv = 0.0
-    if not df_vendas.empty:
-        df_cm_ref = get_df_compra_mercadorias()
-        if not df_cm_ref.empty:
-            c_v_col = "codigo_bone" if "codigo_bone" in df_vendas.columns else ("codigo" if "codigo" in df_vendas.columns else "codigo_produto")
-            df_v_cm = df_vendas.merge(df_cm_ref, left_on=c_v_col, right_on="Código", how="inner")
-            if "total_item_calc" in df_v_cm.columns:
-                col_q = "qtd" if "qtd" in df_v_cm.columns else ("quantidade" if "quantidade" in df_v_cm.columns else None)
-                qtds = get_numeric_series(df_v_cm, col_q, 1.0) if col_q else 1.0
-                total_cmv = float((df_v_cm["total_item_calc"] * qtds).sum())
+    df_cm_ref = get_df_compra_mercadorias()
+    if not df_vendas.empty and not df_cm_ref.empty:
+        c_v_col = "codigo_bone" if "codigo_bone" in df_vendas.columns else ("codigo" if "codigo" in df_vendas.columns else "codigo_produto")
+        df_v_cm = df_vendas.merge(df_cm_ref, left_on=c_v_col, right_on="Código", how="inner")
+        if "total_item_calc" in df_v_cm.columns:
+            col_q = "qtd" if "qtd" in df_v_cm.columns else ("quantidade" if "quantidade" in df_v_cm.columns else None)
+            qtds = get_numeric_series(df_v_cm, col_q, 1.0) if col_q else 1.0
+            total_cmv = float((df_v_cm["total_item_calc"] * qtds).sum())
 
-    saldo_caixa = calcular_saldo_final_fluxo_caixa(df_vendas, df_custos, df_aportes, df_devolucoes)
+    saldo_caixa = calcular_saldo_final_fluxo_caixa(df_caixa, df_cm_ref)
 
     total_qtd_vendida = 0
     if not df_vendas.empty:
@@ -1143,7 +1062,6 @@ if "Dashboard" in menu:
         df_lucro = pd.DataFrame()
         if not df_vendas.empty:
             df_l_base = normalizar_df_vendas(df_vendas).copy()
-            df_cm_ref = get_df_compra_mercadorias()
             c_v_col = "codigo_bone" if "codigo_bone" in df_l_base.columns else ("codigo" if "codigo" in df_l_base.columns else "codigo_produto")
             
             if not df_cm_ref.empty and c_v_col in df_l_base.columns:
@@ -2198,12 +2116,15 @@ elif "Contas a Receber" in menu:
                                 "valor_recebido": round(v_liq, 2)
                             }
                             if safe_update_venda(v_id, payload_upd):
-                                safe_insert("caixa", {
+                                # INSERÇÃO CORRETA E IMEDIATA NO CAIXA
+                                payload_caixa_venda = {
                                     "data": dt_rec_str,
                                     "desc": f"Venda {v_cod} ({v_qtd}un) - {v_cli}",
                                     "tipo": "Venda",
                                     "valor": round(v_liq, 2)
-                                })
+                                }
+                                safe_insert("caixa", payload_caixa_venda)
+                                
                                 st.session_state["flash_success"] = f"🎉 Recebimento da Venda ID #{v_id} confirmado com sucesso! R$ {v_liq:,.2f} lançado no Fluxo de Caixa."
                                 st.rerun()
                     with rc4:
@@ -2323,7 +2244,7 @@ elif "Custos" in menu:
                     "data": dt_cv_str, 
                     "desc": f"[Custos / Despesas] {desc_cv.strip()}", 
                     "tipo": tipo_cv, 
-                    "valor": val_cv_fmt
+                    "valor": -val_cv_fmt
                 })
                 st.session_state["flash_success"] = "Custo / Despesa registrado com sucesso!"
                 st.rerun()
@@ -2409,7 +2330,7 @@ elif "Custos" in menu:
                     "data": dt_cf_str, 
                     "desc": f"[Feira: {feira_cf.strip()}] {desc_cf.strip()}", 
                     "tipo": tipo_cf, 
-                    "valor": val_cf_fmt
+                    "valor": -val_cf_fmt
                 })
                 st.session_state["flash_success"] = "Custo de Feira registrado com sucesso!"
                 st.rerun()
@@ -2494,7 +2415,7 @@ elif "Custos" in menu:
                     "data": dt_tar_str,
                     "desc": f"[Tarifa] {desc_tar.strip()}",
                     "tipo": tipo_tar,
-                    "valor": val_tar_fmt
+                    "valor": -val_tar_fmt
                 })
                 st.session_state["flash_success"] = f"Tarifa de R$ {val_tar_fmt:,.2f} registrada com sucesso!"
                 st.rerun()
@@ -2552,14 +2473,13 @@ elif "Custos" in menu:
 
 elif "Caixa" in menu or "Fluxo" in menu:
     st.subheader("💰 Extrato Consolidado de Fluxo de Caixa")
-    st.markdown("As entradas de vendas aparecem exclusivamente após a confirmação do recebimento no módulo **Contas a Receber**. Cada mês é exibido em um componente expansivo (accordion/collapse).")
+    st.markdown("As movimentações consolidam compras, vendas recebidas, despesas, tarifas e aportes diretamente da tabela de caixa e pedidos.")
     
     lista_movimentos = []
 
     df_cm = get_df_compra_mercadorias()
     if not df_cm.empty:
         df_cm["data_str"] = df_cm["Data_Raw"].apply(parse_date_str)
-        
         agrup_cm = df_cm.groupby("data_str").agg(
             total_custo=("total_item_calc", "sum"),
             total_qtd=("id", "count")
@@ -2579,74 +2499,38 @@ elif "Caixa" in menu or "Fluxo" in menu:
                     "Valor_Num": -tot_c
                 })
 
-    if not df_vendas.empty:
-        df_v_norm = normalizar_df_vendas(df_vendas)
-        col_dt_rec = "data_recebimento" if "data_recebimento" in df_v_norm.columns else None
-        if col_dt_rec:
-            df_v_recebidas = df_v_norm[df_v_norm[col_dt_rec].notna() & df_v_norm[col_dt_rec].astype(str).str.strip().ne("") & df_v_norm[col_dt_rec].astype(str).str.lower().ne("none")].copy()
-            for _, r in df_v_recebidas.iterrows():
-                dt_rec_val = r.get(col_dt_rec)
-                val_v_calc = float(r.get("liquido_recebido_calc", 0.0))
-                cli = r.get("cliente") or ""
-                cod = r.get("codigo_bone") or r.get("codigo") or ""
-                if val_v_calc > 0:
-                    dt_rec_str = parse_date_str(dt_rec_val)
-                    lista_movimentos.append({
-                        "Data_Val": dt_rec_str,
-                        "Data": format_data_br(dt_rec_str),
-                        "Origem": "🛒 Recebimento de Vendas (Líquido)",
-                        "Descrição": f"Venda {cod} - Cliente: {cli}",
-                        "Tipo": "Entrada 🟢",
-                        "Valor_Num": val_v_calc
-                    })
-
-    if not df_custos.empty:
-        for _, r in df_custos.iterrows():
-            val_c = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
-            sub_c = str(r.get("subcategoria", "Custos"))
-            desc_c = r.get("desc") or r.get("descricao") or "Despesa Avulsa"
+    df_cx_all = fetch_data("caixa")
+    if not df_cx_all.empty:
+        for _, r in df_cx_all.iterrows():
+            val_cx = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
+            dt_cx = parse_date_str(r.get("data"))
+            desc_cx = str(r.get("desc", ""))
+            tipo_cx = str(r.get("tipo", ""))
             
-            if "tarifas" in sub_c.lower():
-                origem_tag = "💳 Tarifas"
-            elif "feira" in sub_c.lower():
-                origem_tag = "🎪 Custos de Feiras"
-            elif "custos" in sub_c.lower():
-                origem_tag = "🏷 Custos / Despesas"
-            else:
-                origem_tag = f"💵 Custos ({sub_c})"
-
-            if val_c > 0:
-                dt_c_str = parse_date_str(r.get("data"))
-                lista_movimentos.append({
-                    "Data_Val": dt_c_str,
-                    "Data": format_data_br(dt_c_str),
-                    "Origem": origem_tag,
-                    "Descrição": desc_c,
-                    "Tipo": "Saída 🔴",
-                    "Valor_Num": -val_c
-                })
-
-    if not df_aportes.empty:
-        for _, r in df_aportes.iterrows():
-            val_ap = float(pd.to_numeric(r.get("valor", 0.0), errors="coerce") or 0.0)
-            tipo_ap = str(r.get("tipo", ""))
-            socio = r.get("socio", "")
-            
-            dt_ap_raw = r.get("data") or r.get("data_aporte") or r.get("created_at")
-            dt_ap_str = parse_date_str(dt_ap_raw) if dt_ap_raw else datetime.date.today().strftime("%Y-%m-%d")
-            
-            if val_ap != 0:
-                is_devolucao = "devoluc" in tipo_ap.lower() or val_ap < 0
-                nome_op = "Devolução" if is_devolucao else "Aporte"
+            if val_cx == 0:
+                continue
                 
-                lista_movimentos.append({
-                    "Data_Val": dt_ap_str,
-                    "Data": format_data_br(dt_ap_str),
-                    "Origem": "🤝 Aporte dos Sócios",
-                    "Descrição": f"{nome_op} ({socio})",
-                    "Tipo": "Saída 🔴" if is_devolucao else "Entrada 🟢",
-                    "Valor_Num": -abs(val_ap) if is_devolucao else abs(val_ap)
-                })
+            is_saida = val_cx < 0 or "saída" in tipo_cx.lower() or "despesa" in tipo_cx.lower() or "tarifa" in tipo_cx.lower() or "devolução" in tipo_cx.lower()
+            val_final = -abs(val_cx) if is_saida else abs(val_cx)
+            
+            origem_lbl = "💵 Movimento de Caixa"
+            if "venda" in tipo_cx.lower() or "venda" in desc_cx.lower():
+                origem_lbl = "🛒 Recebimento de Vendas (Líquido)"
+            elif "aporte" in tipo_cx.lower():
+                origem_lbl = "🤝 Aporte dos Sócios"
+            elif "devolução" in tipo_cx.lower():
+                origem_lbl = "🔄 Devolução"
+            elif "tarifa" in tipo_cx.lower():
+                origem_lbl = "💳 Tarifas"
+
+            lista_movimentos.append({
+                "Data_Val": dt_cx,
+                "Data": format_data_br(dt_cx),
+                "Origem": origem_lbl,
+                "Descrição": desc_cx,
+                "Tipo": "Saída 🔴" if val_final < 0 else "Entrada 🟢",
+                "Valor_Num": val_final
+            })
 
     if not df_devolucoes.empty:
         for _, r in df_devolucoes.iterrows():
@@ -2673,7 +2557,6 @@ elif "Caixa" in menu or "Fluxo" in menu:
         df_extrato["Mes_Ano"] = df_extrato["Data_Raw"].dt.strftime("%Y-%m").fillna("Outros")
         
         df_extrato = df_extrato.sort_values(by="Data_Raw", ascending=True).reset_index(drop=True)
-        df_extrato["Saldo_Acumulado"] = df_extrato["Valor_Num"].cumsum()
         
         meses_caixa = sorted(df_extrato["Mes_Ano"].unique(), reverse=False)
         saldo_acumulado_anterior = 0.0
@@ -2808,12 +2691,7 @@ elif "Aportes" in menu:
         df_ap_calc = df_aportes.copy()
         
         if "tipo" not in df_ap_calc.columns:
-            if "operacao" in df_ap_calc.columns:
-                df_ap_calc["tipo"] = df_ap_calc["operacao"]
-            elif "forma" in df_ap_calc.columns:
-                df_ap_calc["tipo"] = df_ap_calc["forma"]
-            else:
-                df_ap_calc["tipo"] = "Aporte"
+            df_ap_calc["tipo"] = "Aporte"
                 
         if "socio" not in df_ap_calc.columns:
             df_ap_calc["socio"] = "Não informado"
@@ -2850,7 +2728,7 @@ elif "Aportes" in menu:
         if "editing_aporte_id" not in st.session_state:
             st.session_state["editing_aporte_id"] = None
 
-        col_dt_ap = "data" if "data" in df_aportes.columns else ("data_aporte" if "data_aporte" in df_aportes.columns else ("created_at" if "created_at" in df_aportes.columns else None))
+        col_dt_ap = "data" if "data" in df_aportes.columns else ("data_aporte" if "data_aporte" in df_aportes.columns else None)
         
         if col_dt_ap and not df_aportes.empty:
             df_aportes["Mes_Ano"] = pd.to_datetime(df_aportes[col_dt_ap].apply(parse_date_str), errors="coerce").dt.strftime("%Y-%m").fillna("Outros")
