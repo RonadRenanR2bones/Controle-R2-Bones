@@ -585,29 +585,59 @@ def safe_insert(table_name: str, payload: dict) -> bool:
         return sucesso_local
 
 def safe_update_venda(venda_id, payload: dict) -> bool:
-    """Atualiza a venda localmente e, quando configurado, também no Supabase.
+    """Atualiza a venda localmente e no Supabase, adaptando-se a colunas ausentes.
 
-    Não informa sucesso se nenhuma persistência for confirmada.
+    O banco local recebe todos os campos. Para o Supabase, se a API informar que
+    uma coluna não existe no esquema remoto, remove somente essa coluna do payload
+    e tenta novamente. Isso permite confirmar o recebimento mesmo quando campos
+    calculados, como valor_recebido, não existem na tabela remota.
     """
     if venda_id in (None, ""):
         return False
 
+    # Mantém o registro local atualizado, inclusive com campos auxiliares locais.
     sucesso_local = sqlite_update_record("vendas", venda_id, payload)
     if not supabase:
         return sucesso_local
 
-    try:
-        res = supabase.table("vendas").update(payload).eq("id", venda_id).execute()
-        # O PostgREST normalmente devolve os registros alterados em data.
-        # Se a configuração não devolver representação, a ausência de exceção
-        # ainda confirma que o comando foi aceito.
-        return True
-    except Exception as err:
-        st.error(
-            "Não foi possível atualizar a venda no Supabase. "
-            f"Verifique as colunas da tabela 'vendas'. Detalhe: {err}"
-        )
-        return sucesso_local
+    payload_remoto = dict(payload)
+    colunas_ignoradas = []
+    while payload_remoto:
+        try:
+            supabase.table("vendas").update(payload_remoto).eq("id", venda_id).execute()
+            if colunas_ignoradas:
+                st.info(
+                    "Recebimento atualizado. Campos não existentes no Supabase foram "
+                    "mantidos apenas localmente: " + ", ".join(colunas_ignoradas)
+                )
+            return True
+        except Exception as err:
+            err_str = str(err)
+            if "Could not find the '" in err_str and "' column" in err_str:
+                try:
+                    col_err = err_str.split("Could not find the '")[1].split("' column")[0]
+                except Exception:
+                    col_err = None
+                if col_err and col_err in payload_remoto:
+                    payload_remoto.pop(col_err, None)
+                    colunas_ignoradas.append(col_err)
+                    continue
+            st.error(
+                "Não foi possível atualizar a venda no Supabase. "
+                f"Detalhe: {err}"
+            )
+            if sucesso_local:
+                st.warning(
+                    "A alteração foi gravada no banco local, mas não foi confirmada "
+                    "no Supabase. Verifique a conexão e tente novamente."
+                )
+            return False
+
+    st.error(
+        "Nenhum dos campos enviados para atualização existe na tabela 'vendas' "
+        "do Supabase. Verifique a estrutura da tabela."
+    )
+    return False
 
 
 def registrar_recebimento_caixa(venda: dict, data_recebimento: str, valor_liquido: float) -> bool:
