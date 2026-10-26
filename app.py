@@ -695,82 +695,126 @@ def registrar_recebimento_caixa(venda: dict, data_recebimento: str, valor_liquid
     return True
 
 def safe_delete_venda(venda_id) -> bool:
-    if venda_id in (None, ""):
-        return False
-    
-    row_match = carregar_dataframe("SELECT * FROM vendas WHERE id = ?", (venda_id,))
-    
-    sqlite_delete_record("vendas", venda_id)
-    if not row_match.empty and "cliente" in row_match.columns and "valor_venda" in row_match.columns:
-        c_val = row_match.iloc[0].get("cliente")
-        v_val = row_match.iloc[0].get("valor_venda")
-        try:
-            with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
-                cur = conn.cursor()
-                cur.execute("DELETE FROM vendas WHERE cliente = ? AND valor_venda = ?", (c_val, v_val))
-                conn.commit()
-        except Exception:
-            pass
+    """Exclui a venda e todos os movimentos de caixa associados a ela.
 
+    A exclusão do caixa usa o ID da venda (novo padrão) e a descrição antiga,
+    para limpar lançamentos criados por versões anteriores do aplicativo.
+    """
+    if venda_id in (None, ""):
+        st.error("Não foi possível cancelar: ID da venda ausente.")
+        return False
+
+    # Captura os dados antes da exclusão para localizar movimentos legados.
+    row_match = carregar_dataframe("SELECT * FROM vendas WHERE id = ?", (venda_id,))
+    venda = row_match.iloc[0].to_dict() if not row_match.empty else {}
+    codigo = str(venda.get("codigo_bone") or venda.get("codigo") or "").strip()
+    cliente = str(venda.get("cliente") or "").strip()
+    qtd = int(pd.to_numeric(venda.get("qtd", venda.get("quantidade", 1)), errors="coerce") or 1)
+    descricao_antiga = f"Venda {codigo} ({qtd}un) - {cliente}"
+    descricao_id = f"Recebimento Venda #{venda_id} - {codigo} ({qtd}un) - {cliente}"
+    remoto_ok = True
+
+    # Remove os lançamentos locais, tanto o padrão atual quanto o antigo.
+    try:
+        with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM caixa WHERE desc = ?", (descricao_id,))
+            cur.execute("DELETE FROM caixa WHERE desc = ?", (descricao_antiga,))
+            # Compatibilidade com qualquer descrição que contenha o ID da venda.
+            cur.execute("DELETE FROM caixa WHERE desc LIKE ?", (f"%#{venda_id}%",))
+            conn.commit()
+    except Exception as err:
+        st.error(f"Erro ao remover o recebimento do caixa local: {err}")
+        remoto_ok = False
+
+    # O Supabase é a fonte remota usada pelo app publicado; remover os dois
+    # formatos de descrição impede que o movimento sobreviva ao cancelamento.
     if supabase:
         try:
-            supabase.table("vendas").delete().eq("id", venda_id).execute()
-            if not row_match.empty:
-                supabase.table("vendas").delete().eq("cliente", row_match.iloc[0].get("cliente")).eq("valor_venda", row_match.iloc[0].get("valor_venda")).execute()
-        except Exception:
-            pass
-    return True
+            supabase.table("caixa").delete().eq("desc", descricao_id).execute()
+            supabase.table("caixa").delete().eq("desc", descricao_antiga).execute()
+            supabase.table("caixa").delete().like("desc", f"%#{venda_id}%").execute()
+        except Exception as err:
+            # Não interrompe as demais exclusões; informa que é necessário verificar.
+            st.error(f"Não foi possível remover todos os movimentos do caixa no Supabase: {err}")
+            remoto_ok = False
 
-def atualizar_caixa_da_venda(venda_antiga: dict, venda_nova: dict | None = None, excluir: bool = False):
-    data_rec = venda_antiga.get("data_recebimento") or venda_antiga.get("data")
-    codigo = str(venda_antiga.get("codigo_bone", venda_antiga.get("codigo", ""))).strip()
-    cliente = str(venda_antiga.get("cliente", "")).strip()
-    qtd = int(pd.to_numeric(venda_antiga.get("qtd", 1), errors="coerce") or 1)
-    desc_antiga = f"Venda {codigo} ({qtd}un) - {cliente}"
-    if not data_rec or not codigo:
-        return
-
-    if not supabase:
-        # Remover também do caixa local SQLite
         try:
+            supabase.table("vendas").delete().eq("id", venda_id).execute()
+        except Exception as err:
+            st.error(f"Não foi possível excluir a venda no Supabase: {err}")
+            remoto_ok = False
+
+    # Limpa a cópia local da venda, incluindo duplicatas legadas com mesmo cliente/valor.
+    try:
+        sqlite_delete_record("vendas", venda_id)
+        if venda:
             with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
                 cur = conn.cursor()
-                cur.execute("DELETE FROM caixa WHERE desc = ?", (desc_antiga,))
+                cur.execute(
+                    "DELETE FROM vendas WHERE id = ?", (venda_id,)
+                )
                 conn.commit()
-        except Exception:
-            pass
-        return
+    except Exception as err:
+        st.error(f"Erro ao excluir a venda do banco local: {err}")
+        return False
 
-    try:
-        if excluir:
-            supabase.table("caixa").delete().eq("data", parse_date_str(data_rec)).eq("desc", desc_antiga).execute()
+    return remoto_ok
+
+
+def atualizar_caixa_da_venda(venda_antiga: dict, venda_nova: dict | None = None, excluir: bool = False):
+    """Compatibilidade para edição/exclusão de movimentos associados a vendas."""
+    if excluir:
+        venda_id = venda_antiga.get("id")
+        if venda_id not in (None, ""):
+            codigo = str(venda_antiga.get("codigo_bone") or venda_antiga.get("codigo") or "").strip()
+            cliente = str(venda_antiga.get("cliente") or "").strip()
+            qtd = int(pd.to_numeric(venda_antiga.get("qtd", venda_antiga.get("quantidade", 1)), errors="coerce") or 1)
+            descricoes = [
+                f"Recebimento Venda #{venda_id} - {codigo} ({qtd}un) - {cliente}",
+                f"Venda {codigo} ({qtd}un) - {cliente}",
+            ]
             try:
                 with sqlite3.connect(DB_NAME, timeout=30.0) as conn:
                     cur = conn.cursor()
-                    cur.execute("DELETE FROM caixa WHERE desc = ?", (desc_antiga,))
+                    for desc in descricoes:
+                        cur.execute("DELETE FROM caixa WHERE desc = ?", (desc,))
+                    cur.execute("DELETE FROM caixa WHERE desc LIKE ?", (f"%#{venda_id}%",))
                     conn.commit()
-            except Exception:
-                pass
-        elif venda_nova is not None:
-            data_nova = venda_nova.get("data_recebimento") or venda_nova.get("data")
-            v_bruto_n = float(venda_nova.get("valor_venda", 0) or 0)
-            t_n = float(venda_nova.get("tarifa", venda_nova.get("tarifa_bancaria", venda_nova.get("tarifa_cartao", 0))) or 0)
-            valor_novo = float(venda_nova.get("valor_recebido", v_bruto_n - t_n) or (v_bruto_n - t_n))
-            codigo_novo = str(venda_nova.get("codigo_bone", codigo)).strip()
-            cliente_novo = str(venda_nova.get("cliente", cliente)).strip()
-            qtd_nova = int(pd.to_numeric(venda_nova.get("qtd", qtd), errors="coerce") or qtd)
-            desc_nova = f"Venda {codigo_novo} ({qtd_nova}un) - {cliente_novo}"
-            if data_nova:
-                supabase.table("caixa").update({
-                    "data": parse_date_str(data_nova),
-                    "desc": desc_nova,
-                    "tipo": "Venda",
-                    "valor": valor_novo
-                }).eq("data", parse_date_str(data_rec)).eq("desc", desc_antiga).execute()
-            else:
-                supabase.table("caixa").delete().eq("data", parse_date_str(data_rec)).eq("desc", desc_antiga).execute()
-    except Exception:
-        pass
+            except Exception as err:
+                st.warning(f"Não foi possível limpar o caixa local: {err}")
+            if supabase:
+                try:
+                    for desc in descricoes:
+                        supabase.table("caixa").delete().eq("desc", desc).execute()
+                    supabase.table("caixa").delete().like("desc", f"%#{venda_id}%").execute()
+                except Exception as err:
+                    st.warning(f"Não foi possível limpar o caixa remoto: {err}")
+        return
+
+    # Mantém o comportamento de atualização de movimentos em edições existentes.
+    data_rec = venda_antiga.get("data_recebimento") or venda_antiga.get("data")
+    codigo = str(venda_antiga.get("codigo_bone") or venda_antiga.get("codigo") or "").strip()
+    cliente = str(venda_antiga.get("cliente") or "").strip()
+    qtd = int(pd.to_numeric(venda_antiga.get("qtd", 1), errors="coerce") or 1)
+    desc_antiga = f"Venda {codigo} ({qtd}un) - {cliente}"
+    if not data_rec or not codigo or venda_nova is None or not supabase:
+        return
+    try:
+        data_nova = venda_nova.get("data_recebimento") or venda_nova.get("data")
+        bruto = float(venda_nova.get("valor_venda", 0) or 0)
+        tarifa = float(venda_nova.get("tarifa", venda_nova.get("tarifa_bancaria", venda_nova.get("tarifa_cartao", 0))) or 0)
+        valor_novo = round(max(0.0, bruto - tarifa), 2)
+        codigo_novo = str(venda_nova.get("codigo_bone") or venda_nova.get("codigo") or codigo).strip()
+        cliente_novo = str(venda_nova.get("cliente") or cliente).strip()
+        qtd_nova = int(pd.to_numeric(venda_nova.get("qtd", qtd), errors="coerce") or qtd)
+        desc_nova = f"Venda {codigo_novo} ({qtd_nova}un) - {cliente_novo}"
+        if data_nova:
+            supabase.table("caixa").update({"data": parse_date_str(data_nova), "desc": desc_nova, "tipo": "Venda", "valor": valor_novo}).eq("data", parse_date_str(data_rec)).eq("desc", desc_antiga).execute()
+        else:
+            supabase.table("caixa").delete().eq("desc", desc_antiga).execute()
+    except Exception as err:
+        st.warning(f"Não foi possível atualizar o movimento no caixa: {err}")
 
 def safe_upsert_produto(payload: dict) -> bool:
     cod = payload.get("codigo")
@@ -2331,9 +2375,11 @@ elif "Contas a Receber" in menu:
                         if st.button("❌ Cancelar Venda", key=f"btn_cancel_pend_{v_id}", use_container_width=True, type="secondary"):
                             estornar_estoque(v_cod, v_qtd)
                             atualizar_caixa_da_venda(r, excluir=True)
-                            safe_delete_venda(v_id)
-                            st.session_state["flash_success"] = f"🗑 Venda ID #{v_id} cancelada e {v_qtd} unidade(s) estornada(s) para o estoque!"
-                            st.rerun()
+                            if safe_delete_venda(v_id):
+                                st.session_state["flash_success"] = f"🗑 Venda ID #{v_id} cancelada, movimentos removidos do caixa e {v_qtd} unidade(s) estornada(s) para o estoque!"
+                                st.rerun()
+                            else:
+                                st.error("A exclusão não foi confirmada em todos os bancos. Verifique a venda e o Fluxo de Caixa antes de tentar novamente.")
         else:
             st.info("🎉 Nenhuma venda pendente de recebimento no momento!")
 
@@ -2366,9 +2412,11 @@ elif "Contas a Receber" in menu:
                             if st.button("❌ Cancelar / Estornar", key=f"btn_cancel_rec_{v_id}", use_container_width=True, type="secondary"):
                                 estornar_estoque(v_cod, v_qtd)
                                 atualizar_caixa_da_venda(r, excluir=True)
-                                safe_delete_venda(v_id)
-                                st.session_state["flash_success"] = f"🗑 Venda ID #{v_id} (já recebida) cancelada, removida do caixa e {v_qtd} unidade(s) estornada(s) para o estoque!"
-                                st.rerun()
+                                if safe_delete_venda(v_id):
+                                    st.session_state["flash_success"] = f"🗑 Venda ID #{v_id} (já recebida) cancelada, movimentos removidos do caixa e {v_qtd} unidade(s) estornada(s) para o estoque!"
+                                    st.rerun()
+                                else:
+                                    st.error("A exclusão não foi confirmada em todos os bancos. Verifique a venda e o Fluxo de Caixa antes de tentar novamente.")
             else:
                 st.info("Nenhuma venda recebida registrada ainda.")
     else:
